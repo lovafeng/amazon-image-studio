@@ -1925,14 +1925,22 @@ export async function initStore() {
 }
 
 /** 提交新任务 */
-export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean } = {}): Promise<boolean> {
+export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean; apiProfileId?: string } = {}): Promise<boolean> {
   const { settings, prompt, inputImages, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, pendingTaskCategory, showToast, setConfirmDialog } =
     useStore.getState()
 
   const normalizedSettings = normalizeSettings(settings)
-  let activeProfile = getActiveApiProfile(settings)
+  const requestedProfile = options.apiProfileId
+    ? normalizedSettings.profiles.find((profile) => profile.id === options.apiProfileId)
+    : null
+  if (options.apiProfileId && !requestedProfile) {
+    showToast('指定的生图 API 配置不存在', 'error')
+    return false
+  }
+
+  let activeProfile = requestedProfile ?? getActiveApiProfile(settings)
   let requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
-  if (normalizedSettings.reuseTaskApiProfileTemporarily && (reusedTaskApiProfileId || reusedTaskApiProfileMissing)) {
+  if (!requestedProfile && normalizedSettings.reuseTaskApiProfileTemporarily && (reusedTaskApiProfileId || reusedTaskApiProfileMissing)) {
     const reusedProfile = getReusedTaskApiProfile(normalizedSettings, reusedTaskApiProfileId)
     if (!reusedProfile) {
       if (options.useCurrentApiProfileWhenReusedMissing) {
@@ -1996,7 +2004,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
           confirmText: '继续提交',
           tone: 'warning',
           action: () => {
-            void submitTask({ allowFullMask: true })
+            void submitTask({ ...options, allowFullMask: true })
           },
         })
         return false

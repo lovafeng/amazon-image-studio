@@ -747,6 +747,13 @@ export function getAmazonPlannerProfile(settings: Partial<AppSettings> | unknown
   return normalized.profiles.find((profile) => profile.id === normalized.amazonPlannerProfileId && isAmazonPlannerProfile(profile)) ?? null
 }
 
+export function getDefaultImageProfile(settings: Partial<AppSettings> | unknown): ApiProfile | null {
+  const normalized = normalizeSettings(settings)
+  return normalized.profiles.find((profile) => profile.id === DEFAULT_OPENAI_PROFILE_ID && profile.apiMode === 'images') ??
+    normalized.profiles.find((profile) => profile.apiMode === 'images') ??
+    null
+}
+
 export function validateApiProfile(profile: ApiProfile): string | null {
   if (!profile.name.trim()) return '缺少名称'
   if (profile.provider !== 'fal' && !profile.baseUrl.trim()) return '缺少 API URL'

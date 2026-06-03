@@ -46,6 +46,8 @@ export interface PlannerApiResult {
   aPlusType?: APlusContentType
 }
 
+const AMAZON_PLANNER_REASONING_EFFORT = 'xhigh'
+
 const PRODUCT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -652,14 +654,14 @@ export async function callAmazonPlannerApi(options: {
   aPlusGenerationTier?: SizeTier
   signal?: AbortSignal
 }): Promise<PlannerApiResult> {
-  const model = options.model?.trim() || options.profile.model.trim() || (options.profile.apiMode === 'chat' ? DEFAULT_CHAT_MODEL : DEFAULT_RESPONSES_MODEL)
+  const useChatCompletions = options.profile.apiMode === 'chat'
+  const model = options.model?.trim() || (useChatCompletions ? options.profile.model.trim() || DEFAULT_CHAT_MODEL : DEFAULT_RESPONSES_MODEL)
   const mode = options.mode ?? 'listing'
   const aPlusType = options.aPlusType ?? 'standard-large'
   const aPlusGenerationTier = options.aPlusGenerationTier ?? '2K'
   const schema = mode === 'aplus' ? createAPlusPlannerSchema(aPlusType) : LISTING_PLANNER_SCHEMA
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(options.profile.apiProxy, proxyConfig)
-  const useChatCompletions = options.profile.apiMode === 'chat'
   const inputText = buildPlannerInputText(options.listingText, mode, aPlusType)
   const referenceImageDataUrls = options.referenceImageDataUrls ?? []
   const response = await fetch(
@@ -692,6 +694,7 @@ export async function callAmazonPlannerApi(options: {
         }
       : {
           model,
+          reasoning: { effort: AMAZON_PLANNER_REASONING_EFFORT },
           instructions: buildPlannerInstructions(options.baseDraft, mode, aPlusType),
           input: buildResponsesPlannerInput(inputText, referenceImageDataUrls),
           text: {

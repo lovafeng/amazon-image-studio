@@ -12,6 +12,7 @@ import {
   createDefaultFalProfile,
   findEquivalentApiProfile,
   getAmazonPlannerProfile,
+  getDefaultImageProfile,
   importCustomProviderDefinitionFromJson,
   importCustomProviderSettingsFromJson,
   mergeImportedSettings,
@@ -670,6 +671,33 @@ describe('custom providers', () => {
 })
 
 describe('amazon planner profile', () => {
+  it('resolves the built-in image profile even when the planner profile is active', () => {
+    const settings = normalizeSettings({
+      profiles: [
+        createDefaultOpenAIProfile({
+          id: DEFAULT_OPENAI_PROFILE_ID,
+          name: '生图',
+          apiMode: 'images',
+          model: DEFAULT_IMAGES_MODEL,
+        }),
+        createDefaultOpenAIProfile({
+          id: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+          name: 'AI策划',
+          apiMode: 'responses',
+          model: DEFAULT_RESPONSES_MODEL,
+        }),
+      ],
+      activeProfileId: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+      amazonPlannerProfileId: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+    })
+
+    expect(getDefaultImageProfile(settings)).toMatchObject({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
+    })
+  })
+
   it('auto-selects the first OpenAI Chat/Responses profile when none is configured', () => {
     const settings = normalizeSettings({
       profiles: [

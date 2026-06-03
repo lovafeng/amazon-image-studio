@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { DEFAULT_PARAMS } from './types'
-import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
+import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_IMAGES_MODEL, DEFAULT_OPENAI_PROFILE_ID, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
 import type { AgentConversation, AmazonPlannerSession, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 vi.mock('./lib/db', () => {
@@ -302,6 +302,41 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.setConfirmDialog).toHaveBeenCalledWith(expect.objectContaining({
       message: expect.stringContaining('普通生图只支持 Images API'),
     }))
+  })
+
+  it('submits with an explicit image profile when the active profile is AI planning', async () => {
+    const imageProfile = createDefaultOpenAIProfile({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      name: '生图',
+      apiKey: 'image-key',
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
+    })
+    const plannerProfile = createDefaultOpenAIProfile({
+      id: 'planner-profile',
+      name: 'AI策划',
+      apiKey: 'planner-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        profiles: [imageProfile, plannerProfile],
+        activeProfileId: plannerProfile.id,
+        amazonPlannerProfileId: plannerProfile.id,
+      }),
+    })
+
+    const submitted = await submitTask({ apiProfileId: imageProfile.id })
+
+    const task = useStore.getState().tasks[0]
+    expect(submitted).toBe(true)
+    expect(task).toMatchObject({
+      apiProfileId: DEFAULT_OPENAI_PROFILE_ID,
+      apiProfileName: '生图',
+      apiMode: 'images',
+      apiModel: DEFAULT_IMAGES_MODEL,
+    })
   })
 
   it('blocks retry with a switch-config dialog when the active profile is Responses API', async () => {

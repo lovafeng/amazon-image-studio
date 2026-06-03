@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { addImageFromFile, ensureImageCached, submitTask, useStore } from '../store'
-import { getActiveApiProfile, getAmazonPlannerProfile, normalizeSettings, validateApiProfile } from '../lib/apiProfiles'
+import { getAmazonPlannerProfile, getDefaultImageProfile, normalizeSettings, validateApiProfile } from '../lib/apiProfiles'
 import {
   DEFAULT_AMAZON_PROMPT_DRAFT,
   type AmazonPromptDraft,
@@ -39,7 +39,7 @@ import {
   type AmazonDomImportResult,
 } from '../lib/amazonDomImport'
 import { DEFAULT_PARAMS } from '../types'
-import type { AmazonPlannerSession } from '../types'
+import type { AmazonPlannerSession, TaskRecord } from '../types'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EyeIcon, HistoryIcon, ImportIcon, PhotoIcon, PlusIcon, TrashIcon } from './icons'
 
 const FIELD_CLASS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
@@ -64,6 +64,13 @@ type PlannerGuideState = {
 type GuidePanelTone = 'white' | 'muted'
 type PlannerActionProgress = 'filled' | 'submitted'
 type PlannerActionProgressMap = Record<string, PlannerActionProgress>
+type BatchGenerateJob = {
+  actionKey: string
+  slot: string
+  prompt: string
+  targetSize: string
+  category: NonNullable<TaskRecord['category']>
+}
 type StyleImageState = {
   candidateIndex: number
   status: 'running' | 'done' | 'error'
@@ -297,7 +304,6 @@ export default function AmazonPlanner() {
   const setParams = useStore((s) => s.setParams)
   const setPendingTaskCategory = useStore((s) => s.setPendingTaskCategory)
   const setShowSettings = useStore((s) => s.setShowSettings)
-  const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const removeInputImage = useStore((s) => s.removeInputImage)
   const clearInputImages = useStore((s) => s.clearInputImages)
   const setInputImages = useStore((s) => s.setInputImages)
@@ -338,6 +344,8 @@ export default function AmazonPlanner() {
   const [isPreparingReferencePayload, setIsPreparingReferencePayload] = useState(false)
   const [referencePayloadNotice, setReferencePayloadNotice] = useState('')
   const [actionProgress, setActionProgress] = useState<PlannerActionProgressMap>({})
+  const [isBatchSubmitting, setIsBatchSubmitting] = useState(false)
+  const [batchSubmittedCount, setBatchSubmittedCount] = useState(0)
   const resolutionTier = resolution === '4k' ? '4K' : '2K'
   const aPlusSpecs = useMemo(() => getAPlusModuleSpecs(aPlusType), [aPlusType])
   const aPlusPlansWithSizes = useMemo(() => withAPlusGenerationSizes(aPlusPlans, resolutionTier), [aPlusPlans, resolutionTier])
@@ -374,6 +382,8 @@ export default function AmazonPlanner() {
   const plannerProfile = getAmazonPlannerProfile(settings)
   const plannerProfileValidation = plannerProfile ? validateApiProfile(plannerProfile) : '未选择支持 Chat Completions 或 Responses API 的 AI 策划配置'
   const plannerApiLabel = plannerProfile?.apiMode === 'chat' ? 'Chat Completions' : 'Responses API'
+  const imageProfile = getDefaultImageProfile(settings)
+  const imageProfileValidation = imageProfile ? validateApiProfile(imageProfile) : '未选择 Images API 生图配置'
   const listingTargetSize = resolution === '4k' ? '4096x4096' : '2048x2048'
   const targetSize = plannerMode === 'aplus' && selectedAPlusPlan ? selectedAPlusPlan.generationSize : listingTargetSize
   const generationParamLabel = `${DEFAULT_PARAMS.output_format.toUpperCase()} / ${DEFAULT_PARAMS.quality} / 压缩率${DEFAULT_PARAMS.output_compression}`
@@ -404,7 +414,7 @@ export default function AmazonPlanner() {
       ? `已提交 ${actionSlot ?? '当前'} ${actionKindLabel}，${canGoNext ? '点击下一张继续' : '已是最后一张'}`
       : currentActionFilled
         ? '已填入右侧输入框，下一步提交生成'
-        : `先填入当前 ${actionSlot ?? '当前'} ${actionKindLabel}提示词`
+        : `可直接一键生图，也可先填入当前 ${actionSlot ?? '当前'} ${actionKindLabel}提示词`
   const mainStyleGuidance = isMainListingPlan
     ? hasStyleReference
       ? 'MAIN 主图不附加风格板；附图和 A+ 会使用已选风格。'
@@ -434,6 +444,12 @@ export default function AmazonPlanner() {
   const seriesStyleReferenceNeeded = plannerMode === 'aplus'
     ? hasPlanOptions
     : imagePlans.some((plan) => !isAmazonListingMainSlot(plan.slot))
+  const batchEffectiveReferenceCount = inputImages.length + (seriesStyleReferenceNeeded && hasStyleReference && selectedStyleImage?.imageId && !inputImages.some((image) => image.id === selectedStyleImage.imageId) ? 1 : 0)
+  const batchStyleReferenceLimitExceeded = seriesStyleReferenceNeeded && hasStyleReference && batchEffectiveReferenceCount > API_MAX_IMAGES
+  const submittedVisiblePlanCount = (plannerMode === 'aplus' ? aPlusPlansWithSizes : imagePlans).filter((plan, index) =>
+    actionProgress[getPlannerActionKey(plannerMode, index, plan.slot)] === 'submitted',
+  ).length
+  const batchSubmitDisabled = isBatchSubmitting || !hasPlanOptions || isPlanning || isGeneratingStyleImages || (seriesStyleReferenceNeeded && !hasStyleReference) || batchStyleReferenceLimitExceeded
   const guideState: PlannerGuideState = !hasUsablePlannerProfile
     ? {
         target: 'planner-api',
@@ -447,7 +463,7 @@ export default function AmazonPlanner() {
       : !hasPlanOptions
         ? {
             target: 'planner-action',
-            message: plannerMode === 'aplus' ? '下一步：点击 AI策划A+ 生成模块方案' : '下一步：点击 AI策划生成逐张方案',
+            message: plannerMode === 'aplus' ? '下一步：点击 AI策划A+ 生成模块方案' : '下一步：点击 AI策划生成完整方案',
           }
         : seriesStyleReferenceNeeded && !hasStyleReference
           ? {
@@ -456,7 +472,7 @@ export default function AmazonPlanner() {
                 ? '下一步：选择一张风格板作为附图和 A+ 的隐藏参考'
                 : hasRunningStyleImages
                   ? '正在生成风格板，完成后选择一张作为隐藏参考'
-                  : '下一步：生成 3 张低清风格板，统一附图和 A+ 视觉',
+                  : '下一步：生成 3 张低清风格板，选定后可一键生图',
             }
           : !hasSelectedPlan
             ? {
@@ -469,7 +485,7 @@ export default function AmazonPlanner() {
                   ? canGoNext ? '下一步：点击下一张继续处理' : '当前图片已提交，已是最后一张'
                   : currentActionFilled
                     ? '下一步：提交生成当前图片'
-                    : `下一步：填入当前 ${actionSlot ?? '当前'} ${actionKindLabel}提示词`,
+                    : `下一步：点击一键生图提交 ${visiblePlanCount} 张，或填入当前 ${actionSlot ?? '当前'} ${actionKindLabel}`,
               }
   const plannerGuideActive = guideState.target === 'planner-api' || guideState.target === 'planner-input' || guideState.target === 'planner-action'
   const styleGuideActive = guideState.target === 'style' || guideState.target === 'style-choice'
@@ -563,6 +579,78 @@ export default function AmazonPlanner() {
     }))
   }
 
+  const getImageProfileForSubmit = () => {
+    const profile = getDefaultImageProfile(settings)
+    if (!profile) {
+      showToast('未找到 Images API 生图配置，请先在设置中添加生图配置。', 'error')
+      setShowSettings(true, 'api')
+      return null
+    }
+    const validation = validateApiProfile(profile)
+    if (validation) {
+      showToast(`请先完善生图 API 配置：${validation}`, 'error')
+      setShowSettings(true, 'api')
+      return null
+    }
+    return profile
+  }
+
+  const createImageRequestSettings = (profileId: string) => {
+    const normalizedSettings = normalizeSettings(settings)
+    return normalizeSettings({
+      ...normalizedSettings,
+      activeProfileId: profileId,
+    })
+  }
+
+  const buildBatchGenerateJobs = (): BatchGenerateJob[] => {
+    if (plannerMode === 'aplus') {
+      return aPlusPlansWithSizes.map((plan, index) => {
+        const prompt = buildAmazonAPlusPlanPrompt({
+          ...plan,
+          seriesStyleGuide: activeSeriesStyleGuide,
+          styleReferenceAttached: hasStyleReference,
+          styleDensityMode,
+        })
+        return {
+          actionKey: getPlannerActionKey('aplus', index, plan.slot),
+          slot: plan.slot,
+          prompt,
+          targetSize: plan.generationSize,
+          category: {
+            productTitle: draft.productTitle.trim(),
+            workflow: 'amazon-aplus',
+            amazonSlot: plan.slot,
+            aPlusType,
+            ...(selectedStyleImage?.imageId ? { styleReferenceImageId: selectedStyleImage.imageId } : {}),
+          },
+        }
+      })
+    }
+
+    return imagePlans.map((plan, index) => {
+      const requiresStyle = !isAmazonListingMainSlot(plan.slot)
+      const prompt = buildAmazonPlanPrompt({
+        ...plan,
+        seriesStyleGuide: requiresStyle ? activeSeriesStyleGuide : null,
+        styleReferenceAttached: requiresStyle && hasStyleReference,
+        styleDensityMode,
+      })
+      return {
+        actionKey: getPlannerActionKey('listing', index, plan.slot),
+        slot: plan.slot,
+        prompt,
+        targetSize: listingTargetSize,
+        category: {
+          productTitle: draft.productTitle.trim(),
+          workflow: 'amazon-listing',
+          amazonSlot: plan.slot,
+          ...(requiresStyle && selectedStyleImage?.imageId ? { styleReferenceImageId: selectedStyleImage.imageId } : {}),
+        },
+      }
+    })
+  }
+
   const applyPrompt = (options: { requireStyle?: boolean } = {}) => {
     if (plannerMode === 'aplus' && !selectedAPlusPlan) {
       showToast('请先 AI 策划并选择一个 A+ 模块', 'error')
@@ -608,12 +696,72 @@ export default function AmazonPlanner() {
 
   const applyAndSubmit = () => {
     if (!applyPrompt({ requireStyle: true })) return
+    const imageProfile = getImageProfileForSubmit()
+    if (!imageProfile) return
     const submittedActionKey = currentActionKey
     queueMicrotask(() => {
-      void submitTask().then((submitted) => {
+      void submitTask({ apiProfileId: imageProfile.id }).then((submitted) => {
         if (submitted) markActionProgress(submittedActionKey, 'submitted')
       })
     })
+  }
+
+  const submitAllPlannedImages = async () => {
+    if (!hasPlanOptions) {
+      showToast('请先完成 AI 策划', 'error')
+      return
+    }
+    if (seriesStyleReferenceNeeded && !selectedStyleImage?.imageId) {
+      showToast('请先生成并选择一张风格参考板', 'error')
+      return
+    }
+    if (batchStyleReferenceLimitExceeded) {
+      showToast(`已选择隐藏风格参考板，实际参考图数量不能超过 ${API_MAX_IMAGES} 张；请删除一张产品参考图后再提交。`, 'error')
+      return
+    }
+
+    const imageProfile = getImageProfileForSubmit()
+    if (!imageProfile) return
+
+    const jobs = buildBatchGenerateJobs()
+    if (!jobs.length) {
+      showToast('当前没有可提交的图片方案', 'error')
+      return
+    }
+
+    const batchInputImages = useStore.getState().inputImages
+    setIsBatchSubmitting(true)
+    setBatchSubmittedCount(0)
+    for (const job of jobs) {
+      setInputImages(batchInputImages)
+      setPrompt(job.prompt)
+      setPendingTaskCategory({
+        mode: 'prompt-match',
+        prompt: job.prompt,
+        category: job.category,
+      })
+      setParams({
+        size: job.targetSize,
+        quality: DEFAULT_PARAMS.quality,
+        output_format: DEFAULT_PARAMS.output_format,
+        output_compression: DEFAULT_PARAMS.output_compression,
+        n: 1,
+      })
+      markActionProgress(job.actionKey, 'filled')
+      const submitted = await submitTask({ apiProfileId: imageProfile.id })
+      if (!submitted) {
+        setInputImages(batchInputImages)
+        setIsBatchSubmitting(false)
+        showToast(`批量提交已停止：${job.slot} 未提交`, 'error')
+        return
+      }
+      markActionProgress(job.actionKey, 'submitted')
+      setBatchSubmittedCount((count) => count + 1)
+    }
+
+    setInputImages(batchInputImages)
+    setIsBatchSubmitting(false)
+    showToast(`已提交 ${jobs.length} 张生图任务`, 'success')
   }
 
   const copyPrompt = async () => {
@@ -671,27 +819,11 @@ export default function AmazonPlanner() {
       return
     }
 
-    const normalizedSettings = normalizeSettings(settings)
-    const imageProfile = getActiveApiProfile(normalizedSettings)
-    const imageProfileValidation = validateApiProfile(imageProfile)
-    if (imageProfileValidation) {
-      showToast(`请先完善生图 API 配置：${imageProfileValidation}`, 'error')
-      setShowSettings(true, 'api')
+    const imageProfile = getImageProfileForSubmit()
+    if (!imageProfile) {
       return
     }
-    if (imageProfile.apiMode !== 'images') {
-      const apiModeLabel = imageProfile.apiMode === 'responses' ? 'Responses API' : 'Chat Completions'
-      setConfirmDialog({
-        title: '当前配置不能生图',
-        message: `当前配置「${imageProfile.name}」使用 ${apiModeLabel}，普通生图只支持 Images API。生成风格板前，请切换到 Images API 生图配置。`,
-        confirmText: '去切换配置',
-        cancelText: '取消',
-        action: () => {
-          setShowSettings(true, 'api')
-        },
-      })
-      return
-    }
+    const imageRequestSettings = createImageRequestSettings(imageProfile.id)
 
     setIsGeneratingStyleImages(true)
     setStyleError('')
@@ -706,7 +838,7 @@ export default function AmazonPlanner() {
       output_compression: DEFAULT_PARAMS.output_compression,
       moderation: params.moderation,
       n: 1,
-    }, normalizedSettings, { hasInputImages: inputImages.length > 0 })
+    }, imageRequestSettings, { hasInputImages: inputImages.length > 0 })
     let referenceImages: string[]
     try {
       const referencePayload = await prepareReferencePayloadForRequest(inputImages.map((image) => image.dataUrl))
@@ -722,7 +854,7 @@ export default function AmazonPlanner() {
 
     const settled = await Promise.allSettled(styleCandidates.map(async (candidate, candidateIndex) => {
       const result = await callImageApi({
-        settings: normalizedSettings,
+        settings: imageRequestSettings,
         prompt: buildAmazonStyleCandidatePrompt(candidate, activeSeriesStyleGuide),
         params: styleParams,
         inputImageDataUrls: referenceImages,
@@ -1302,7 +1434,7 @@ export default function AmazonPlanner() {
                 <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                   {plannerMode === 'aplus'
                     ? '粘贴标题、五点描述或品牌说明，生成 Standard / 大图版 / Premium A+ 模块编排和英文提示词。'
-                    : '粘贴标题、五点描述或产品说明，生成 Main + PT01-PT06 的逐张方案和英文提示词。'}
+                    : '粘贴标题、五点描述或产品说明，生成 Main + PT01-PT06 的完整方案和英文提示词。'}
                 </div>
               </div>
               <div className="rounded-lg bg-gray-100 px-2 py-1 text-[11px] font-medium text-gray-500 dark:bg-white/[0.06] dark:text-gray-400">
@@ -1428,7 +1560,9 @@ export default function AmazonPlanner() {
               </div>
             </div>
             <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200">
-              AI策划使用设置中的策划配置，生图配置保持不变。
+              文案策划固定使用 gpt-5.5 / xhigh；风格板和正式生图会自动使用
+              {imageProfile ? `「${imageProfile.name} · ${imageProfile.model}」` : ' Images API 生图配置'}
+              {imageProfileValidation ? `（${imageProfileValidation}）` : '，无需手动切换模型。'}
             </div>
             {plannerError && (
               <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-800 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">
@@ -1706,6 +1840,30 @@ export default function AmazonPlanner() {
                     ))}
                   </div>
 
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                    <div className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${batchStyleReferenceLimitExceeded ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200' : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300'}`}>
+                      {isBatchSubmitting
+                        ? `批量提交中：${batchSubmittedCount}/${visiblePlanCount}`
+                        : submittedVisiblePlanCount > 0
+                          ? `已提交 ${submittedVisiblePlanCount}/${visiblePlanCount}`
+                          : seriesStyleReferenceNeeded && !hasStyleReference
+                            ? '先选择风格板后可一键生图'
+                            : `准备提交 ${visiblePlanCount} 张`}
+                      {batchStyleReferenceLimitExceeded && (
+                        <span className="mt-1 block">当前参考图加隐藏风格板共 {batchEffectiveReferenceCount} 张，超过上限 {API_MAX_IMAGES} 张。</span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void submitAllPlannedImages()}
+                      disabled={batchSubmitDisabled}
+                      className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${batchSubmitDisabled ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : 'bg-blue-600 text-white shadow-sm hover:bg-blue-500'}`}
+                    >
+                      <PhotoIcon className="h-4 w-4" />
+                      {isBatchSubmitting ? '一键生图中...' : '一键生图'}
+                    </button>
+                  </div>
+
                   <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
@@ -1742,7 +1900,7 @@ export default function AmazonPlanner() {
                   </div>
                 </div>
               </div>
-              <div className="h-[218px] sm:hidden" aria-hidden="true" />
+              <div className="h-[282px] sm:hidden" aria-hidden="true" />
             </>
           )}
           {hasPlanOptions && (
@@ -1881,7 +2039,7 @@ export default function AmazonPlanner() {
               )}
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div>
-                  <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">逐张策划</div>
+                  <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">图片方案</div>
                   <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                     选择图片位后，Prompt Preview 和生成按钮会切换到对应提示词。
                   </div>

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_CHAT_MODEL, createDefaultOpenAIProfile } from './apiProfiles'
+import { DEFAULT_CHAT_MODEL, DEFAULT_RESPONSES_MODEL, createDefaultOpenAIProfile } from './apiProfiles'
 import { DEFAULT_AMAZON_PROMPT_DRAFT } from './amazonPrompt'
 import {
   buildAmazonAPlusPlanPrompt,
@@ -259,6 +259,8 @@ describe('callAmazonPlannerApi', () => {
     expect(url).toBe('https://api.example.com/v1/responses')
     expect(init?.signal).toBe(controller.signal)
     const body = JSON.parse(String(init?.body))
+    expect(body.model).toBe(DEFAULT_RESPONSES_MODEL)
+    expect(body.reasoning).toEqual({ effort: 'xhigh' })
     expect(body.instructions).toContain('The application only fixes the slot count and order')
     expect(body.instructions).toContain('Amazon Listing reference material for the planner')
     expect(body.instructions).toContain('pure white background RGB 255,255,255')

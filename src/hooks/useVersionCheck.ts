@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 
-const REPO = 'Ali-Aria/amazon-image-studio'
-const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`
+export const LATEST_RELEASE_REPO = 'lovafeng/amazon-image-studio'
+export const LATEST_RELEASE_API_URL = `https://api.github.com/repos/${LATEST_RELEASE_REPO}/releases/latest`
 
 function compareVersions(a: string, b: string) {
   const aParts = a.split('.').map((part) => Number.parseInt(part, 10) || 0)
@@ -36,7 +36,7 @@ export function useVersionCheck() {
   useEffect(() => {
     let cancelled = false
 
-    fetch(API_URL, { headers: { Accept: 'application/vnd.github.v3+json' } })
+    fetch(LATEST_RELEASE_API_URL, { headers: { Accept: 'application/vnd.github.v3+json' } })
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json()
@@ -48,7 +48,7 @@ export function useVersionCheck() {
         if (version && compareVersions(version, __APP_VERSION__) > 0) {
           setLatestRelease({
             tag,
-            url: data.html_url ?? `https://github.com/${REPO}/releases/latest`,
+            url: data.html_url ?? `https://github.com/${LATEST_RELEASE_REPO}/releases/latest`,
           })
         }
       })

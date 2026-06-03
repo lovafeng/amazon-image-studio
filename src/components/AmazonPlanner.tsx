@@ -31,9 +31,16 @@ import { callImageApi } from '../lib/api'
 import { deleteAmazonPlannerSession, getAllAmazonPlannerSessions, putAmazonPlannerSession, storeImage } from '../lib/db'
 import { normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { prepareReferenceImagePayload, type PlannerReferenceImagePayload } from '../lib/referenceImagePayload'
+import {
+  AMAZON_DOM_PARSE_FAILURE_MESSAGE,
+  AMAZON_DOM_URL_IMPORT_FAILURE_MESSAGE,
+  importAmazonDomFromUrl,
+  parseAmazonDomHtml,
+  type AmazonDomImportResult,
+} from '../lib/amazonDomImport'
 import { DEFAULT_PARAMS } from '../types'
 import type { AmazonPlannerSession } from '../types'
-import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EyeIcon, HistoryIcon, PhotoIcon, PlusIcon, TrashIcon } from './icons'
+import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EyeIcon, HistoryIcon, ImportIcon, PhotoIcon, PlusIcon, TrashIcon } from './icons'
 
 const FIELD_CLASS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
 const LABEL_CLASS = 'mb-1.5 block text-xs font-medium text-gray-500 dark:text-gray-400'
@@ -298,12 +305,16 @@ export default function AmazonPlanner() {
   const showToast = useStore((s) => s.showToast)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
+  const amazonDomFileInputRef = useRef<HTMLInputElement>(null)
   const plannerAbortControllerRef = useRef<AbortController | null>(null)
   const [draft, setDraft] = useState<AmazonPromptDraft>(DEFAULT_AMAZON_PROMPT_DRAFT)
   const [resolution, setResolution] = useState<'2k' | '4k'>('2k')
   const [plannerMode, setPlannerMode] = useState<AmazonPlannerMode>('listing')
   const [aPlusType, setAPlusType] = useState<APlusContentType>('standard-large')
   const [listingText, setListingText] = useState('')
+  const [amazonImportUrl, setAmazonImportUrl] = useState('')
+  const [amazonImportStatus, setAmazonImportStatus] = useState('')
+  const [isAmazonImporting, setIsAmazonImporting] = useState(false)
   const [imagePlans, setImagePlans] = useState<AmazonImagePlan[]>([])
   const [aPlusPlans, setAPlusPlans] = useState<AmazonAPlusPlan[]>([])
   const [seriesStyleGuides, setSeriesStyleGuides] = useState<{ listing: string; aplus: string }>({
@@ -816,6 +827,58 @@ export default function AmazonPlanner() {
     showToast(`${sourceLabel}已生成 ${result.mode === 'aplus' ? result.aPlusPlans.length : result.plans.length} 张图片策划`, 'success')
   }
 
+  const applyAmazonDomImportResult = (result: AmazonDomImportResult) => {
+    setListingText(result.listingText)
+    setDraft((current) => ({
+      ...current,
+      ...result.draft,
+      productTitle: result.draft.productTitle ?? current.productTitle,
+      sellingPoints: result.draft.sellingPoints ?? current.sellingPoints,
+    }))
+    setPlannerError('')
+    setAmazonImportStatus(result.asin ? `已导入亚马逊商品信息（ASIN ${result.asin}）` : '已导入亚马逊商品信息')
+    showToast('已导入亚马逊商品信息', 'success')
+  }
+
+  const importAmazonUrl = async () => {
+    if (!amazonImportUrl.trim()) {
+      setAmazonImportStatus('请先粘贴亚马逊商品 URL。')
+      showToast('请先粘贴亚马逊商品 URL', 'error')
+      return
+    }
+
+    setIsAmazonImporting(true)
+    setAmazonImportStatus('正在读取亚马逊页面...')
+    try {
+      applyAmazonDomImportResult(await importAmazonDomFromUrl(amazonImportUrl))
+    } catch (err) {
+      const message = err instanceof Error && err.message === AMAZON_DOM_PARSE_FAILURE_MESSAGE
+        ? AMAZON_DOM_PARSE_FAILURE_MESSAGE
+        : AMAZON_DOM_URL_IMPORT_FAILURE_MESSAGE
+      setAmazonImportStatus(message)
+      showToast(message === AMAZON_DOM_PARSE_FAILURE_MESSAGE ? 'DOM 内容解析失败' : 'URL 导入失败，请上传 DOM 文件', 'error')
+    } finally {
+      setIsAmazonImporting(false)
+    }
+  }
+
+  const importAmazonDomFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+
+    setIsAmazonImporting(true)
+    setAmazonImportStatus('正在解析 DOM 文件...')
+    try {
+      applyAmazonDomImportResult(parseAmazonDomHtml(await file.text(), amazonImportUrl))
+    } catch {
+      setAmazonImportStatus(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
+      showToast('DOM 文件解析失败', 'error')
+    } finally {
+      setIsAmazonImporting(false)
+    }
+  }
+
   const createAiPlan = async () => {
     if (plannerAbortControllerRef.current) {
       showToast('AI 策划正在进行中', 'info')
@@ -1269,6 +1332,45 @@ export default function AmazonPlanner() {
                 ))}
               </div>
             )}
+            <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/[0.08] dark:bg-gray-950">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <label className="min-w-0 flex-1">
+                  <span className={LABEL_CLASS}>亚马逊 URL / DOM 导入</span>
+                  <input
+                    value={amazonImportUrl}
+                    onChange={(event) => setAmazonImportUrl(event.target.value)}
+                    className={FIELD_CLASS}
+                    placeholder="粘贴完整 Amazon 商品 URL，参数会原样保留"
+                  />
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void importAmazonUrl()}
+                    disabled={isAmazonImporting}
+                    className={`inline-flex h-10 items-center gap-2 rounded-xl px-3 text-sm font-semibold text-white transition ${isAmazonImporting ? 'cursor-wait bg-gray-400' : 'bg-gray-800 hover:bg-gray-700 dark:bg-white/[0.12] dark:hover:bg-white/[0.20]'}`}
+                  >
+                    <ImportIcon className="h-4 w-4" />
+                    {isAmazonImporting ? '导入中...' : '导入 URL'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => amazonDomFileInputRef.current?.click()}
+                    disabled={isAmazonImporting}
+                    className="inline-flex h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 transition hover:bg-gray-100 disabled:cursor-wait disabled:text-gray-400 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/[0.06]"
+                  >
+                    <ImportIcon className="h-4 w-4" />
+                    上传 DOM
+                  </button>
+                </div>
+              </div>
+              {amazonImportStatus && (
+                <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200">
+                  {amazonImportStatus}
+                </div>
+              )}
+              <input ref={amazonDomFileInputRef} type="file" accept=".html,.htm,.txt,text/html,text/plain" className="hidden" onChange={importAmazonDomFile} />
+            </div>
             <label className={`mt-3 block rounded-xl transition ${getGuideFocusClass(guideState.target === 'planner-input')}`}>
               <span className={LABEL_CLASS}>{plannerMode === 'aplus' ? '标题 / 五点描述 / 品牌说明' : '标题 / 五点描述'}</span>
               <textarea

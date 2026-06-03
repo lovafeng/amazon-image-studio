@@ -19,6 +19,29 @@ function loadDevProxyConfig() {
 
 export default defineConfig(({ command }) => {
   const devProxyConfig = command === 'serve' ? loadDevProxyConfig() : null
+  const apiServerTarget = `http://127.0.0.1:${process.env.API_PORT ?? '5174'}`
+  const devProxy = command === 'serve'
+    ? {
+        ...(devProxyConfig?.enabled
+          ? {
+              [devProxyConfig.prefix]: {
+                target: devProxyConfig.target,
+                changeOrigin: devProxyConfig.changeOrigin,
+                secure: devProxyConfig.secure,
+                rewrite: (path: string) =>
+                  path.replace(
+                    new RegExp(`^${devProxyConfig.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+                    '',
+                  ),
+              },
+            }
+          : {}),
+        '/api': {
+          target: apiServerTarget,
+          changeOrigin: true,
+        },
+      }
+    : undefined
 
   return {
     plugins: [react()],
@@ -29,21 +52,7 @@ export default defineConfig(({ command }) => {
     },
     server: {
       host: true,
-      proxy:
-        devProxyConfig?.enabled
-          ? {
-              [devProxyConfig.prefix]: {
-                target: devProxyConfig.target,
-                changeOrigin: devProxyConfig.changeOrigin,
-                secure: devProxyConfig.secure,
-                rewrite: (path) =>
-                  path.replace(
-                    new RegExp(`^${devProxyConfig.prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
-                    '',
-                  ),
-              },
-            }
-          : undefined,
+      proxy: devProxy,
     },
   }
 })

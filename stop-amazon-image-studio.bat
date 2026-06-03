@@ -21,7 +21,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "  }" ^
   "  Remove-Item -LiteralPath $pidFile -Force -ErrorAction SilentlyContinue;" ^
   "}" ^
-  "$listeners = Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue;" ^
+  "$listeners = @(Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue) + @(Get-NetTCPConnection -LocalPort 5174 -State Listen -ErrorAction SilentlyContinue);" ^
   "foreach ($listener in $listeners) {" ^
   "  $owner = $listener.OwningProcess;" ^
   "  if (-not $owner) { continue }" ^

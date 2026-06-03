@@ -12,90 +12,73 @@ const THUMBNAIL_VERSION = 2
 
 export const CURRENT_THUMBNAIL_VERSION = THUMBNAIL_VERSION
 
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION)
-    req.onupgradeneeded = (e) => {
-      const db = (e.target as IDBOpenDBRequest).result
-      if (!db.objectStoreNames.contains(STORE_TASKS)) {
-        db.createObjectStore(STORE_TASKS, { keyPath: 'id' })
-      }
-      if (!db.objectStoreNames.contains(STORE_IMAGES)) {
-        db.createObjectStore(STORE_IMAGES, { keyPath: 'id' })
-      }
-      if (!db.objectStoreNames.contains(STORE_THUMBNAILS)) {
-        db.createObjectStore(STORE_THUMBNAILS, { keyPath: 'id' })
-      }
-      if (!db.objectStoreNames.contains(STORE_AMAZON_PLANNER_SESSIONS)) {
-        db.createObjectStore(STORE_AMAZON_PLANNER_SESSIONS, { keyPath: 'id' })
-      }
-    }
-    req.onsuccess = () => resolve(req.result)
-    req.onerror = () => reject(req.error)
+async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`/api${path}`, {
+    credentials: 'same-origin',
+    ...init,
+  })
+  const body = await response.json()
+  if (!response.ok) throw new Error(body?.error ?? '请求失败')
+  return body as T
+}
+
+function apiPut<T>(path: string, body: unknown): Promise<T> {
+  return apiJson(path, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
   })
 }
 
-function dbTransaction<T>(
-  storeName: string,
-  mode: IDBTransactionMode,
-  fn: (store: IDBObjectStore) => IDBRequest<T>,
-): Promise<T> {
-  return openDB().then(
-    (db) =>
-      new Promise((resolve, reject) => {
-        const tx = db.transaction(storeName, mode)
-        const store = tx.objectStore(storeName)
-        const req = fn(store)
-        req.onsuccess = () => resolve(req.result)
-        req.onerror = () => reject(req.error)
-      }),
-  )
+async function apiDelete(path: string): Promise<undefined> {
+  await apiJson(path, { method: 'DELETE' })
+  return undefined
 }
 
 // ===== Tasks =====
 
 export function getAllTasks(): Promise<TaskRecord[]> {
-  return dbTransaction(STORE_TASKS, 'readonly', (s) => s.getAll())
+  return apiJson('/tasks')
 }
 
 export function putTask(task: TaskRecord): Promise<IDBValidKey> {
-  return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.put(task))
+  return apiPut<{ id: string }>(`/tasks/${encodeURIComponent(task.id)}`, task).then((result) => result.id)
 }
 
 export function deleteTask(id: string): Promise<undefined> {
-  return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.delete(id))
+  return apiDelete(`/tasks/${encodeURIComponent(id)}`)
 }
 
 export function clearTasks(): Promise<undefined> {
-  return dbTransaction(STORE_TASKS, 'readwrite', (s) => s.clear())
+  return apiDelete('/tasks')
 }
 
 // ===== Amazon planner sessions =====
 
 export function getAllAmazonPlannerSessions(): Promise<AmazonPlannerSession[]> {
-  return dbTransaction(STORE_AMAZON_PLANNER_SESSIONS, 'readonly', (s) => s.getAll())
+  return apiJson('/amazon-planner-sessions')
 }
 
 export function putAmazonPlannerSession(session: AmazonPlannerSession): Promise<IDBValidKey> {
-  return dbTransaction(STORE_AMAZON_PLANNER_SESSIONS, 'readwrite', (s) => s.put(session))
+  return apiPut<{ id: string }>(`/amazon-planner-sessions/${encodeURIComponent(session.id)}`, session).then((result) => result.id)
 }
 
 export function deleteAmazonPlannerSession(id: string): Promise<undefined> {
-  return dbTransaction(STORE_AMAZON_PLANNER_SESSIONS, 'readwrite', (s) => s.delete(id))
+  return apiDelete(`/amazon-planner-sessions/${encodeURIComponent(id)}`)
 }
 
 export function clearAmazonPlannerSessions(): Promise<undefined> {
-  return dbTransaction(STORE_AMAZON_PLANNER_SESSIONS, 'readwrite', (s) => s.clear())
+  return apiDelete('/amazon-planner-sessions')
 }
 
 // ===== Images =====
 
 export function getImage(id: string): Promise<StoredImage | undefined> {
-  return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.get(id))
+  return apiJson<StoredImage | null>(`/images/${encodeURIComponent(id)}`).then((image) => image ?? undefined)
 }
 
 export function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
-  return dbTransaction(STORE_THUMBNAILS, 'readonly', (s) => s.get(id))
+  return apiJson<StoredImageThumbnail | null>(`/thumbnails/${encodeURIComponent(id)}`).then((thumbnail) => thumbnail ?? undefined)
 }
 
 export async function getStoredFreshImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
@@ -104,7 +87,7 @@ export async function getStoredFreshImageThumbnail(id: string): Promise<StoredIm
 }
 
 export function putImageThumbnail(thumbnail: StoredImageThumbnail): Promise<IDBValidKey> {
-  return dbTransaction(STORE_THUMBNAILS, 'readwrite', (s) => s.put(thumbnail))
+  return apiPut<{ id: string }>(`/thumbnails/${encodeURIComponent(thumbnail.id)}`, thumbnail).then((result) => result.id)
 }
 
 export async function getImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
@@ -152,43 +135,23 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
 }
 
 export function getAllImages(): Promise<StoredImage[]> {
-  return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.getAll())
+  return apiJson('/images')
 }
 
 export function getAllImageIds(): Promise<string[]> {
-  return dbTransaction(STORE_IMAGES, 'readonly', (s) => s.getAllKeys()).then((keys) =>
-    keys.map(String),
-  )
+  return apiJson('/images/ids')
 }
 
 export function putImage(image: StoredImage): Promise<IDBValidKey> {
-  return dbTransaction(STORE_IMAGES, 'readwrite', (s) => s.put(image))
+  return apiPut<{ id: string }>(`/images/${encodeURIComponent(image.id)}`, image).then((result) => result.id)
 }
 
 export function deleteImage(id: string): Promise<undefined> {
-  return openDB().then(
-    (db) =>
-      new Promise((resolve, reject) => {
-        const tx = db.transaction([STORE_IMAGES, STORE_THUMBNAILS], 'readwrite')
-        tx.objectStore(STORE_IMAGES).delete(id)
-        tx.objectStore(STORE_THUMBNAILS).delete(id)
-        tx.oncomplete = () => resolve(undefined)
-        tx.onerror = () => reject(tx.error)
-      }),
-  )
+  return apiDelete(`/images/${encodeURIComponent(id)}`)
 }
 
 export function clearImages(): Promise<undefined> {
-  return openDB().then(
-    (db) =>
-      new Promise((resolve, reject) => {
-        const tx = db.transaction([STORE_IMAGES, STORE_THUMBNAILS], 'readwrite')
-        tx.objectStore(STORE_IMAGES).clear()
-        tx.objectStore(STORE_THUMBNAILS).clear()
-        tx.oncomplete = () => resolve(undefined)
-        tx.onerror = () => reject(tx.error)
-      }),
-  )
+  return apiDelete('/images')
 }
 
 // ===== Image hashing & dedup =====

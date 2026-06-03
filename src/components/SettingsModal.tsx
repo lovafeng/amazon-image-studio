@@ -555,56 +555,42 @@ export default function SettingsModal() {
 
     if (profile.provider === 'openai') {
       const baseUrl = profile.baseUrl.trim() || DEFAULT_SETTINGS.baseUrl
-      url.searchParams.set('apiUrl', options.useNewApiAddress && !options.includeApiKey ? '{address}' : normalizeBaseUrl(baseUrl))
-      if (options.includeApiKey && profile.apiKey.trim()) {
-        url.searchParams.set('apiKey', profile.apiKey.trim())
-      } else if (!options.includeApiKey && options.useNewApiKey) {
-        url.searchParams.set('apiKey', '{key}')
-      }
+      url.searchParams.set('apiUrl', options.useNewApiAddress ? '{address}' : normalizeBaseUrl(baseUrl))
       url.searchParams.set('apiMode', profile.apiMode)
       const model = profile.model.trim() || getDefaultModelForMode(profile.apiMode)
-      url.searchParams.set('model', !options.includeApiKey && options.useNewApiModel ? '{model}' : model)
+      url.searchParams.set('model', options.useNewApiModel ? '{model}' : model)
       if (profile.codexCli) url.searchParams.set('codexCli', 'true')
       if (profile.streamImages !== DEFAULT_SETTINGS.streamImages) url.searchParams.set('streamImages', String(Boolean(profile.streamImages)))
       if (profile.streamPartialImages !== DEFAULT_STREAM_PARTIAL_IMAGES) url.searchParams.set('streamPartialImages', String(normalizeStreamPartialImages(profile.streamPartialImages)))
 
       let result = url.toString()
-      if (!options.includeApiKey) {
-        if (options.useNewApiAddress) result = result.replace('%7Baddress%7D', '{address}')
-        if (options.useNewApiKey) result = result.replace('%7Bkey%7D', '{key}')
-        if (options.useNewApiModel) result = result.replace('%7Bmodel%7D', '{model}')
-      }
+      if (options.useNewApiAddress) result = result.replace('%7Baddress%7D', '{address}')
+      if (options.useNewApiModel) result = result.replace('%7Bmodel%7D', '{model}')
       return result
     }
 
     const provider = draft.customProviders.find((item) => item.id === profile.provider)
     const importProfile: ApiProfile = {
       ...profile,
-      apiKey: options.includeApiKey ? profile.apiKey : '',
+      apiKey: '',
     }
-    if (!options.includeApiKey) {
-      if (options.useNewApiAddress) importProfile.baseUrl = '{address}'
-      if (options.useNewApiKey) importProfile.apiKey = '{key}'
-      if (options.useNewApiModel) importProfile.model = '{model}'
-    }
+    if (options.useNewApiAddress) importProfile.baseUrl = '{address}'
+    if (options.useNewApiModel) importProfile.model = '{model}'
     url.searchParams.set('settings', JSON.stringify({
       customProviders: provider ? [provider] : [],
       profiles: [importProfile],
     }))
 
     let result = url.toString()
-    if (!options.includeApiKey) {
-      if (options.useNewApiAddress) result = result.replace(/%7Baddress%7D/g, '{address}')
-      if (options.useNewApiKey) result = result.replace(/%7Bkey%7D/g, '{key}')
-      if (options.useNewApiModel) result = result.replace(/%7Bmodel%7D/g, '{model}')
-    }
+    if (options.useNewApiAddress) result = result.replace(/%7Baddress%7D/g, '{address}')
+    if (options.useNewApiModel) result = result.replace(/%7Bmodel%7D/g, '{model}')
     return result
   }
 
   const copyProfileImportUrl = async (profile: ApiProfile, options: CopyImportUrlOptions) => {
     try {
       await copyTextToClipboard(createProfileImportUrl(profile, options))
-      showToast(options.includeApiKey ? '导入 URL 已复制（包含 API Key）' : '导入 URL 已复制', 'success')
+      showToast('导入 URL 已复制', 'success')
       setCopyImportUrlProfile(null)
     } catch (err) {
       showToast(getClipboardFailureMessage('复制导入 URL 失败', err), 'error')
@@ -1562,7 +1548,7 @@ export default function SettingsModal() {
                   </button>
                 </div>
                 <div data-selectable-text className="mt-1.5 text-xs text-gray-500 dark:text-gray-500">
-                  支持通过查询参数覆盖：<code className="bg-gray-100 dark:bg-white/[0.06] px-1 py-0.5 rounded">?apiKey=</code>
+                  为避免泄露，导入 URL 不会写入 API Key。
                 </div>
               </div>
 
@@ -2107,31 +2093,24 @@ export default function SettingsModal() {
                 <span>复制导入配置「{copyImportUrlProfile.name}」的 URL</span>
               </h3>
               <div className="text-[13px] text-gray-500 dark:text-gray-400 mb-5 leading-relaxed">
-                是否包含 API Key？如果选择「不包含」，可额外配置是否使用 New API 变量。
+                导入 URL 不包含 API Key。打开后需要在设置中手动填写密钥。
               </div>
 
-              {!copyImportUrlOptions.includeApiKey && (
-                <div className="mb-6 rounded-2xl bg-gray-50/80 p-4 dark:bg-white/[0.03] ring-1 ring-black/5 dark:ring-white/5">
-                  <div className="text-[13px] font-bold text-gray-700 dark:text-gray-300 mb-3.5">New API 变量配置</div>
-                  <div className="space-y-3">
-                    <Checkbox
-                      checked={copyImportUrlOptions.useNewApiAddress}
-                      onChange={(checked) => updateCopyImportUrlOptions({ useNewApiAddress: checked })}
-                      label={<>使用 <code className="mx-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-[0.85em] font-mono text-gray-700 dark:bg-white/[0.08] dark:text-gray-200">{"{address}"}</code> (不含 /v1)</>}
-                    />
-                    <Checkbox
-                      checked={copyImportUrlOptions.useNewApiKey}
-                      onChange={(checked) => updateCopyImportUrlOptions({ useNewApiKey: checked })}
-                      label={<>使用 <code className="mx-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-[0.85em] font-mono text-gray-700 dark:bg-white/[0.08] dark:text-gray-200">{"{key}"}</code></>}
-                    />
-                    <Checkbox
-                      checked={copyImportUrlOptions.useNewApiModel}
-                      onChange={(checked) => updateCopyImportUrlOptions({ useNewApiModel: checked })}
-                      label={<>使用 <code className="mx-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-[0.85em] font-mono text-gray-700 dark:bg-white/[0.08] dark:text-gray-200">{"{model}"}</code></>}
-                    />
-                  </div>
+              <div className="mb-6 rounded-2xl bg-gray-50/80 p-4 dark:bg-white/[0.03] ring-1 ring-black/5 dark:ring-white/5">
+                <div className="text-[13px] font-bold text-gray-700 dark:text-gray-300 mb-3.5">New API 变量配置</div>
+                <div className="space-y-3">
+                  <Checkbox
+                    checked={copyImportUrlOptions.useNewApiAddress}
+                    onChange={(checked) => updateCopyImportUrlOptions({ useNewApiAddress: checked })}
+                    label={<>使用 <code className="mx-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-[0.85em] font-mono text-gray-700 dark:bg-white/[0.08] dark:text-gray-200">{"{address}"}</code> (不含 /v1)</>}
+                  />
+                  <Checkbox
+                    checked={copyImportUrlOptions.useNewApiModel}
+                    onChange={(checked) => updateCopyImportUrlOptions({ useNewApiModel: checked })}
+                    label={<>使用 <code className="mx-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-[0.85em] font-mono text-gray-700 dark:bg-white/[0.08] dark:text-gray-200">{"{model}"}</code></>}
+                  />
                 </div>
-              )}
+              </div>
 
               <div className="flex gap-2">
                 <button
@@ -2139,18 +2118,9 @@ export default function SettingsModal() {
                     const options = { ...copyImportUrlOptions, includeApiKey: false }
                     copyProfileImportUrl(copyImportUrlProfile, options)
                   }}
-                  className="flex-1 py-2 rounded-xl border border-gray-200 dark:border-white/[0.08] text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.06] transition"
-                >
-                  不包含
-                </button>
-                <button
-                  onClick={() => {
-                    const options = { ...copyImportUrlOptions, includeApiKey: true }
-                    copyProfileImportUrl(copyImportUrlProfile, options)
-                  }}
                   className="flex-1 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 transition shadow-sm shadow-blue-500/20"
                 >
-                  包含 API Key
+                  复制安全导入 URL
                 </button>
               </div>
             </div>

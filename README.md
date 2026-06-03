@@ -9,8 +9,9 @@
 ## 在线体验
 
 - 体验地址：[https://ali-aria.github.io/amazon-image-studio/](https://ali-aria.github.io/amazon-image-studio/)
-- 在线体验不会内置 API Key；生成图片和 AI 策划都需要在右上角设置中填写你自己的 OpenAI 或兼容接口 Key。
-- API Key 保存在当前浏览器本地，不会提交到仓库；如果线上页面加载异常，也可以按下面的“启动项目”在本地运行。
+- 当前登录与 SQLite 存储版需要本地 Node API 服务；GitHub Pages 静态页面不覆盖账号登录和 SQLite 存储能力。
+- 本地运行后，生成图片和 AI 策划仍需要在右上角设置中填写你自己的 OpenAI 或兼容接口 Key。
+- API Key 保存在当前浏览器本地，不会提交到仓库。
 
 ## 核心功能
 
@@ -23,7 +24,7 @@
 - A+ 小方块模块支持单独输出标题/正文文案，和图片内文字分开，避免把长文案画进 220x220 图片里。
 - 支持 OpenAI / OpenAI 兼容图片接口，以及独立的 AI 策划 Chat Completions / Responses API 配置。
 - 历史记录支持按商品、来源、形状筛选；从历史记录复用或编辑 Listing / A+ 图片时，新任务会继承原商品分类。
-- 保留原项目的参考图、遮罩编辑、历史记录、批量下载、本地 IndexedDB 存储等能力。
+- 增加单管理员登录和本地 SQLite 存储；保留参考图、遮罩编辑、历史记录、批量下载等能力。
 
 ## 环境要求
 
@@ -64,7 +65,7 @@ https://github.com/Ali-Aria/amazon-image-studio
 2. 如果本地还没有项目，就 clone 仓库；如果已经下载 ZIP 或源码文件夹，直接进入现有项目目录，不要重复下载。
 3. 在项目目录运行 npm ci 安装依赖。
 4. 如果我是 Windows 用户，优先检查仓库里的 start-amazon-image-studio.bat，能用的话帮我用它启动项目；停止时可以用 stop-amazon-image-studio.bat。
-5. 如果不使用 bat 脚本，就运行 npm run dev 启动项目。
+5. 如果不使用 bat 脚本，就先按 README 配置 .env，再运行 npm run dev:app 启动项目。
 6. 告诉我浏览器应该打开哪个本地地址。
 ```
 
@@ -89,6 +90,31 @@ npm ci
 
 依赖只需要安装一次。以后日常使用直接看下面的“启动项目”。
 
+## 账号和存储配置
+
+首次启动前，复制 `.env.example` 为 `.env`，并修改管理员账号、密码和会话密钥：
+
+```powershell
+copy .env.example .env
+```
+
+`.env` 示例：
+
+```env
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-me
+SESSION_SECRET=change-me-to-a-long-random-string
+SQLITE_PATH=data/app.sqlite
+API_PORT=5174
+```
+
+说明：
+
+- `ADMIN_USERNAME` / `ADMIN_PASSWORD` 是唯一管理员账号。
+- `SESSION_SECRET` 用于签名登录 cookie，建议改成一段较长随机字符串。
+- `SQLITE_PATH` 是本地 SQLite 数据库路径，默认放在 `data/app.sqlite`。
+- `.env` 和 `data/` 已加入忽略列表，不应提交到仓库。
+
 ## 启动项目
 
 ### 方式一：手动启动（通用）
@@ -96,7 +122,7 @@ npm ci
 在项目目录中执行：
 
 ```powershell
-npm run dev
+npm run dev:app
 ```
 
 然后打开终端中显示的本地地址，通常是：
@@ -104,6 +130,8 @@ npm run dev
 ```text
 http://127.0.0.1:5173/
 ```
+
+页面打开后，使用 `.env` 中的管理员账号和密码登录。
 
 停止时，在运行开发服务的终端中按 `Ctrl + C`。
 
@@ -115,7 +143,7 @@ http://127.0.0.1:5173/
 start-amazon-image-studio.bat
 ```
 
-双击后会启动本地开发服务，并自动打开浏览器：
+双击后会启动本地 API 服务和 Vite 开发服务，并自动打开浏览器：
 
 ```text
 http://127.0.0.1:5173/
@@ -123,7 +151,7 @@ http://127.0.0.1:5173/
 
 如果服务已经在运行，脚本会直接打开浏览器。
 
-首次双击或 `package-lock.json` 发生变化后，脚本会先运行 `npm ci` 安装依赖；依赖安装成功后才会启动项目。如果电脑还没有安装 Node.js 20 LTS 或更新版本，脚本会提示先安装 Node.js。
+首次双击或 `package-lock.json` 发生变化后，脚本会先运行 `npm ci` 安装依赖；依赖安装成功后才会启动项目。如果电脑还没有安装 Node.js 20 LTS 或更新版本，脚本会提示先安装 Node.js。双击启动前也需要先创建 `.env`。
 
 ## 停止项目
 
@@ -205,8 +233,10 @@ A+ 生图会按模块比例请求 2K / 4K 高清画布，页面中会同时显�
 ## 安全说明
 
 - 不要把你的 API Key 提交到 GitHub。
+- 不要把 `.env`、`data/app.sqlite` 或其它本地数据文件提交到 GitHub。
 - 不要把包含 API Key 的配置截图发给别人。
 - 本项目的 API Key 保存在你自己浏览器的本地存储中。
+- 生成历史、图片和策划历史保存在本地 SQLite 数据库中。
 - 每个使用者应填写自己的 API Key，并自行承担 API 调用费用。
 - 如果你要把项目发给别人，请确认仓库中没有 `.env`、私钥、真实 API Key 或个人数据。
 
@@ -223,7 +253,7 @@ npm ci
 然后重新运行：
 
 ```powershell
-npm run dev
+npm run dev:app
 ```
 
 Windows 用户也可以重新双击 `start-amazon-image-studio.bat`。

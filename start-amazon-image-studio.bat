@@ -26,7 +26,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ensureScript = Join-Path $project 'scripts\ensure-dev-dependencies.ps1';" ^
   "& powershell -NoProfile -ExecutionPolicy Bypass -File $ensureScript -ProjectDir $project;" ^
   "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE; }" ^
-  "$cmd = 'title ' + $serverTitle + ' && npm run dev -- --host 127.0.0.1 --port 5173 --strictPort';" ^
+  "$cmd = 'title ' + $serverTitle + ' && npm run dev:app';" ^
   "$process = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/k', $cmd) -WorkingDirectory $project -PassThru;" ^
   "Set-Content -LiteralPath $pidFile -Value $process.Id -Encoding ASCII;" ^
   "Start-Sleep -Seconds 3;" ^

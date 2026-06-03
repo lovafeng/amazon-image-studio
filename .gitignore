@@ -13,6 +13,7 @@ dev-proxy.config.json
 # Local dev/runtime state
 .amazon-image-studio-dev.pid
 .amazon-image-studio-deps.hash
+data/
 *.pid
 *.log
 npm-debug.log*

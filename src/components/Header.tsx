@@ -4,7 +4,7 @@ import { useTooltip } from '../hooks/useTooltip'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import ViewportTooltip from './ViewportTooltip'
 import HelpModal from './HelpModal'
-import { HelpCircleIcon, InstallIcon, SettingsIcon } from './icons'
+import { HelpCircleIcon, InstallIcon, LogoutIcon, SettingsIcon } from './icons'
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>
@@ -16,7 +16,12 @@ function isInstalledPwa() {
   return window.matchMedia('(display-mode: standalone)').matches || nav.standalone === true
 }
 
-export default function Header() {
+interface HeaderProps {
+  username?: string
+  onLogout?: () => void
+}
+
+export default function Header({ username, onLogout }: HeaderProps) {
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const [showHelp, setShowHelp] = useState(false)
@@ -26,6 +31,7 @@ export default function Header() {
   const installTooltip = useTooltip()
   const helpTooltip = useTooltip()
   const settingsTooltip = useTooltip()
+  const logoutTooltip = useTooltip()
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event: Event) => {
@@ -147,6 +153,31 @@ export default function Header() {
                 设置
               </ViewportTooltip>
             </div>
+            {onLogout && (
+              <div
+                className="relative flex items-center"
+                {...logoutTooltip.handlers}
+              >
+                {username && (
+                  <span className="hidden max-w-32 truncate px-2 text-xs text-gray-500 dark:text-gray-400 sm:inline">
+                    {username}
+                  </span>
+                )}
+                <button
+                  onClick={() => {
+                    dismissAllTooltips()
+                    onLogout()
+                  }}
+                  className="rounded-lg p-2 transition-colors hover:bg-gray-100 dark:hover:bg-gray-900"
+                  aria-label="退出登录"
+                >
+                  <LogoutIcon className="h-5 w-5 text-gray-600 dark:text-gray-400" />
+                </button>
+                <ViewportTooltip visible={logoutTooltip.visible} className="whitespace-nowrap">
+                  退出登录
+                </ViewportTooltip>
+              </div>
+            )}
           </div>
         </div>
       </header>

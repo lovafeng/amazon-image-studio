@@ -4,6 +4,7 @@ import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequestHandler } from './app.mjs'
 import { createStorage } from './database.mjs'
+import { shouldUseApiHandler } from './routing.mjs'
 
 const projectRoot = join(fileURLToPath(new URL('.', import.meta.url)), '..')
 
@@ -80,7 +81,7 @@ const apiHandler = createRequestHandler({ config, storage })
 
 createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost')
-  if (url.pathname.startsWith('/api/')) {
+  if (shouldUseApiHandler(url.pathname)) {
     apiHandler(req, res)
     return
   }

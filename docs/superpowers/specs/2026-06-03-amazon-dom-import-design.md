@@ -54,7 +54,8 @@
 模块职责：
 
 - 判断 URL 是否像 Amazon 商品页。
-- 从 URL 中提取 ASIN。
+- 从 URL 中提取 ASIN 用于展示或记录。
+- 保留用户粘贴的原始 URL 作为实际采集 URL。
 - 用 `DOMParser` 解析 HTML 字符串。
 - 从 Amazon DOM 中提取商品信息。
 - 格式化为现有 `listingText`。
@@ -111,9 +112,9 @@ export interface AmazonDomImportResult {
 
 ## URL 读取策略
 
-前端先对 URL 做基本判断，只接受 `amazon.` 域名或包含 `/dp/ASIN`、`/gp/product/ASIN` 的 URL。
+前端先对 URL 做基本判断，只接受 `amazon.` 域名或包含 `/dp/ASIN`、`/gp/product/ASIN` 的 URL。校验和 ASIN 提取不能改变实际采集 URL。
 
-URL 读取使用普通 `fetch`。如果浏览器因 CORS、403、网络失败或返回非 HTML 内容导致读取失败，直接提示上传 DOM 文件，不加入重试、第三方抓取服务或隐藏 fallback。
+URL 读取使用普通 `fetch`，请求目标必须是用户粘贴的完整原始 URL，包括 query 参数、ref 参数、session 参数、variant 参数和 `th=1` 等参数。不要把 URL 规范化成 `/dp/ASIN`，不要移除参数，也不要重排参数。如果浏览器因 CORS、403、网络失败或返回非 HTML 内容导致读取失败，直接提示上传 DOM 文件，不加入重试、第三方抓取服务或隐藏 fallback。
 
 这个设计符合当前静态前端架构，不要求新增后端。未来如果项目加入本地 Node 服务，可以把 URL 读取移到服务端再增强成功率。
 
@@ -133,6 +134,7 @@ URL 读取使用普通 `fetch`。如果浏览器因 CORS、403、网络失败或
 先写失败测试，再实现：
 
 - 从 `/dp/B0G1MSW4RW` URL 提取 ASIN。
+- URL 导入请求使用用户输入的完整 URL，保留所有 query 参数。
 - 从典型 Amazon HTML 中提取标题和五点。
 - 从详情表中提取品牌、颜色、材质、包装清单。
 - 生成现有 AI 策划可用的 `listingText`。

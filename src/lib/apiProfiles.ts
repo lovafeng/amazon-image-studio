@@ -451,8 +451,10 @@ function applyRuntimeDefaultsToDefaultProfile(profile: ApiProfile): ApiProfile {
 
   return {
     ...profile,
-    baseUrl: !profile.baseUrl.trim() || profile.baseUrl === OPENAI_DEFAULT_BASE_URL ? DEFAULT_BASE_URL : profile.baseUrl,
-    apiKey: profile.apiKey.trim() ? profile.apiKey : DEFAULT_PROFILE_API_KEY,
+    baseUrl: DEFAULT_SERVER_API_KEY_AVAILABLE
+      ? DEFAULT_BASE_URL
+      : !profile.baseUrl.trim() || profile.baseUrl === OPENAI_DEFAULT_BASE_URL ? DEFAULT_BASE_URL : profile.baseUrl,
+    apiKey: DEFAULT_SERVER_API_KEY_AVAILABLE ? DEFAULT_PROFILE_API_KEY : profile.apiKey.trim() ? profile.apiKey : DEFAULT_PROFILE_API_KEY,
     apiProxy: DEFAULT_OPENAI_API_PROXY || profile.apiProxy,
   }
 }

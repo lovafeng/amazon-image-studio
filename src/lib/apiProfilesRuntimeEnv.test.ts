@@ -65,4 +65,47 @@ describe('api profile runtime env defaults', () => {
       },
     ])
   })
+
+  it('overrides stale built-in image and planner browser config when server key is available', async () => {
+    vi.stubEnv('VITE_DEFAULT_API_URL', 'https://done.amzdataincn.com/reseller/v1')
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
+    vi.stubEnv('VITE_API_PROXY_LOCKED', 'true')
+    vi.stubEnv('VITE_API_PROXY_SERVER_KEY_AVAILABLE', 'true')
+
+    const { normalizeSettings } = await import('./apiProfiles')
+
+    const settings = normalizeSettings({
+      profiles: [
+        {
+          ...IMAGE_PROFILE,
+          baseUrl: 'https://chatgpt.com/backend-api/codex',
+          apiKey: 'old-browser-key',
+          apiProxy: false,
+        },
+        {
+          ...PLANNER_PROFILE,
+          baseUrl: 'https://chatgpt.com/backend-api/codex',
+          apiKey: 'old-browser-key',
+          apiProxy: false,
+        },
+      ],
+      activeProfileId: IMAGE_PROFILE.id,
+      amazonPlannerProfileId: PLANNER_PROFILE.id,
+    })
+
+    expect(settings.profiles).toMatchObject([
+      {
+        id: IMAGE_PROFILE.id,
+        baseUrl: 'https://done.amzdataincn.com/reseller/v1',
+        apiKey: 'server-env',
+        apiProxy: true,
+      },
+      {
+        id: PLANNER_PROFILE.id,
+        baseUrl: 'https://done.amzdataincn.com/reseller/v1',
+        apiKey: 'server-env',
+        apiProxy: true,
+      },
+    ])
+  })
 })

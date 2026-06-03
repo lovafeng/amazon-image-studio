@@ -49,19 +49,53 @@ function getElementText(document: Document, selector: string): string {
   return cleanAmazonText(document.querySelector(selector)?.textContent ?? '')
 }
 
+function getElementValue(document: Document, selector: string): string {
+  return cleanAmazonText(document.querySelector<HTMLInputElement>(selector)?.value ?? '')
+}
+
+function getTextList(document: Document, selector: string): string[] {
+  return Array.from(document.querySelectorAll(selector))
+    .map((element) => cleanAmazonText(element.textContent ?? ''))
+    .filter(Boolean)
+}
+
 function getElementsText(document: Document, selector: string): string[] {
   return Array.from(document.querySelectorAll(selector))
     .map((element) => cleanAmazonBulletText(element.textContent ?? ''))
     .filter(Boolean)
 }
 
+function cleanAmazonTitle(value: string): string {
+  return cleanAmazonText(value).replace(/^Product Summary:\s*/i, '')
+}
+
+function cleanAmazonByline(value: string): string {
+  return cleanAmazonText(value)
+    .replace(/^Visit the\s+/i, '')
+    .replace(/^From\s+/i, '')
+    .replace(/^Brand:\s*/i, '')
+    .replace(/\s+Store$/i, '')
+}
+
+function getAmazonBullets(document: Document): string[] {
+  const bullets = getElementsText(document, '#feature-bullets li span')
+  const fallbackBullets = bullets.length ? bullets : getElementsText(document, '#pqv-feature-bullets li span')
+  return fallbackBullets.filter((item) => !/^Note:/i.test(item)).slice(0, 5)
+}
+
 function readDetailRows(document: Document): Record<string, string> {
   const details: Record<string, string> = {}
-  const rows = Array.from(document.querySelectorAll('#productDetails_detailBullets_sections1 tr, #productDetails_techSpec_section_1 tr'))
-  for (const row of rows) {
-    const key = cleanAmazonText(row.querySelector('th')?.textContent ?? '').replace(/:$/, '')
-    const value = cleanAmazonText(row.querySelector('td')?.textContent ?? '')
-    if (key && value) details[key] = value
+  const rowSelectors = [
+    '#productDetails_detailBullets_sections1 tr',
+    '#productDetails_techSpec_section_1 tr',
+    '#productDetails_feature_div tr',
+  ]
+  for (const selector of rowSelectors) {
+    for (const row of Array.from(document.querySelectorAll(selector))) {
+      const key = cleanAmazonText(row.querySelector('th')?.textContent ?? '').replace(/:$/, '')
+      const value = cleanAmazonText(row.querySelector('td')?.textContent ?? '')
+      if (key && value) details[key] = value
+    }
   }
 
   for (const item of Array.from(document.querySelectorAll('#detailBullets_feature_div li'))) {
@@ -82,17 +116,37 @@ function findDetail(details: Record<string, string>, patterns: RegExp[]): string
   return ''
 }
 
+function findBreadcrumbCategory(document: Document): string {
+  const breadcrumbs = getTextList(document, '#wayfinding-breadcrumbs_feature_div a')
+  return breadcrumbs[breadcrumbs.length - 1] ?? ''
+}
+
+function findBestSellerCategory(value: string): string {
+  let category = ''
+  for (const match of value.matchAll(/\bin\s+([^#()]+?)(?=\s*(?:\(|#|$))/gi)) {
+    category = cleanAmazonText(match[1] ?? '')
+  }
+  return category
+}
+
 export function parseAmazonDomDocument(document: Document, sourceUrl = ''): AmazonDomImportResult {
-  const title = getElementText(document, '#productTitle')
-  const bullets = getElementsText(document, '#feature-bullets li span').slice(0, 5)
+  const title = cleanAmazonTitle(
+    getElementText(document, '#productTitle')
+      || getElementValue(document, 'input[name="productTitle"], input#productTitle')
+      || getElementText(document, '#pqv-title'),
+  )
+  const bullets = getAmazonBullets(document)
   const details = readDetailRows(document)
-  const byline = getElementText(document, '#bylineInfo').replace(/^Visit the\s+/i, '').replace(/\s+Store$/i, '')
-  const color = getElementText(document, '#variation_color_name .selection') || findDetail(details, [/^colou?r$/i])
+  const byline = cleanAmazonByline(getElementText(document, '#bylineInfo') || getElementText(document, '#pqv-byline'))
+  const color = getElementText(document, '#variation_color_name .selection')
+    || getElementText(document, '#inline-twister-expanded-dimension-text-color_name')
+    || findDetail(details, [/^colou?r$/i])
   const material = findDetail(details, [/material/i])
   const packageIncludes = findDetail(details, [/included components/i, /package includes/i])
-  const brand = findDetail(details, [/^brand$/i]) || byline
-  const category = findDetail(details, [/best sellers rank/i]).split(' in ')[1]?.split('(')[0]?.trim() ?? ''
+  const brand = findDetail(details, [/^brand$/i, /^brand name$/i]) || byline
+  const category = findBreadcrumbCategory(document) || findBestSellerCategory(findDetail(details, [/best sellers rank/i]))
   const asin = extractAmazonAsinFromUrl(sourceUrl)
+    || getElementValue(document, 'input[name="asin"], input#asin, input[name="ASIN"], input#ASIN').toUpperCase()
 
   if (!title && bullets.length === 0) throw new Error(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
 

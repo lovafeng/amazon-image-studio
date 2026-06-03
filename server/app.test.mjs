@@ -32,17 +32,29 @@ function createMemoryStorage() {
 
 let server
 let baseUrl
+let appConfig
 
 beforeEach(async () => {
-  server = createServer(createRequestHandler({ config, storage: createMemoryStorage() }))
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
-  const address = server.address()
-  baseUrl = `http://127.0.0.1:${address.port}`
+  appConfig = { ...config }
+  await startApp()
 })
 
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve))
 })
+
+async function startApp() {
+  server = createServer(createRequestHandler({ config: appConfig, storage: createMemoryStorage() }))
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address()
+  baseUrl = `http://127.0.0.1:${address.port}`
+}
+
+async function restartApp(configOverride) {
+  await new Promise((resolve) => server.close(resolve))
+  appConfig = { ...config, ...configOverride }
+  await startApp()
+}
 
 async function postJson(path, body, cookie) {
   return request(path, {
@@ -68,6 +80,7 @@ function request(path, options = {}) {
         resolve({
           status: res.statusCode,
           headers: res.headers,
+          text: () => text,
           json: () => JSON.parse(text),
         })
       })
@@ -75,6 +88,16 @@ function request(path, options = {}) {
     if (options.body) req.write(options.body)
     req.end()
   })
+}
+
+async function createUpstreamServer(handler) {
+  const upstream = createServer(handler)
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+  const address = upstream.address()
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolve) => upstream.close(resolve)),
+  }
 }
 
 describe('http app', () => {
@@ -120,5 +143,62 @@ describe('http app', () => {
 
     const get = await request('/api/tasks', { headers: { cookie } })
     expect(get.json()).toEqual([task])
+  })
+
+  it('requires login for the API proxy', async () => {
+    const response = await request('/api-proxy/v1/responses', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'gpt-5.5' }),
+    })
+
+    expect(response.status).toBe(401)
+    expect(response.json()).toEqual({ error: '未登录' })
+  })
+
+  it('proxies allowed AI requests with the server API key', async () => {
+    let upstreamRequest
+    const upstream = await createUpstreamServer((req, res) => {
+      const chunks = []
+      req.on('data', (chunk) => chunks.push(chunk))
+      req.on('end', () => {
+        upstreamRequest = {
+          method: req.method,
+          url: req.url,
+          authorization: req.headers.authorization,
+          contentType: req.headers['content-type'],
+          body: Buffer.concat(chunks).toString('utf8'),
+        }
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: true }))
+      })
+    })
+    await restartApp({
+      aiApiBaseUrl: `${upstream.baseUrl}/reseller/v1`,
+      aiApiKey: 'env-api-key',
+    })
+    const login = await postJson('/api/auth/login', { username: 'admin', password: 'secret' })
+    const cookie = login.headers['set-cookie'][0]
+
+    const response = await request('/api-proxy/v1/responses', {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer browser-placeholder',
+        'content-type': 'application/json',
+        cookie,
+      },
+      body: JSON.stringify({ model: 'gpt-5.5' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.json()).toEqual({ ok: true })
+    expect(upstreamRequest).toMatchObject({
+      method: 'POST',
+      url: '/reseller/v1/responses',
+      authorization: 'Bearer env-api-key',
+      contentType: 'application/json',
+      body: JSON.stringify({ model: 'gpt-5.5' }),
+    })
+    await upstream.close()
   })
 })

@@ -70,6 +70,8 @@ const config = {
   adminUsername: requiredEnv('ADMIN_USERNAME'),
   adminPassword: requiredEnv('ADMIN_PASSWORD'),
   sessionSecret: requiredEnv('SESSION_SECRET'),
+  aiApiBaseUrl: process.env.AI_API_BASE_URL ?? '',
+  aiApiKey: process.env.AI_API_KEY ?? '',
 }
 const sqlitePath = process.env.SQLITE_PATH ?? join(projectRoot, 'data', 'app.sqlite')
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 5174)

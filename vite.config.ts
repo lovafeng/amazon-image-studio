@@ -36,6 +36,14 @@ export default defineConfig(({ command }) => {
               },
             }
           : {}),
+        ...(!devProxyConfig?.enabled
+          ? {
+              '/api-proxy': {
+                target: apiServerTarget,
+                changeOrigin: true,
+              },
+            }
+          : {}),
         '/api': {
           target: apiServerTarget,
           changeOrigin: true,

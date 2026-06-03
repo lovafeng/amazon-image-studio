@@ -1,4 +1,7 @@
+import { Readable } from 'node:stream'
 import { createClearSessionCookie, createSessionCookie, getRequestSession, isAdminLogin } from './auth.mjs'
+
+const API_PROXY_PATH_PATTERN = /^\/api-proxy\/((v1\/)?(images\/generations|images\/edits|responses|chat\/completions))$/
 
 function sendJson(res, status, body, headers = {}) {
   res.writeHead(status, {
@@ -21,6 +24,38 @@ function routeId(pathname, prefix) {
 
 function sendOk(res, value = { ok: true }, headers = {}) {
   sendJson(res, 200, value, headers)
+}
+
+function buildAiProxyUrl(baseUrl, pathname, search) {
+  const url = new URL(baseUrl)
+  const endpoint = pathname.replace(/^\/api-proxy\/+/, '')
+  const basePath = url.pathname.replace(/\/+$/, '')
+  const endpointPath = basePath.endsWith('/v1') && endpoint.startsWith('v1/') ? endpoint.slice(3) : endpoint
+  url.pathname = `${basePath}/${endpointPath}`.replace(/\/{2,}/g, '/')
+  url.search = search
+  return url
+}
+
+function createProxyHeaders(req, apiKey) {
+  const headers = new Headers()
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (['authorization', 'connection', 'content-length', 'cookie', 'host', 'transfer-encoding'].includes(key)) continue
+    if (Array.isArray(value)) {
+      headers.set(key, value.join(', '))
+    } else if (value) {
+      headers.set(key, value)
+    }
+  }
+  headers.set('authorization', `Bearer ${apiKey}`)
+  return headers
+}
+
+function createResponseHeaders(response) {
+  const headers = Object.fromEntries(response.headers.entries())
+  delete headers['content-encoding']
+  delete headers['content-length']
+  delete headers['transfer-encoding']
+  return headers
 }
 
 async function handleAuth(req, res, config, pathname) {
@@ -51,6 +86,51 @@ async function handleAuth(req, res, config, pathname) {
   }
 
   return false
+}
+
+async function handleApiProxy(req, res, config, pathname, search) {
+  if (!pathname.startsWith('/api-proxy/')) return false
+
+  if (!API_PROXY_PATH_PATTERN.test(pathname)) {
+    sendJson(res, 403, { error: 'Forbidden: API Proxy path restricted' })
+    return true
+  }
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204)
+    res.end()
+    return true
+  }
+
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { error: 'Method not allowed' })
+    return true
+  }
+
+  if (!getRequestSession(config, req)) {
+    sendJson(res, 401, { error: '未登录' })
+    return true
+  }
+
+  if (!config.aiApiBaseUrl || !config.aiApiKey) {
+    sendJson(res, 502, { error: 'AI API 代理未配置' })
+    return true
+  }
+
+  const response = await fetch(buildAiProxyUrl(config.aiApiBaseUrl, pathname, search), {
+    method: 'POST',
+    headers: createProxyHeaders(req, config.aiApiKey),
+    body: req,
+    duplex: 'half',
+  })
+
+  res.writeHead(response.status, createResponseHeaders(response))
+  if (!response.body) {
+    res.end()
+    return true
+  }
+  Readable.fromWeb(response.body).pipe(res)
+  return true
 }
 
 async function handleData(req, res, storage, pathname) {
@@ -154,6 +234,7 @@ export function createRequestHandler({ config, storage }) {
       const pathname = url.pathname
 
       if (await handleAuth(req, res, config, pathname)) return
+      if (await handleApiProxy(req, res, config, pathname, url.search)) return
 
       if (pathname.startsWith('/api/')) {
         if (!getRequestSession(config, req)) {

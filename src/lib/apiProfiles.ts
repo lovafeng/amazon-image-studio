@@ -16,8 +16,12 @@ import type {
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_STREAM_PARTIAL_IMAGES } from '../types'
 import { readRuntimeEnv } from './runtimeEnv'
 
-const DEFAULT_BASE_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL) || 'https://api.openai.com/v1'
+const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1'
+const DEFAULT_BASE_URL = readRuntimeEnv(import.meta.env.VITE_DEFAULT_API_URL) || OPENAI_DEFAULT_BASE_URL
 const DEFAULT_OPENAI_API_PROXY = readRuntimeEnv(import.meta.env.VITE_API_PROXY_AVAILABLE) === 'true'
+const DEFAULT_SERVER_API_KEY_AVAILABLE = readRuntimeEnv(import.meta.env.VITE_API_PROXY_SERVER_KEY_AVAILABLE) === 'true'
+const DEFAULT_SERVER_API_KEY_PLACEHOLDER = 'server-env'
+const DEFAULT_PROFILE_API_KEY = DEFAULT_SERVER_API_KEY_AVAILABLE ? DEFAULT_SERVER_API_KEY_PLACEHOLDER : ''
 export const DEFAULT_IMAGES_MODEL = 'gpt-image-2'
 export const DEFAULT_RESPONSES_MODEL = 'gpt-5.5'
 export const DEFAULT_CHAT_MODEL = 'gpt-5.5'
@@ -288,7 +292,7 @@ export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}):
     timeout: DEFAULT_API_TIMEOUT,
     apiMode: 'images',
     codexCli: false,
-    apiProxy: DEFAULT_OPENAI_API_PROXY,
+    apiProxy: false,
     streamImages: false,
     streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
     ...overrides,
@@ -299,8 +303,10 @@ export function createDefaultImageProfile(overrides: Partial<ApiProfile> = {}): 
   return createDefaultOpenAIProfile({
     id: DEFAULT_OPENAI_PROFILE_ID,
     name: '生图',
+    apiKey: DEFAULT_PROFILE_API_KEY,
     model: DEFAULT_IMAGES_MODEL,
     apiMode: 'images',
+    apiProxy: DEFAULT_OPENAI_API_PROXY,
     ...overrides,
   })
 }
@@ -309,8 +315,10 @@ export function createDefaultAmazonPlannerProfile(overrides: Partial<ApiProfile>
   return createDefaultOpenAIProfile({
     id: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
     name: 'AI策划',
+    apiKey: DEFAULT_PROFILE_API_KEY,
     model: DEFAULT_RESPONSES_MODEL,
     apiMode: 'responses',
+    apiProxy: DEFAULT_OPENAI_API_PROXY,
     ...overrides,
   })
 }
@@ -433,6 +441,22 @@ export function isAmazonPlannerProfile(profile: Pick<ApiProfile, 'provider' | 'a
   return profile.provider === 'openai' && (profile.apiMode === 'responses' || profile.apiMode === 'chat')
 }
 
+function isBuiltInDefaultOpenAIProfile(profile: Pick<ApiProfile, 'id' | 'provider'>): boolean {
+  return profile.provider === 'openai' &&
+    (profile.id === DEFAULT_OPENAI_PROFILE_ID || profile.id === DEFAULT_AMAZON_PLANNER_PROFILE_ID)
+}
+
+function applyRuntimeDefaultsToDefaultProfile(profile: ApiProfile): ApiProfile {
+  if (!isBuiltInDefaultOpenAIProfile(profile)) return profile
+
+  return {
+    ...profile,
+    baseUrl: !profile.baseUrl.trim() || profile.baseUrl === OPENAI_DEFAULT_BASE_URL ? DEFAULT_BASE_URL : profile.baseUrl,
+    apiKey: profile.apiKey.trim() ? profile.apiKey : DEFAULT_PROFILE_API_KEY,
+    apiProxy: DEFAULT_OPENAI_API_PROXY || profile.apiProxy,
+  }
+}
+
 function resolveAmazonPlannerProfileId(profiles: ApiProfile[], value: unknown): string {
   const requestedId = typeof value === 'string' ? value : ''
   const requestedProfile = requestedId ? profiles.find((profile) => profile.id === requestedId) : undefined
@@ -530,7 +554,7 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
   const apiMode: ApiMode = record.apiMode === 'responses' || record.apiMode === 'chat' ? record.apiMode : 'images'
   const rawBaseUrl = typeof record.baseUrl === 'string' ? record.baseUrl : defaults.baseUrl
 
-  return {
+  return applyRuntimeDefaultsToDefaultProfile({
     ...defaults,
     id: typeof record.id === 'string' && record.id.trim() ? record.id : defaults.id,
     name: typeof record.name === 'string' && record.name.trim() ? record.name : defaults.name,
@@ -546,7 +570,7 @@ export function normalizeApiProfile(input: unknown, fallback?: Partial<ApiProfil
     streamImages: typeof record.streamImages === 'boolean' ? record.streamImages : defaults.streamImages,
     streamPartialImages: normalizeStreamPartialImages(record.streamPartialImages, defaults.streamPartialImages),
     providerDrafts: normalizeProviderDrafts(record.providerDrafts, customProviderIds),
-  }
+  })
 }
 
 function validateImportedProfileRecord(input: unknown) {
@@ -734,7 +758,7 @@ function isDefaultOpenAIProfile(profile: ApiProfile): boolean {
     profile.name === '生图' &&
     profile.provider === 'openai' &&
     profile.baseUrl === DEFAULT_BASE_URL &&
-    profile.apiKey === '' &&
+    profile.apiKey === DEFAULT_PROFILE_API_KEY &&
     profile.model === DEFAULT_IMAGES_MODEL &&
     profile.timeout === DEFAULT_API_TIMEOUT &&
     profile.apiMode === 'images' &&
@@ -749,7 +773,7 @@ function isDefaultAmazonPlannerProfile(profile: ApiProfile): boolean {
     profile.name === 'AI策划' &&
     profile.provider === 'openai' &&
     profile.baseUrl === DEFAULT_BASE_URL &&
-    profile.apiKey === '' &&
+    profile.apiKey === DEFAULT_PROFILE_API_KEY &&
     profile.model === DEFAULT_RESPONSES_MODEL &&
     profile.timeout === DEFAULT_API_TIMEOUT &&
     profile.apiMode === 'responses' &&
@@ -907,7 +931,7 @@ export function mergeImportedSettings(currentSettings: Partial<AppSettings> | un
 
 export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   baseUrl: DEFAULT_BASE_URL,
-  apiKey: '',
+  apiKey: DEFAULT_PROFILE_API_KEY,
   model: DEFAULT_IMAGES_MODEL,
   timeout: DEFAULT_API_TIMEOUT,
   apiMode: 'images',

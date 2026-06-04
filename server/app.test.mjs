@@ -262,4 +262,45 @@ describe('http app', () => {
     })
     await upstream.close()
   })
+
+  it('records successful proxy usage with generated image and token counts', async () => {
+    const upstream = await createUpstreamServer((req, res) => {
+      req.resume()
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          data: [{ b64_json: 'aW1hZ2U=' }],
+          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 42 },
+        }))
+      })
+    })
+    await restartApp({
+      aiApiBaseUrl: `${upstream.baseUrl}/v1`,
+      aiApiKey: 'env-api-key',
+    })
+    const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const cookie = login.headers['set-cookie'][0]
+    const userId = login.json().user.id
+
+    const response = await request('/api-proxy/v1/images/generations', {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'gpt-image-1' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(appStorage.getUsageSummary(userId)).toMatchObject({
+      calls: 1,
+      successes: 1,
+      failures: 0,
+      generatedImages: 1,
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 42,
+    })
+    await upstream.close()
+  })
 })

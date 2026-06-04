@@ -84,6 +84,59 @@ describe('sqlite storage', () => {
     })).toMatchObject({ id: admin.id, passwordHash: 'hash' })
   })
 
+  it('records usage events and summarizes them by user', () => {
+    const user = storage.createUser({
+      email: 'user@example.com',
+      phone: '',
+      passwordHash: 'hash',
+      role: 'user',
+      status: 'active',
+      createdAt: 1,
+    })
+
+    storage.recordUsageEvent({
+      userId: user.id,
+      eventType: 'ai_proxy',
+      status: 'ok',
+      endpoint: '/api-proxy/v1/responses',
+      model: 'gpt-image-1',
+      generatedImages: 2,
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 30,
+      createdAt: 10,
+    })
+    storage.recordUsageEvent({
+      userId: user.id,
+      eventType: 'ai_proxy',
+      status: 'error',
+      endpoint: '/api-proxy/v1/responses',
+      model: 'gpt-image-1',
+      generatedImages: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      createdAt: 11,
+    })
+
+    expect(storage.getUsageSummary(user.id)).toMatchObject({
+      calls: 2,
+      successes: 1,
+      failures: 1,
+      generatedImages: 2,
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 30,
+      lastUsedAt: 11,
+    })
+    expect(storage.getUsageEvents(user.id)).toHaveLength(2)
+    expect(storage.getAllUsageSummaries()[0]).toMatchObject({
+      userId: user.id,
+      email: 'user@example.com',
+      calls: 2,
+    })
+  })
+
   it('stores, lists, updates, deletes, and clears tasks', () => {
     const task = {
       id: 'task-a',

@@ -70,6 +70,21 @@ function createResponseHeaders(response) {
   return headers
 }
 
+function getUsageMetricsFromJson(text) {
+  const body = JSON.parse(text)
+  const usage = body.usage ?? {}
+  const outputImages = Array.isArray(body.output)
+    ? body.output.filter((item) => item?.type === 'image_generation_call' && item?.result).length
+    : 0
+  const dataImages = Array.isArray(body.data) ? body.data.filter((item) => item?.b64_json || item?.url).length : 0
+  return {
+    generatedImages: dataImages + outputImages,
+    promptTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0),
+    completionTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0),
+    totalTokens: Number(usage.total_tokens ?? 0),
+  }
+}
+
 async function handleAuth(req, res, config, storage, pathname) {
   if (req.method === 'GET' && pathname === '/api/auth/me') {
     const session = getRequestSession(config, storage, req)
@@ -152,7 +167,8 @@ async function handleApiProxy(req, res, config, storage, pathname, search) {
     return true
   }
 
-  if (!getRequestSession(config, storage, req)) {
+  const session = getRequestSession(config, storage, req)
+  if (!session) {
     sendJson(res, 401, { error: '未登录' })
     return true
   }
@@ -169,7 +185,26 @@ async function handleApiProxy(req, res, config, storage, pathname, search) {
     duplex: 'half',
   })
 
-  res.writeHead(response.status, createResponseHeaders(response))
+  const responseHeaders = createResponseHeaders(response)
+  const contentType = response.headers.get('content-type') ?? ''
+  if (contentType.includes('application/json')) {
+    const text = await response.text()
+    const metrics = getUsageMetricsFromJson(text)
+    storage.recordUsageEvent({
+      userId: session.userId,
+      eventType: 'ai_proxy',
+      status: response.status >= 200 && response.status < 300 ? 'ok' : 'error',
+      endpoint: pathname,
+      model: '',
+      ...metrics,
+      createdAt: Date.now(),
+    })
+    res.writeHead(response.status, responseHeaders)
+    res.end(text)
+    return true
+  }
+
+  res.writeHead(response.status, responseHeaders)
   if (!response.body) {
     res.end()
     return true

@@ -3,6 +3,11 @@ import type { AmazonPromptDraft } from './amazonPrompt'
 export const AMAZON_DOM_URL_IMPORT_FAILURE_MESSAGE = 'URL 导入失败，可能被跨域或反爬拦截；请上传该页面保存下来的 DOM 文件。'
 export const AMAZON_DOM_PARSE_FAILURE_MESSAGE = 'DOM 中未识别到商品标题或五点描述，请确认文件来自 Amazon 商品详情页。'
 
+export interface AmazonImageCandidate {
+  url: string
+  label: string
+}
+
 export interface AmazonDomImportResult {
   asin?: string
   title: string
@@ -10,6 +15,15 @@ export interface AmazonDomImportResult {
   details: Record<string, string>
   draft: Partial<AmazonPromptDraft>
   listingText: string
+  imageCandidates: AmazonImageCandidate[]
+}
+
+export interface AmazonImportPayload {
+  asin?: string
+  title: string
+  bullets: string[]
+  details?: Record<string, string>
+  imageUrls?: string[]
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
@@ -129,6 +143,85 @@ function findBestSellerCategory(value: string): string {
   return category
 }
 
+function isHttpImageUrl(value: string): boolean {
+  return /^https?:\/\/.+\.(?:avif|webp|png|jpe?g)(?:[?#].*)?$/i.test(value) || /^https?:\/\/.+\/images\//i.test(value)
+}
+
+function getAmazonImageDedupeKey(url: string): string {
+  return url
+    .split(/[?#]/)[0]
+    .replace(/\._[A-Z0-9_,]+_\.(?=[^.]+$)/i, '.')
+}
+
+function normalizeImageCandidates(input: Array<{ url: string; label?: string }>): AmazonImageCandidate[] {
+  const seen = new Set<string>()
+  const candidates: AmazonImageCandidate[] = []
+  for (const item of input) {
+    const url = item.url.trim()
+    const dedupeKey = getAmazonImageDedupeKey(url)
+    if (!url || !isHttpImageUrl(url) || seen.has(dedupeKey)) continue
+    seen.add(dedupeKey)
+    candidates.push({
+      url,
+      label: cleanAmazonText(item.label ?? '') || `商品图片 ${candidates.length + 1}`,
+    })
+    if (candidates.length >= 12) break
+  }
+  return candidates
+}
+
+function readDynamicImageUrls(value: string | null): string[] {
+  if (!value) return []
+  const urls: string[] = []
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>
+    for (const key of Object.keys(parsed)) urls.push(key)
+  } catch {
+    return []
+  }
+  return urls
+}
+
+function getImageCandidates(document: Document): AmazonImageCandidate[] {
+  const images = Array.from(document.querySelectorAll('#imgTagWrapperId img, #landingImage, #main-image-container img, #altImages img'))
+  const rawCandidates: Array<{ url: string; label?: string }> = []
+  for (const image of images) {
+    const label = image.getAttribute('alt') ?? undefined
+    const oldHires = image.getAttribute('data-old-hires')
+    const dynamicUrls = readDynamicImageUrls(image.getAttribute('data-a-dynamic-image'))
+    if (oldHires) rawCandidates.push({ url: oldHires, label })
+    for (const url of dynamicUrls) rawCandidates.push({ url, label })
+    const src = image.getAttribute('src')
+    if (src && !oldHires && dynamicUrls.length === 0) rawCandidates.push({ url: src, label })
+  }
+  return normalizeImageCandidates(rawCandidates)
+}
+
+function buildDraftFromProduct(input: {
+  title: string
+  bullets: string[]
+  details: Record<string, string>
+  brand?: string
+  category?: string
+  color?: string
+  material?: string
+  packageIncludes?: string
+}): Partial<AmazonPromptDraft> {
+  const brand = input.brand || findDetail(input.details, [/^brand$/i, /^brand name$/i])
+  const color = input.color || findDetail(input.details, [/^colou?r$/i])
+  const material = input.material || findDetail(input.details, [/material/i])
+  const packageIncludes = input.packageIncludes || findDetail(input.details, [/included components/i, /package includes/i])
+  return {
+    productTitle: input.title,
+    ...(brand ? { brand } : {}),
+    ...(input.category ? { category: input.category } : {}),
+    ...(color ? { color } : {}),
+    ...(material ? { material } : {}),
+    ...(packageIncludes ? { packageIncludes } : {}),
+    ...(input.bullets.length ? { sellingPoints: input.bullets.join('\n') } : {}),
+  }
+}
+
 export function parseAmazonDomDocument(document: Document, sourceUrl = ''): AmazonDomImportResult {
   const title = cleanAmazonTitle(
     getElementText(document, '#productTitle')
@@ -147,6 +240,7 @@ export function parseAmazonDomDocument(document: Document, sourceUrl = ''): Amaz
   const category = findBreadcrumbCategory(document) || findBestSellerCategory(findDetail(details, [/best sellers rank/i]))
   const asin = extractAmazonAsinFromUrl(sourceUrl)
     || getElementValue(document, 'input[name="asin"], input#asin, input[name="ASIN"], input#ASIN').toUpperCase()
+  const imageCandidates = getImageCandidates(document)
 
   if (!title && bullets.length === 0) throw new Error(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
 
@@ -155,16 +249,9 @@ export function parseAmazonDomDocument(document: Document, sourceUrl = ''): Amaz
     title,
     bullets,
     details,
-    draft: {
-      productTitle: title,
-      ...(brand ? { brand } : {}),
-      ...(category ? { category } : {}),
-      ...(color ? { color } : {}),
-      ...(material ? { material } : {}),
-      ...(packageIncludes ? { packageIncludes } : {}),
-      ...(bullets.length ? { sellingPoints: bullets.join('\n') } : {}),
-    },
+    draft: buildDraftFromProduct({ title, bullets, details, brand, category, color, material, packageIncludes }),
     listingText: buildAmazonDomListingText({ title, bullets }),
+    imageCandidates,
   }
 }
 
@@ -183,4 +270,29 @@ export async function fetchAmazonDomHtml(rawUrl: string, fetcher: FetchLike = fe
 
 export async function importAmazonDomFromUrl(rawUrl: string, fetcher: FetchLike = fetch): Promise<AmazonDomImportResult> {
   return parseAmazonDomHtml(await fetchAmazonDomHtml(rawUrl, fetcher), rawUrl)
+}
+
+export function encodeAmazonImportPayload(payload: AmazonImportPayload): string {
+  return btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
+}
+
+export function parseAmazonImportPayload(encoded: string): AmazonDomImportResult {
+  const payload = JSON.parse(decodeURIComponent(escape(atob(encoded)))) as AmazonImportPayload
+  const title = cleanAmazonTitle(payload.title ?? '')
+  const bullets = Array.isArray(payload.bullets) ? payload.bullets.map(cleanAmazonBulletText).filter(Boolean).slice(0, 5) : []
+  const details = payload.details ?? {}
+  if (!title && bullets.length === 0) throw new Error(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
+  const imageCandidates = normalizeImageCandidates((payload.imageUrls ?? []).map((url, index) => ({
+    url,
+    label: `商品图片 ${index + 1}`,
+  })))
+  return {
+    ...(payload.asin ? { asin: payload.asin } : {}),
+    title,
+    bullets,
+    details,
+    draft: buildDraftFromProduct({ title, bullets, details }),
+    listingText: buildAmazonDomListingText({ title, bullets }),
+    imageCandidates,
+  }
 }

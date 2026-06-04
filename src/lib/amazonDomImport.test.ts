@@ -3,8 +3,10 @@ import {
   AMAZON_DOM_URL_IMPORT_FAILURE_MESSAGE,
   buildAmazonDomListingText,
   cleanAmazonBulletText,
+  encodeAmazonImportPayload,
   extractAmazonAsinFromUrl,
   fetchAmazonDomHtml,
+  parseAmazonImportPayload,
   parseAmazonDomDocument,
 } from './amazonDomImport'
 
@@ -13,14 +15,18 @@ const FULL_AMAZON_URL = 'https://www.amazon.com/EGGKITPO-Commercial-Stainless-Co
 interface TestElement {
   textContent: string
   value?: string
+  attributes?: Record<string, string>
   querySelector: (selector: string) => TestElement | null
+  getAttribute: (name: string) => string | null
 }
 
-function testElement(textContent: string, children: Record<string, TestElement> = {}, value?: string): TestElement {
+function testElement(textContent: string, children: Record<string, TestElement> = {}, value?: string, attributes: Record<string, string> = {}): TestElement {
   return {
     textContent,
     ...(value ? { value } : {}),
+    attributes,
     querySelector: (selector) => children[selector] ?? null,
+    getAttribute: (name) => attributes[name] ?? null,
   }
 }
 
@@ -92,6 +98,10 @@ describe('amazon DOM import helpers', () => {
         'input[name="asin"], input#asin, input[name="ASIN"], input#ASIN': testElement('', {}, 'B0FNCXMBBG'),
       },
       lists: {
+        '#imgTagWrapperId img, #landingImage, #main-image-container img, #altImages img': [
+          testElement('', {}, undefined, { src: 'https://m.media-amazon.com/images/I/main._AC_US40_.jpg', 'data-old-hires': 'https://m.media-amazon.com/images/I/main.jpg', alt: 'main product image' }),
+          testElement('', {}, undefined, { src: 'https://m.media-amazon.com/images/I/side._AC_US40_.jpg', alt: 'side detail image' }),
+        ],
         '#feature-bullets li span': [
           testElement('FAST ICE PRODUCTION: Produces up to 35 lbs of chewable pebble ice daily.'),
           testElement('ONE-TOUCH DEEP CLEANING WITH HIGH-PRESSURE PUMP: Press Clean to start a 7-minute cycle.'),
@@ -127,6 +137,36 @@ describe('amazon DOM import helpers', () => {
     expect(result.draft.material).toBe('Plastic, Stainless Steel')
     expect(result.draft.packageIncludes).toBe('Ice maker x1, Cleaner&Descaler x8, User manual x1, Ice scoop x2, Ice basket x1')
     expect(result.draft.sellingPoints).not.toContain('Note:')
+    expect(result.imageCandidates).toEqual([
+      { url: 'https://m.media-amazon.com/images/I/main.jpg', label: 'main product image' },
+      { url: 'https://m.media-amazon.com/images/I/side._AC_US40_.jpg', label: 'side detail image' },
+    ])
     expect(result.listingText).toContain('About this item')
+  })
+
+  it('parses structured payloads from the browser extension', () => {
+    const encoded = encodeAmazonImportPayload({
+      asin: 'B0G1MSW4RW',
+      title: 'Commercial Ice Maker',
+      bullets: ['Produces clear ice quickly'],
+      details: {
+        Brand: 'EGGKITPO',
+        Color: 'Silver',
+        Material: 'Stainless Steel',
+        'Included Components': 'Ice maker, scoop',
+      },
+      imageUrls: ['https://m.media-amazon.com/images/I/main.jpg'],
+    })
+
+    const result = parseAmazonImportPayload(encoded)
+
+    expect(result.asin).toBe('B0G1MSW4RW')
+    expect(result.title).toBe('Commercial Ice Maker')
+    expect(result.draft.brand).toBe('EGGKITPO')
+    expect(result.draft.color).toBe('Silver')
+    expect(result.draft.material).toBe('Stainless Steel')
+    expect(result.draft.packageIncludes).toBe('Ice maker, scoop')
+    expect(result.imageCandidates).toEqual([{ url: 'https://m.media-amazon.com/images/I/main.jpg', label: '商品图片 1' }])
+    expect(result.listingText).toContain('- Produces clear ice quickly')
   })
 })

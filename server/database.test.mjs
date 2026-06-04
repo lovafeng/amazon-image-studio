@@ -19,6 +19,124 @@ afterEach(() => {
 })
 
 describe('sqlite storage', () => {
+  it('creates users and finds them by email or phone', () => {
+    const user = storage.createUser({
+      email: 'user@example.com',
+      phone: '13800000000',
+      passwordHash: 'hash',
+      role: 'user',
+      status: 'active',
+      createdAt: 1,
+    })
+
+    expect(storage.getUserById(user.id)).toMatchObject({
+      email: 'user@example.com',
+      phone: '13800000000',
+      passwordHash: 'hash',
+      role: 'user',
+      status: 'active',
+      createdAt: 1,
+    })
+    expect(storage.findUserByIdentifier('user@example.com')).toMatchObject({ id: user.id })
+    expect(storage.findUserByIdentifier('13800000000')).toMatchObject({ id: user.id })
+  })
+
+  it('updates user status, password hash, and last login time', () => {
+    const user = storage.createUser({
+      email: 'user@example.com',
+      phone: '',
+      passwordHash: 'old',
+      role: 'user',
+      status: 'active',
+      createdAt: 1,
+    })
+
+    storage.setUserStatus(user.id, 'disabled')
+    storage.setUserPasswordHash(user.id, 'new')
+    storage.touchUserLogin(user.id, 20)
+
+    expect(storage.getUserById(user.id)).toMatchObject({
+      status: 'disabled',
+      passwordHash: 'new',
+      lastLoginAt: 20,
+    })
+  })
+
+  it('ensures a configured admin user exists', () => {
+    const admin = storage.ensureAdminUser({
+      email: 'admin@example.com',
+      phone: '',
+      passwordHash: 'hash',
+      createdAt: 1,
+    })
+
+    expect(storage.findUserByIdentifier('admin@example.com')).toMatchObject({
+      id: admin.id,
+      email: 'admin@example.com',
+      role: 'admin',
+      status: 'active',
+    })
+    expect(storage.ensureAdminUser({
+      email: 'admin@example.com',
+      phone: '',
+      passwordHash: 'next-hash',
+      createdAt: 2,
+    })).toMatchObject({ id: admin.id, passwordHash: 'hash' })
+  })
+
+  it('records usage events and summarizes them by user', () => {
+    const user = storage.createUser({
+      email: 'user@example.com',
+      phone: '',
+      passwordHash: 'hash',
+      role: 'user',
+      status: 'active',
+      createdAt: 1,
+    })
+
+    storage.recordUsageEvent({
+      userId: user.id,
+      eventType: 'ai_proxy',
+      status: 'ok',
+      endpoint: '/api-proxy/v1/responses',
+      model: 'gpt-image-1',
+      generatedImages: 2,
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 30,
+      createdAt: 10,
+    })
+    storage.recordUsageEvent({
+      userId: user.id,
+      eventType: 'ai_proxy',
+      status: 'error',
+      endpoint: '/api-proxy/v1/responses',
+      model: 'gpt-image-1',
+      generatedImages: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      createdAt: 11,
+    })
+
+    expect(storage.getUsageSummary(user.id)).toMatchObject({
+      calls: 2,
+      successes: 1,
+      failures: 1,
+      generatedImages: 2,
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 30,
+      lastUsedAt: 11,
+    })
+    expect(storage.getUsageEvents(user.id)).toHaveLength(2)
+    expect(storage.getAllUsageSummaries()[0]).toMatchObject({
+      userId: user.id,
+      email: 'user@example.com',
+      calls: 2,
+    })
+  })
+
   it('stores, lists, updates, deletes, and clears tasks', () => {
     const task = {
       id: 'task-a',

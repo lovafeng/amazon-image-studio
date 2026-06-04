@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
@@ -24,10 +25,64 @@ function parseThumbnail(row) {
   }
 }
 
+function parseUser(row) {
+  if (!row) return undefined
+  return {
+    id: row.id,
+    email: row.email ?? '',
+    phone: row.phone ?? '',
+    passwordHash: row.password_hash,
+    role: row.role,
+    status: row.status,
+    createdAt: row.created_at,
+    lastLoginAt: row.last_login_at ?? undefined,
+  }
+}
+
+function parseUsageEvent(row) {
+  if (!row) return undefined
+  return {
+    id: row.id,
+    userId: row.user_id,
+    eventType: row.event_type,
+    status: row.status,
+    endpoint: row.endpoint ?? '',
+    model: row.model ?? '',
+    generatedImages: row.generated_images,
+    promptTokens: row.prompt_tokens,
+    completionTokens: row.completion_tokens,
+    totalTokens: row.total_tokens,
+    createdAt: row.created_at,
+  }
+}
+
+function parseUsageSummary(row) {
+  return {
+    userId: row.user_id,
+    email: row.email ?? '',
+    phone: row.phone ?? '',
+    role: row.role ?? '',
+    status: row.user_status ?? '',
+    calls: Number(row.calls ?? 0),
+    successes: Number(row.successes ?? 0),
+    failures: Number(row.failures ?? 0),
+    generatedImages: Number(row.generated_images ?? 0),
+    promptTokens: Number(row.prompt_tokens ?? 0),
+    completionTokens: Number(row.completion_tokens ?? 0),
+    totalTokens: Number(row.total_tokens ?? 0),
+    lastUsedAt: row.last_used_at ?? undefined,
+  }
+}
+
 const DEFAULT_LEGACY_OWNER = 'admin'
 
 function normalizeOwner(owner) {
   return String(owner || DEFAULT_LEGACY_OWNER)
+}
+
+function normalizeOptionalText(value) {
+  const text = String(value ?? '').trim()
+  return text || null
 }
 
 function getTableInfo(db, tableName) {
@@ -36,6 +91,17 @@ function getTableInfo(db, tableName) {
 
 function createOwnedTables(db) {
   db.exec(`
+    create table if not exists users (
+      id text primary key,
+      email text unique,
+      phone text unique,
+      password_hash text not null,
+      role text not null,
+      status text not null,
+      created_at integer not null,
+      last_login_at integer
+    );
+
     create table if not exists tasks (
       owner text not null,
       id text not null,
@@ -68,14 +134,30 @@ function createOwnedTables(db) {
       updated_at integer,
       primary key (owner, id)
     );
+
+    create table if not exists usage_events (
+      id text primary key,
+      user_id text not null,
+      event_type text not null,
+      status text not null,
+      endpoint text,
+      model text,
+      generated_images integer not null default 0,
+      prompt_tokens integer not null default 0,
+      completion_tokens integer not null default 0,
+      total_tokens integer not null default 0,
+      created_at integer not null
+    );
   `)
 }
 
 function createOwnedIndexes(db) {
   db.exec(`
+    create index if not exists users_role_status_idx on users (role, status);
     create index if not exists tasks_owner_created_idx on tasks (owner, created_at desc, id desc);
     create index if not exists images_owner_created_idx on images (owner, created_at desc, id desc);
     create index if not exists amazon_planner_sessions_owner_updated_idx on amazon_planner_sessions (owner, updated_at desc, id desc);
+    create index if not exists usage_events_user_created_idx on usage_events (user_id, created_at desc, id desc);
   `)
 }
 
@@ -137,9 +219,130 @@ export function createStorage(sqlitePath, options = {}) {
     putAmazonPlannerSession: db.prepare('insert into amazon_planner_sessions (owner, id, record_json, updated_at) values (?, ?, ?, ?) on conflict(owner, id) do update set record_json = excluded.record_json, updated_at = excluded.updated_at'),
     deleteAmazonPlannerSession: db.prepare('delete from amazon_planner_sessions where owner = ? and id = ?'),
     clearAmazonPlannerSessions: db.prepare('delete from amazon_planner_sessions where owner = ?'),
+    createUser: db.prepare('insert into users (id, email, phone, password_hash, role, status, created_at, last_login_at) values (?, ?, ?, ?, ?, ?, ?, null)'),
+    getUserById: db.prepare('select id, email, phone, password_hash, role, status, created_at, last_login_at from users where id = ?'),
+    findUserByIdentifier: db.prepare('select id, email, phone, password_hash, role, status, created_at, last_login_at from users where email = ? or phone = ?'),
+    setUserStatus: db.prepare('update users set status = ? where id = ?'),
+    setUserPasswordHash: db.prepare('update users set password_hash = ? where id = ?'),
+    touchUserLogin: db.prepare('update users set last_login_at = ? where id = ?'),
+    listUsers: db.prepare('select id, email, phone, password_hash, role, status, created_at, last_login_at from users order by created_at desc, id desc'),
+    recordUsageEvent: db.prepare('insert into usage_events (id, user_id, event_type, status, endpoint, model, generated_images, prompt_tokens, completion_tokens, total_tokens, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+    getUsageSummary: db.prepare(`
+      select
+        users.id as user_id,
+        users.email,
+        users.phone,
+        users.role,
+        users.status as user_status,
+        count(usage_events.id) as calls,
+        sum(case when usage_events.status = 'ok' then 1 else 0 end) as successes,
+        sum(case when usage_events.status <> 'ok' then 1 else 0 end) as failures,
+        sum(usage_events.generated_images) as generated_images,
+        sum(usage_events.prompt_tokens) as prompt_tokens,
+        sum(usage_events.completion_tokens) as completion_tokens,
+        sum(usage_events.total_tokens) as total_tokens,
+        max(usage_events.created_at) as last_used_at
+      from users
+      left join usage_events on usage_events.user_id = users.id
+      where users.id = ?
+      group by users.id
+    `),
+    getUsageEvents: db.prepare('select id, user_id, event_type, status, endpoint, model, generated_images, prompt_tokens, completion_tokens, total_tokens, created_at from usage_events where user_id = ? order by created_at desc, id desc limit ?'),
+    getAllUsageSummaries: db.prepare(`
+      select
+        users.id as user_id,
+        users.email,
+        users.phone,
+        users.role,
+        users.status as user_status,
+        count(usage_events.id) as calls,
+        sum(case when usage_events.status = 'ok' then 1 else 0 end) as successes,
+        sum(case when usage_events.status <> 'ok' then 1 else 0 end) as failures,
+        sum(usage_events.generated_images) as generated_images,
+        sum(usage_events.prompt_tokens) as prompt_tokens,
+        sum(usage_events.completion_tokens) as completion_tokens,
+        sum(usage_events.total_tokens) as total_tokens,
+        max(usage_events.created_at) as last_used_at
+      from users
+      left join usage_events on usage_events.user_id = users.id
+      group by users.id
+      order by calls desc, users.created_at desc, users.id desc
+    `),
+    getAllUsageEvents: db.prepare('select id, user_id, event_type, status, endpoint, model, generated_images, prompt_tokens, completion_tokens, total_tokens, created_at from usage_events order by created_at desc, id desc limit ?'),
   }
 
   return {
+    createUser(user) {
+      const id = user.id ?? randomUUID()
+      statements.createUser.run(
+        id,
+        normalizeOptionalText(user.email),
+        normalizeOptionalText(user.phone),
+        user.passwordHash,
+        user.role,
+        user.status,
+        user.createdAt,
+      )
+      return parseUser(statements.getUserById.get(id))
+    },
+    getUserById(id) {
+      return parseUser(statements.getUserById.get(id))
+    },
+    findUserByIdentifier(identifier) {
+      const normalizedIdentifier = String(identifier ?? '').trim()
+      return parseUser(statements.findUserByIdentifier.get(normalizedIdentifier, normalizedIdentifier))
+    },
+    setUserStatus(id, status) {
+      statements.setUserStatus.run(status, id)
+    },
+    setUserPasswordHash(id, passwordHash) {
+      statements.setUserPasswordHash.run(passwordHash, id)
+    },
+    touchUserLogin(id, lastLoginAt) {
+      statements.touchUserLogin.run(lastLoginAt, id)
+    },
+    listUsers() {
+      return statements.listUsers.all().map(parseUser)
+    },
+    ensureAdminUser(user) {
+      const identifier = user.email || user.phone
+      const existing = this.findUserByIdentifier(identifier)
+      if (existing) return existing
+      return this.createUser({
+        ...user,
+        role: 'admin',
+        status: 'active',
+      })
+    },
+    recordUsageEvent(event) {
+      const id = event.id ?? randomUUID()
+      statements.recordUsageEvent.run(
+        id,
+        event.userId,
+        event.eventType,
+        event.status,
+        event.endpoint ?? '',
+        event.model ?? '',
+        event.generatedImages ?? 0,
+        event.promptTokens ?? 0,
+        event.completionTokens ?? 0,
+        event.totalTokens ?? 0,
+        event.createdAt,
+      )
+      return id
+    },
+    getUsageSummary(userId) {
+      return parseUsageSummary(statements.getUsageSummary.get(userId))
+    },
+    getUsageEvents(userId, limit = 50) {
+      return statements.getUsageEvents.all(userId, limit).map(parseUsageEvent)
+    },
+    getAllUsageSummaries() {
+      return statements.getAllUsageSummaries.all().map(parseUsageSummary)
+    },
+    getAllUsageEvents(limit = 100) {
+      return statements.getAllUsageEvents.all(limit).map(parseUsageEvent)
+    },
     getAllTasks(owner) {
       return statements.getAllTasks.all(normalizeOwner(owner)).map(parseJsonRecord)
     },

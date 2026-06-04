@@ -1,6 +1,22 @@
 export interface AuthSession {
   authenticated: boolean
-  username?: string
+  user?: AuthUser
+}
+
+export interface AuthUser {
+  id: string
+  email?: string
+  phone?: string
+  role: 'admin' | 'user'
+  status: 'active' | 'disabled'
+  createdAt?: number
+  lastLoginAt?: number
+}
+
+export interface RegisterInput {
+  email: string
+  phone: string
+  password: string
 }
 
 async function readAuthResponse(response: Response): Promise<AuthSession> {
@@ -13,12 +29,21 @@ export async function getCurrentSession(): Promise<AuthSession> {
   return readAuthResponse(await fetch('/api/auth/me', { credentials: 'same-origin' }))
 }
 
-export async function login(username: string, password: string): Promise<AuthSession> {
+export async function login(identifier: string, password: string): Promise<AuthSession> {
   return readAuthResponse(await fetch('/api/auth/login', {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({ identifier, password }),
+  }))
+}
+
+export async function register(input: RegisterInput): Promise<AuthSession> {
+  return readAuthResponse(await fetch('/api/auth/register', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(input),
   }))
 }
 

@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createRequestHandler } from './app.mjs'
+import { hashPassword } from './auth.mjs'
 import { createStorage } from './database.mjs'
 import { shouldUseApiHandler } from './routing.mjs'
 
@@ -115,6 +116,14 @@ const config = {
 const sqlitePath = process.env.SQLITE_PATH ?? join(projectRoot, 'data', 'app.sqlite')
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 5174)
 const storage = createStorage(sqlitePath, { legacyOwner: accounts[0].username })
+for (const account of accounts) {
+  storage.ensureAdminUser({
+    email: account.username,
+    phone: '',
+    passwordHash: hashPassword(account.password),
+    createdAt: Date.now(),
+  })
+}
 const apiHandler = createRequestHandler({ config, storage })
 
 createServer((req, res) => {

@@ -1,6 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs'
 import { createServer, request as httpRequest } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createRequestHandler } from './app.mjs'
+import { hashPassword } from './auth.mjs'
+import { createStorage } from './database.mjs'
 
 const config = {
   adminUsername: 'admin',
@@ -8,48 +13,33 @@ const config = {
   sessionSecret: 'test-session-secret',
 }
 
-function createMemoryStorage() {
-  const tasks = new Map()
-  const key = (owner, id) => `${owner}:${id}`
-  return {
-    getAllTasks: (owner) => [...tasks.entries()].filter(([itemKey]) => itemKey.startsWith(`${owner}:`)).map(([, task]) => task),
-    putTask: (owner, task) => tasks.set(key(owner, task.id), task),
-    deleteTask: (owner, id) => tasks.delete(key(owner, id)),
-    clearTasks: (owner) => {
-      for (const itemKey of tasks.keys()) {
-        if (itemKey.startsWith(`${owner}:`)) tasks.delete(itemKey)
-      }
-    },
-    getImage: () => undefined,
-    getAllImages: () => [],
-    getAllImageIds: () => [],
-    putImage: () => {},
-    deleteImage: () => {},
-    clearImages: () => {},
-    getStoredImageThumbnail: () => undefined,
-    putImageThumbnail: () => {},
-    getAllAmazonPlannerSessions: () => [],
-    putAmazonPlannerSession: () => {},
-    deleteAmazonPlannerSession: () => {},
-    clearAmazonPlannerSessions: () => {},
-  }
-}
-
 let server
 let baseUrl
 let appConfig
+let tempDir
+let appStorage
 
 beforeEach(async () => {
+  tempDir = mkdtempSync(join(tmpdir(), 'ais-app-'))
+  appStorage = createStorage(join(tempDir, 'app.sqlite'))
+  appStorage.ensureAdminUser({
+    email: 'admin',
+    phone: '',
+    passwordHash: hashPassword('secret', 'admin-salt'),
+    createdAt: 1,
+  })
   appConfig = { ...config }
   await startApp()
 })
 
 afterEach(async () => {
   await new Promise((resolve) => server.close(resolve))
+  appStorage.close()
+  rmSync(tempDir, { recursive: true, force: true })
 })
 
 async function startApp() {
-  server = createServer(createRequestHandler({ config: appConfig, storage: createMemoryStorage() }))
+  server = createServer(createRequestHandler({ config: appConfig, storage: appStorage }))
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address()
   baseUrl = `http://127.0.0.1:${address.port}`
@@ -107,21 +97,64 @@ async function createUpstreamServer(handler) {
 
 describe('http app', () => {
   it('logs in, reports the current session, and logs out', async () => {
-    const login = await postJson('/api/auth/login', { username: 'admin', password: 'secret' })
+    const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
 
     expect(login.status).toBe(200)
     const cookie = login.headers['set-cookie'][0]
     expect(cookie).toContain('ais_session=')
 
     const me = await request('/api/auth/me', { headers: { cookie } })
-    expect(me.json()).toEqual({ authenticated: true, username: 'admin' })
+    expect(me.json()).toMatchObject({
+      authenticated: true,
+      user: {
+        email: 'admin',
+        role: 'admin',
+        status: 'active',
+      },
+    })
 
     const logout = await request('/api/auth/logout', { method: 'POST', headers: { cookie } })
     expect(logout.headers['set-cookie'][0]).toContain('Max-Age=0')
   })
 
+  it('registers a user and returns an authenticated user session', async () => {
+    const response = await postJson('/api/auth/register', { email: 'user@example.com', password: 'secret' })
+
+    expect(response.status).toBe(200)
+    expect(response.json()).toMatchObject({
+      authenticated: true,
+      user: {
+        email: 'user@example.com',
+        role: 'user',
+        status: 'active',
+      },
+    })
+    expect(response.headers['set-cookie'][0]).toContain('ais_session=')
+  })
+
+  it('logs in with either email or phone', async () => {
+    await postJson('/api/auth/register', {
+      email: 'user@example.com',
+      phone: '13800000000',
+      password: 'secret',
+    })
+
+    expect((await postJson('/api/auth/login', { identifier: 'user@example.com', password: 'secret' })).status).toBe(200)
+    expect((await postJson('/api/auth/login', { identifier: '13800000000', password: 'secret' })).status).toBe(200)
+  })
+
+  it('rejects disabled users during login', async () => {
+    const registered = await postJson('/api/auth/register', { email: 'user@example.com', password: 'secret' })
+    const userId = registered.json().user.id
+    appStorage.setUserStatus(userId, 'disabled')
+
+    const response = await postJson('/api/auth/login', { identifier: 'user@example.com', password: 'secret' })
+
+    expect(response.status).toBe(401)
+  })
+
   it('rejects invalid login credentials', async () => {
-    const response = await postJson('/api/auth/login', { username: 'admin', password: 'wrong' })
+    const response = await postJson('/api/auth/login', { identifier: 'admin', password: 'wrong' })
 
     expect(response.status).toBe(401)
     expect(response.json()).toEqual({ error: '账号或密码错误' })
@@ -135,7 +168,7 @@ describe('http app', () => {
   })
 
   it('stores and reads a task after login', async () => {
-    const login = await postJson('/api/auth/login', { username: 'admin', password: 'secret' })
+    const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
     const cookie = login.headers['set-cookie'][0]
     const task = { id: 'task-a', prompt: 'prompt', createdAt: 1 }
 
@@ -151,14 +184,8 @@ describe('http app', () => {
   })
 
   it('isolates stored tasks by login account', async () => {
-    await restartApp({
-      accounts: [
-        { username: 'admin', password: 'secret' },
-        { username: 'operator', password: 'operator-secret' },
-      ],
-    })
-    const adminLogin = await postJson('/api/auth/login', { username: 'admin', password: 'secret' })
-    const operatorLogin = await postJson('/api/auth/login', { username: 'operator', password: 'operator-secret' })
+    const adminLogin = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const operatorLogin = await postJson('/api/auth/register', { email: 'operator@example.com', password: 'operator-secret' })
     const adminCookie = adminLogin.headers['set-cookie'][0]
     const operatorCookie = operatorLogin.headers['set-cookie'][0]
     const adminTask = { id: 'task-a', prompt: 'admin prompt', createdAt: 1 }
@@ -211,7 +238,7 @@ describe('http app', () => {
       aiApiBaseUrl: `${upstream.baseUrl}/reseller/v1`,
       aiApiKey: 'env-api-key',
     })
-    const login = await postJson('/api/auth/login', { username: 'admin', password: 'secret' })
+    const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
     const cookie = login.headers['set-cookie'][0]
 
     const response = await request('/api-proxy/v1/responses', {
@@ -234,5 +261,113 @@ describe('http app', () => {
       body: JSON.stringify({ model: 'gpt-5.5' }),
     })
     await upstream.close()
+  })
+
+  it('records successful proxy usage with generated image and token counts', async () => {
+    const upstream = await createUpstreamServer((req, res) => {
+      req.resume()
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          data: [{ b64_json: 'aW1hZ2U=' }],
+          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 42 },
+        }))
+      })
+    })
+    await restartApp({
+      aiApiBaseUrl: `${upstream.baseUrl}/v1`,
+      aiApiKey: 'env-api-key',
+    })
+    const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const cookie = login.headers['set-cookie'][0]
+    const userId = login.json().user.id
+
+    const response = await request('/api-proxy/v1/images/generations', {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'gpt-image-1' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(appStorage.getUsageSummary(userId)).toMatchObject({
+      calls: 1,
+      successes: 1,
+      failures: 0,
+      generatedImages: 1,
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 42,
+    })
+    await upstream.close()
+  })
+
+  it('allows admin to list users and reset a user password', async () => {
+    const userRegister = await postJson('/api/auth/register', { email: 'user@example.com', password: 'old-secret' })
+    const userId = userRegister.json().user.id
+    const adminLogin = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const adminCookie = adminLogin.headers['set-cookie'][0]
+
+    const users = await request('/api/admin/users', { headers: { cookie: adminCookie } })
+    expect(users.status).toBe(200)
+    expect(users.json().items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: userId, email: 'user@example.com', role: 'user' }),
+    ]))
+
+    const reset = await postJson(`/api/admin/users/${userId}/reset-password`, { password: 'new-secret' }, adminCookie)
+    expect(reset.status).toBe(200)
+    expect((await postJson('/api/auth/login', { identifier: 'user@example.com', password: 'new-secret' })).status).toBe(200)
+  })
+
+  it('allows admin to update user status', async () => {
+    const userRegister = await postJson('/api/auth/register', { email: 'user@example.com', password: 'secret' })
+    const userId = userRegister.json().user.id
+    const adminLogin = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+
+    const response = await request(`/api/admin/users/${userId}/status`, {
+      method: 'PATCH',
+      headers: { cookie: adminLogin.headers['set-cookie'][0], 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'disabled' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(appStorage.getUserById(userId)).toMatchObject({ status: 'disabled' })
+  })
+
+  it('prevents ordinary users from admin APIs', async () => {
+    const register = await postJson('/api/auth/register', { email: 'user@example.com', password: 'secret' })
+
+    const response = await request('/api/admin/users', { headers: { cookie: register.headers['set-cookie'][0] } })
+
+    expect(response.status).toBe(403)
+    expect(response.json()).toEqual({ error: '需要管理员权限' })
+  })
+
+  it('returns current-user usage and admin all-user usage', async () => {
+    const user = await postJson('/api/auth/register', { email: 'user@example.com', password: 'secret' })
+    const userId = user.json().user.id
+    const admin = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    appStorage.recordUsageEvent({
+      userId,
+      eventType: 'ai_proxy',
+      status: 'ok',
+      endpoint: '/api-proxy/v1/responses',
+      model: 'gpt-image-1',
+      generatedImages: 1,
+      totalTokens: 10,
+      createdAt: 10,
+    })
+
+    const mine = await request('/api/usage/me', { headers: { cookie: user.headers['set-cookie'][0] } })
+    expect(mine.status).toBe(200)
+    expect(mine.json().summary).toMatchObject({ calls: 1, generatedImages: 1, totalTokens: 10 })
+
+    const all = await request('/api/admin/usage', { headers: { cookie: admin.headers['set-cookie'][0] } })
+    expect(all.status).toBe(200)
+    expect(all.json().summaries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId, email: 'user@example.com', calls: 1 }),
+    ]))
   })
 })

@@ -77,6 +77,7 @@ const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const agentRoundControllers = new Map<string, AbortController>()
+let userScopedStateVersion = 0
 const OPENAI_INTERRUPTED_ERROR = '请求中断'
 const AGENT_STOPPED_MESSAGE = '已停止生成。'
 const AGENT_CONVERSATION_TITLE_MAX_LENGTH = 28
@@ -655,6 +656,9 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     ...persisted,
     settings,
     params,
+    tasks: currentState.tasks,
+    streamPreviews: currentState.streamPreviews,
+    streamPreviewSlots: currentState.streamPreviewSlots,
     appMode,
     galleryInputDraft: galleryInputDraft && !isEmptyAgentInputDraft(galleryInputDraft) ? galleryInputDraft : null,
     agentConversations,
@@ -1406,6 +1410,61 @@ export const useStore = create<AppState>()(
   ),
 )
 
+function getUserPersistName(username: string) {
+  return `amazon-image-studio:${encodeURIComponent(username)}`
+}
+
+export function resetUserScopedLocalState() {
+  userScopedStateVersion += 1
+  imageCache.clear()
+  thumbnailCache.clear()
+  thumbnailBackfillIds.clear()
+  thumbnailBackfillRunningIds.clear()
+  for (const timer of falRecoveryTimers.values()) clearTimeout(timer)
+  for (const timer of customRecoveryTimers.values()) clearTimeout(timer)
+  for (const timer of openAIWatchdogTimers.values()) clearTimeout(timer)
+  falRecoveryTimers.clear()
+  customRecoveryTimers.clear()
+  openAIWatchdogTimers.clear()
+  for (const controller of agentRoundControllers.values()) controller.abort()
+  agentRoundControllers.clear()
+  useStore.setState({
+    appMode: 'gallery',
+    prompt: '',
+    inputImages: [],
+    maskDraft: null,
+    maskEditorImageId: null,
+    galleryInputDraft: null,
+    agentConversations: [],
+    activeAgentConversationId: null,
+    agentInputDrafts: {},
+    agentGeneratingTitleIds: {},
+    tasks: [],
+    streamPreviews: {},
+    streamPreviewSlots: {},
+    selectedTaskIds: [],
+    detailTaskId: null,
+    lightboxImageId: null,
+    lightboxImageList: [],
+    pendingTaskCategory: null,
+    searchQuery: '',
+    filterStatus: 'all',
+    filterFavorite: false,
+    filterProductTitle: '',
+    filterWorkflow: 'all',
+    filterAspect: 'all',
+  })
+}
+
+export async function prepareStoreForAuthenticatedUser(username: string) {
+  const name = getUserPersistName(username)
+  if (useStore.persist.getOptions().name === name) return
+
+  resetUserScopedLocalState()
+  useStore.persist.setOptions({ name })
+  await useStore.persist.rehydrate()
+}
+
 // ===== Actions =====
 
 let uid = 0
@@ -1769,9 +1828,12 @@ async function recoverFalTask(taskId: string) {
 
 /** 初始化：从 IndexedDB 加载任务，按需恢复输入图片，并清理孤立图片 */
 export async function initStore() {
+  const stateVersion = userScopedStateVersion
   const storedTasks = await getAllTasks()
+  if (stateVersion !== userScopedStateVersion) return
   const { tasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   await Promise.all(interruptedTasks.map((task) => putTask(task)))
+  if (stateVersion !== userScopedStateVersion) return
   useStore.getState().setTasks(tasks)
   showSupportPromptForExistingLocalData(tasks)
   for (const task of tasks) {
@@ -1816,14 +1878,18 @@ export async function initStore() {
 
   // 只枚举 key 清理孤立图片，避免启动时把所有 4K 原图读进内存。
   const imageIds = await getAllImageIds()
+  if (stateVersion !== userScopedStateVersion) return
   const referencedImageIds: string[] = []
   for (const imgId of imageIds) {
+    if (stateVersion !== userScopedStateVersion) return
     if (referencedIds.has(imgId)) {
       referencedImageIds.push(imgId)
     } else {
       await deleteImage(imgId)
+      if (stateVersion !== userScopedStateVersion) return
     }
   }
+  if (stateVersion !== userScopedStateVersion) return
   scheduleThumbnailBackfill(referencedImageIds)
 
   const restoredInputImages: InputImage[] = []
@@ -1834,6 +1900,7 @@ export async function initStore() {
       continue
     }
     const storedImage = await getImage(img.id)
+    if (stateVersion !== userScopedStateVersion) return
     if (storedImage?.dataUrl) {
       restoredInputImages.push({ ...img, dataUrl: storedImage.dataUrl })
       cacheImage(img.id, storedImage.dataUrl)
@@ -1852,6 +1919,7 @@ export async function initStore() {
         continue
       }
       const storedImage = await getImage(img.id)
+      if (stateVersion !== userScopedStateVersion) return
       if (storedImage?.dataUrl) {
         restoredGalleryImages.push({ ...img, dataUrl: storedImage.dataUrl })
         cacheImage(img.id, storedImage.dataUrl)
@@ -1869,6 +1937,7 @@ export async function initStore() {
       restoredGalleryImages.some((img, index) => img.dataUrl !== galleryInputDraft.inputImages[index]?.dataUrl) ||
       shouldClearMask
     if (galleryDraftsChanged) {
+      if (stateVersion !== userScopedStateVersion) return
       const latestState = useStore.getState()
       const nextGalleryInputDraft = isEmptyAgentInputDraft(restoredGalleryDraft) ? null : restoredGalleryDraft
       useStore.setState({
@@ -1891,6 +1960,7 @@ export async function initStore() {
         continue
       }
       const storedImage = await getImage(img.id)
+      if (stateVersion !== userScopedStateVersion) return
       if (storedImage?.dataUrl) {
         restoredDraftImages.push({ ...img, dataUrl: storedImage.dataUrl })
         cacheImage(img.id, storedImage.dataUrl)
@@ -1914,6 +1984,7 @@ export async function initStore() {
     }
   }
   if (agentDraftsChanged) {
+    if (stateVersion !== userScopedStateVersion) return
     const latestState = useStore.getState()
     useStore.setState({
       agentInputDrafts: restoredAgentInputDrafts,

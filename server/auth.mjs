@@ -25,12 +25,22 @@ export function createSessionToken(config, username, now = Date.now()) {
   return `${payload}.${sign(config, payload)}`
 }
 
+function getAccounts(config) {
+  return Array.isArray(config.accounts) && config.accounts.length
+    ? config.accounts
+    : [{ username: config.adminUsername, password: config.adminPassword }]
+}
+
+function hasAccount(config, username) {
+  return getAccounts(config).some((account) => account.username === username)
+}
+
 export function verifySessionToken(config, token, now = Date.now()) {
   const [payload, signature] = token.split('.')
   if (!payload || !signature || !compareSignatures(signature, sign(config, payload))) return null
 
   const session = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
-  if (session.expiresAt <= now || session.username !== config.adminUsername) return null
+  if (session.expiresAt <= now || !hasAccount(config, session.username)) return null
 
   return { username: session.username }
 }
@@ -58,5 +68,5 @@ export function getRequestSession(config, req, now = Date.now()) {
 }
 
 export function isAdminLogin(config, credentials) {
-  return credentials?.username === config.adminUsername && credentials?.password === config.adminPassword
+  return getAccounts(config).some((account) => account.username === credentials?.username && account.password === credentials?.password)
 }

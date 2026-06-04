@@ -327,26 +327,27 @@ export default function TaskCard({
       : 'bg-blue-500'
     : 'bg-gray-200 dark:bg-gray-700'
 
+  const taskParams = task.params ?? DEFAULT_PARAMS
   const qualityDisplay = getParamDisplay(task, 'quality')
-  const showQuality = task.params.quality !== 'auto' || qualityDisplay.isMismatch
+  const showQuality = taskParams.quality !== 'auto' || qualityDisplay.isMismatch
 
   const sizeDisplay = getParamDisplay(task, 'size')
-  const showSize = task.params.size !== 'auto' || sizeDisplay.isMismatch
+  const showSize = taskParams.size !== 'auto' || sizeDisplay.isMismatch
 
   const formatDisplay = getParamDisplay(task, 'output_format')
-  const showFormat = task.params.output_format !== DEFAULT_PARAMS.output_format || formatDisplay.isMismatch
+  const showFormat = taskParams.output_format !== DEFAULT_PARAMS.output_format || formatDisplay.isMismatch
 
   const nDisplay = getParamDisplay(task, 'n')
   const isAgentTask = task.sourceMode === 'agent' || Boolean(task.agentConversationId || task.agentRoundId)
   const showPendingPrompt = isAgentTaskPromptPending(task)
-  const showN = !isAgentTask && (task.params.n > 1 || nDisplay.isMismatch)
+  const showN = !isAgentTask && (taskParams.n > 1 || nDisplay.isMismatch)
 
   const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
   const isInterrupted = task.status === 'error' && task.error === '已停止生成。'
   const firstOutputImageId = task.outputImages?.[0]
   const actualSizeForFirstImage = firstOutputImageId ? task.actualParamsByImage?.[firstOutputImageId]?.size : undefined
-  const requestedOrActualRatio = parseTaskSizeRatio(actualSizeForFirstImage ?? task.actualParams?.size ?? task.params.size)
+  const requestedOrActualRatio = parseTaskSizeRatio(actualSizeForFirstImage ?? task.actualParams?.size ?? taskParams.size)
   const previewAspectRatio = coverAspectRatio ?? requestedOrActualRatio
   const useWidePreviewLayout = Boolean(previewAspectRatio && previewAspectRatio >= WIDE_PREVIEW_RATIO)
   const widePreviewStyle = useWidePreviewLayout && previewAspectRatio

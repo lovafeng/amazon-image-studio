@@ -1,5 +1,6 @@
-const CACHE_NAME = 'amazon-image-studio-v0.1.0'
+const CACHE_NAME = 'amazon-image-studio-v0.1.1'
 const APP_SHELL = ['./', './index.html', './manifest.webmanifest', './pwa-icon.svg']
+const NETWORK_ONLY_PATH_PREFIXES = ['/api/', '/api-proxy/']
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -24,6 +25,7 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url)
   if (url.origin !== self.location.origin) return
+  if (NETWORK_ONLY_PATH_PREFIXES.some((prefix) => url.pathname.startsWith(prefix))) return
 
   if (request.mode === 'navigate') {
     event.respondWith(

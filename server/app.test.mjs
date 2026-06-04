@@ -10,11 +10,16 @@ const config = {
 
 function createMemoryStorage() {
   const tasks = new Map()
+  const key = (owner, id) => `${owner}:${id}`
   return {
-    getAllTasks: () => [...tasks.values()],
-    putTask: (task) => tasks.set(task.id, task),
-    deleteTask: (id) => tasks.delete(id),
-    clearTasks: () => tasks.clear(),
+    getAllTasks: (owner) => [...tasks.entries()].filter(([itemKey]) => itemKey.startsWith(`${owner}:`)).map(([, task]) => task),
+    putTask: (owner, task) => tasks.set(key(owner, task.id), task),
+    deleteTask: (owner, id) => tasks.delete(key(owner, id)),
+    clearTasks: (owner) => {
+      for (const itemKey of tasks.keys()) {
+        if (itemKey.startsWith(`${owner}:`)) tasks.delete(itemKey)
+      }
+    },
     getImage: () => undefined,
     getAllImages: () => [],
     getAllImageIds: () => [],
@@ -143,6 +148,35 @@ describe('http app', () => {
 
     const get = await request('/api/tasks', { headers: { cookie } })
     expect(get.json()).toEqual([task])
+  })
+
+  it('isolates stored tasks by login account', async () => {
+    await restartApp({
+      accounts: [
+        { username: 'admin', password: 'secret' },
+        { username: 'operator', password: 'operator-secret' },
+      ],
+    })
+    const adminLogin = await postJson('/api/auth/login', { username: 'admin', password: 'secret' })
+    const operatorLogin = await postJson('/api/auth/login', { username: 'operator', password: 'operator-secret' })
+    const adminCookie = adminLogin.headers['set-cookie'][0]
+    const operatorCookie = operatorLogin.headers['set-cookie'][0]
+    const adminTask = { id: 'task-a', prompt: 'admin prompt', createdAt: 1 }
+    const operatorTask = { id: 'task-a', prompt: 'operator prompt', createdAt: 2 }
+
+    await request('/api/tasks/task-a', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', cookie: adminCookie },
+      body: JSON.stringify(adminTask),
+    })
+    await request('/api/tasks/task-a', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', cookie: operatorCookie },
+      body: JSON.stringify(operatorTask),
+    })
+
+    expect((await request('/api/tasks', { headers: { cookie: adminCookie } })).json()).toEqual([adminTask])
+    expect((await request('/api/tasks', { headers: { cookie: operatorCookie } })).json()).toEqual([operatorTask])
   })
 
   it('requires login for the API proxy', async () => {

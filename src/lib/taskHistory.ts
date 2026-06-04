@@ -1,4 +1,4 @@
-import type { HistoryAspectFilter, HistoryWorkflowFilter, TaskAspect, TaskRecord, TaskWorkflow } from '../types'
+import { DEFAULT_PARAMS, type HistoryAspectFilter, type HistoryWorkflowFilter, type TaskAspect, type TaskRecord, type TaskWorkflow } from '../types'
 
 export const ALL_PRODUCT_FILTER = ''
 export const UNCATEGORIZED_PRODUCT_FILTER = '__uncategorized_product__'
@@ -78,7 +78,8 @@ function getPrimarySize(task: TaskRecord) {
   return (
     (firstOutputImageId ? task.actualParamsByImage?.[firstOutputImageId]?.size : undefined) ??
     task.actualParams?.size ??
-    task.params.size
+    task.params?.size ??
+    DEFAULT_PARAMS.size
   )
 }
 
@@ -195,7 +196,7 @@ export function matchesTaskHistoryFilters(task: TaskRecord, filters: TaskHistory
 
   const searchable = [
     task.prompt,
-    JSON.stringify(task.params),
+    JSON.stringify(task.params ?? DEFAULT_PARAMS),
     JSON.stringify(task.actualParams ?? {}),
     category.productTitle,
     getWorkflowLabel(category.workflow),

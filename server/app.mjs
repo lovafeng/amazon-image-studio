@@ -72,8 +72,9 @@ async function handleAuth(req, res, config, pathname) {
       return true
     }
 
-    sendOk(res, { authenticated: true, username: config.adminUsername }, {
-      'set-cookie': createSessionCookie(config, config.adminUsername),
+    const username = String(credentials.username)
+    sendOk(res, { authenticated: true, username }, {
+      'set-cookie': createSessionCookie(config, username),
     })
     return true
   }
@@ -133,13 +134,14 @@ async function handleApiProxy(req, res, config, pathname, search) {
   return true
 }
 
-async function handleData(req, res, storage, pathname) {
+async function handleData(req, res, storage, pathname, session) {
+  const owner = session.username
   if (req.method === 'GET' && pathname === '/api/tasks') {
-    sendOk(res, storage.getAllTasks())
+    sendOk(res, storage.getAllTasks(owner))
     return true
   }
   if (req.method === 'DELETE' && pathname === '/api/tasks') {
-    storage.clearTasks()
+    storage.clearTasks(owner)
     sendOk(res)
     return true
   }
@@ -147,42 +149,42 @@ async function handleData(req, res, storage, pathname) {
     const id = routeId(pathname, '/api/tasks/')
     if (req.method === 'PUT') {
       const task = { ...(await readJson(req)), id }
-      sendOk(res, { id: storage.putTask(task) })
+      sendOk(res, { id: storage.putTask(owner, task) })
       return true
     }
     if (req.method === 'DELETE') {
-      storage.deleteTask(id)
+      storage.deleteTask(owner, id)
       sendOk(res)
       return true
     }
   }
 
   if (req.method === 'GET' && pathname === '/api/images/ids') {
-    sendOk(res, storage.getAllImageIds())
+    sendOk(res, storage.getAllImageIds(owner))
     return true
   }
   if (req.method === 'GET' && pathname === '/api/images') {
-    sendOk(res, storage.getAllImages())
+    sendOk(res, storage.getAllImages(owner))
     return true
   }
   if (req.method === 'DELETE' && pathname === '/api/images') {
-    storage.clearImages()
+    storage.clearImages(owner)
     sendOk(res)
     return true
   }
   if (pathname.startsWith('/api/images/')) {
     const id = routeId(pathname, '/api/images/')
     if (req.method === 'GET') {
-      sendOk(res, storage.getImage(id) ?? null)
+      sendOk(res, storage.getImage(owner, id) ?? null)
       return true
     }
     if (req.method === 'PUT') {
       const image = { ...(await readJson(req)), id }
-      sendOk(res, { id: storage.putImage(image) })
+      sendOk(res, { id: storage.putImage(owner, image) })
       return true
     }
     if (req.method === 'DELETE') {
-      storage.deleteImage(id)
+      storage.deleteImage(owner, id)
       sendOk(res)
       return true
     }
@@ -191,22 +193,22 @@ async function handleData(req, res, storage, pathname) {
   if (pathname.startsWith('/api/thumbnails/')) {
     const id = routeId(pathname, '/api/thumbnails/')
     if (req.method === 'GET') {
-      sendOk(res, storage.getStoredImageThumbnail(id) ?? null)
+      sendOk(res, storage.getStoredImageThumbnail(owner, id) ?? null)
       return true
     }
     if (req.method === 'PUT') {
       const thumbnail = { ...(await readJson(req)), id }
-      sendOk(res, { id: storage.putImageThumbnail(thumbnail) })
+      sendOk(res, { id: storage.putImageThumbnail(owner, thumbnail) })
       return true
     }
   }
 
   if (req.method === 'GET' && pathname === '/api/amazon-planner-sessions') {
-    sendOk(res, storage.getAllAmazonPlannerSessions())
+    sendOk(res, storage.getAllAmazonPlannerSessions(owner))
     return true
   }
   if (req.method === 'DELETE' && pathname === '/api/amazon-planner-sessions') {
-    storage.clearAmazonPlannerSessions()
+    storage.clearAmazonPlannerSessions(owner)
     sendOk(res)
     return true
   }
@@ -214,11 +216,11 @@ async function handleData(req, res, storage, pathname) {
     const id = routeId(pathname, '/api/amazon-planner-sessions/')
     if (req.method === 'PUT') {
       const session = { ...(await readJson(req)), id }
-      sendOk(res, { id: storage.putAmazonPlannerSession(session) })
+      sendOk(res, { id: storage.putAmazonPlannerSession(owner, session) })
       return true
     }
     if (req.method === 'DELETE') {
-      storage.deleteAmazonPlannerSession(id)
+      storage.deleteAmazonPlannerSession(owner, id)
       sendOk(res)
       return true
     }
@@ -237,11 +239,12 @@ export function createRequestHandler({ config, storage }) {
       if (await handleApiProxy(req, res, config, pathname, url.search)) return
 
       if (pathname.startsWith('/api/')) {
-        if (!getRequestSession(config, req)) {
+        const session = getRequestSession(config, req)
+        if (!session) {
           sendJson(res, 401, { error: '未登录' })
           return
         }
-        if (await handleData(req, res, storage, pathname)) return
+        if (await handleData(req, res, storage, pathname, session)) return
       }
 
       sendJson(res, 404, { error: 'Not found' })

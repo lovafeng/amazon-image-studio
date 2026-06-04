@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { TaskParams, TaskRecord } from '../types'
+import { DEFAULT_PARAMS, type TaskParams, type TaskRecord } from '../types'
 import ViewportTooltip from '../components/ViewportTooltip'
 
 type ParamKey = keyof TaskParams
@@ -64,9 +64,10 @@ export function ActualValueBadge({ value, className = '', variant = 'highlight' 
 }
 
 export function getParamDisplay(task: TaskRecord, paramKey: ParamKey, actualParams = task.actualParams) {
+  const taskParams = task.params ?? DEFAULT_PARAMS
   const requestedValue = task.sourceMode === 'agent' && paramKey === 'n'
     ? 'auto'
-    : task.params[paramKey]
+    : taskParams[paramKey]
   const actualValue = actualParams?.[paramKey]
   const hasActualValue = actualValue !== undefined && actualValue !== null
   const displayValue = hasActualValue ? actualValue : requestedValue

@@ -1067,6 +1067,24 @@ describe('agent draft lifecycle', () => {
     expect(merged.agentInputDrafts['conversation-a']?.prompt).toBe('agent draft')
   })
 
+  it('ignores legacy persisted task data during account state hydration', () => {
+    const currentTask = task({ id: 'current-task', prompt: 'from server' })
+    const merged = mergePersistedState({
+      tasks: undefined,
+      streamPreviews: undefined,
+      streamPreviewSlots: undefined,
+    }, {
+      ...useStore.getState(),
+      tasks: [currentTask],
+      streamPreviews: {},
+      streamPreviewSlots: {},
+    } as ReturnType<typeof useStore.getState>)
+
+    expect(merged.tasks).toEqual([currentTask])
+    expect(merged.streamPreviews).toEqual({})
+    expect(merged.streamPreviewSlots).toEqual({})
+  })
+
   it('keeps the gallery draft when agent mode is requested', () => {
     const galleryPrompt = `画廊 ${getSelectedImageMentionLabel(0)} 草稿`
     useStore.setState({

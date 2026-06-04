@@ -32,6 +32,41 @@ function requiredEnv(name) {
   return value
 }
 
+function parseAccountsFromEnv() {
+  const accountsJson = process.env.APP_ACCOUNTS_JSON ?? process.env.ADMIN_ACCOUNTS_JSON
+  if (accountsJson) {
+    const accounts = JSON.parse(accountsJson)
+    if (!Array.isArray(accounts) || accounts.length === 0) {
+      console.error('APP_ACCOUNTS_JSON must be a non-empty JSON array')
+      process.exit(1)
+    }
+    return accounts.map((account) => ({
+      username: String(account.username ?? '').trim(),
+      password: String(account.password ?? ''),
+    }))
+  }
+
+  return [{
+    username: requiredEnv('ADMIN_USERNAME'),
+    password: requiredEnv('ADMIN_PASSWORD'),
+  }]
+}
+
+function validateAccounts(accounts) {
+  const seen = new Set()
+  for (const account of accounts) {
+    if (!account.username || !account.password) {
+      console.error('Every account must include username and password')
+      process.exit(1)
+    }
+    if (seen.has(account.username)) {
+      console.error(`Duplicate account username: ${account.username}`)
+      process.exit(1)
+    }
+    seen.add(account.username)
+  }
+}
+
 function contentType(filePath) {
   const ext = extname(filePath)
   if (ext === '.html') return 'text/html; charset=utf-8'
@@ -67,16 +102,19 @@ function serveStatic(req, res) {
 
 loadDotEnv()
 
+const accounts = parseAccountsFromEnv()
+validateAccounts(accounts)
 const config = {
-  adminUsername: requiredEnv('ADMIN_USERNAME'),
-  adminPassword: requiredEnv('ADMIN_PASSWORD'),
+  accounts,
+  adminUsername: accounts[0].username,
+  adminPassword: accounts[0].password,
   sessionSecret: requiredEnv('SESSION_SECRET'),
   aiApiBaseUrl: process.env.AI_API_BASE_URL ?? '',
   aiApiKey: process.env.AI_API_KEY ?? '',
 }
 const sqlitePath = process.env.SQLITE_PATH ?? join(projectRoot, 'data', 'app.sqlite')
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 5174)
-const storage = createStorage(sqlitePath)
+const storage = createStorage(sqlitePath, { legacyOwner: accounts[0].username })
 const apiHandler = createRequestHandler({ config, storage })
 
 createServer((req, res) => {

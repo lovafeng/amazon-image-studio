@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
-import type { TaskRecord } from '../types'
+import { DEFAULT_PARAMS, type TaskRecord } from '../types'
 import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
@@ -66,13 +66,14 @@ export default function DetailModal() {
     [tasks, detailTaskId],
   )
   const streamPreviewItems = useMemo(() => {
+    const taskParams = task?.params ?? DEFAULT_PARAMS
     const slotEntries = streamPreviewSlots
       ? Object.entries(streamPreviewSlots)
           .filter(([, src]) => Boolean(src))
           .sort(([a], [b]) => Number(a) - Number(b))
       : []
     const count = Math.max(
-      task?.status === 'running' ? task.params.n : 0,
+      task?.status === 'running' ? taskParams.n : 0,
       slotEntries.length ? Math.max(...slotEntries.map(([key]) => Number(key) + 1)) : 0,
       streamPreviewSrc ? 1 : 0,
     )
@@ -82,7 +83,7 @@ export default function DetailModal() {
       key: String(index),
       src: byIndex.get(index) ?? (index === 0 ? streamPreviewSrc : ''),
     }))
-  }, [task?.params.n, task?.status, streamPreviewSlots, streamPreviewSrc])
+  }, [task?.params, task?.status, streamPreviewSlots, streamPreviewSrc])
   const activeStreamPreviewSrc = streamPreviewItems[imageIndex]?.src || ''
   const historyCategory = useMemo(() => task ? getTaskHistoryCategory(task) : null, [task])
 
@@ -953,7 +954,7 @@ export default function DetailModal() {
                   <DetailParamValue task={task} paramKey="n" className="font-medium" />
                 </div>
               )}
-              {task.params.output_compression != null && (
+              {(task.params ?? DEFAULT_PARAMS).output_compression != null && (
                 <div className="bg-gray-50 dark:bg-white/[0.03] rounded-lg px-3 py-2">
                   <span className="text-gray-400 dark:text-gray-500">压缩率</span>
                   <br />

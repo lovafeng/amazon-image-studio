@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import Database from 'better-sqlite3'
 import { createStorage } from './database.mjs'
 
 let tempDir
@@ -29,19 +30,38 @@ describe('sqlite storage', () => {
       error: null,
     }
 
-    storage.putTask(task)
-    expect(storage.getAllTasks()).toEqual([task])
+    storage.putTask('admin', task)
+    expect(storage.getAllTasks('admin')).toEqual([task])
 
     const updated = { ...task, prompt: 'updated' }
-    storage.putTask(updated)
-    expect(storage.getAllTasks()).toEqual([updated])
+    storage.putTask('admin', updated)
+    expect(storage.getAllTasks('admin')).toEqual([updated])
 
-    storage.deleteTask('task-a')
-    expect(storage.getAllTasks()).toEqual([])
+    storage.deleteTask('admin', 'task-a')
+    expect(storage.getAllTasks('admin')).toEqual([])
 
-    storage.putTask(task)
-    storage.clearTasks()
-    expect(storage.getAllTasks()).toEqual([])
+    storage.putTask('admin', task)
+    storage.clearTasks('admin')
+    expect(storage.getAllTasks('admin')).toEqual([])
+  })
+
+  it('isolates tasks with the same id by owner', () => {
+    const adminTask = {
+      id: 'task-a',
+      prompt: 'admin prompt',
+      createdAt: 10,
+      inputImageIds: [],
+      outputImages: [],
+      status: 'done',
+      error: null,
+    }
+    const operatorTask = { ...adminTask, prompt: 'operator prompt' }
+
+    storage.putTask('admin', adminTask)
+    storage.putTask('operator', operatorTask)
+
+    expect(storage.getAllTasks('admin')).toEqual([adminTask])
+    expect(storage.getAllTasks('operator')).toEqual([operatorTask])
   })
 
   it('stores images and clears matching thumbnails with image deletion', () => {
@@ -61,16 +81,48 @@ describe('sqlite storage', () => {
       thumbnailVersion: 2,
     }
 
-    storage.putImage(image)
-    storage.putImageThumbnail(thumbnail)
+    storage.putImage('admin', image)
+    storage.putImageThumbnail('admin', thumbnail)
 
-    expect(storage.getImage('image-a')).toEqual(image)
-    expect(storage.getAllImageIds()).toEqual(['image-a'])
-    expect(storage.getStoredImageThumbnail('image-a')).toEqual(thumbnail)
+    expect(storage.getImage('admin', 'image-a')).toEqual(image)
+    expect(storage.getAllImageIds('admin')).toEqual(['image-a'])
+    expect(storage.getStoredImageThumbnail('admin', 'image-a')).toEqual(thumbnail)
 
-    storage.deleteImage('image-a')
-    expect(storage.getImage('image-a')).toBeUndefined()
-    expect(storage.getStoredImageThumbnail('image-a')).toBeUndefined()
+    storage.deleteImage('admin', 'image-a')
+    expect(storage.getImage('admin', 'image-a')).toBeUndefined()
+    expect(storage.getStoredImageThumbnail('admin', 'image-a')).toBeUndefined()
+  })
+
+  it('isolates images and thumbnails with the same id by owner', () => {
+    const adminImage = {
+      id: 'image-a',
+      dataUrl: 'data:image/png;base64,admin',
+      createdAt: 20,
+      source: 'upload',
+    }
+    const operatorImage = {
+      ...adminImage,
+      dataUrl: 'data:image/png;base64,operator',
+    }
+    const adminThumbnail = {
+      id: 'image-a',
+      thumbnailDataUrl: 'data:image/webp;base64,admin',
+      thumbnailVersion: 2,
+    }
+    const operatorThumbnail = {
+      ...adminThumbnail,
+      thumbnailDataUrl: 'data:image/webp;base64,operator',
+    }
+
+    storage.putImage('admin', adminImage)
+    storage.putImage('operator', operatorImage)
+    storage.putImageThumbnail('admin', adminThumbnail)
+    storage.putImageThumbnail('operator', operatorThumbnail)
+
+    expect(storage.getImage('admin', 'image-a')).toEqual(adminImage)
+    expect(storage.getImage('operator', 'image-a')).toEqual(operatorImage)
+    expect(storage.getStoredImageThumbnail('admin', 'image-a')).toEqual(adminThumbnail)
+    expect(storage.getStoredImageThumbnail('operator', 'image-a')).toEqual(operatorThumbnail)
   })
 
   it('stores and clears amazon planner sessions', () => {
@@ -82,10 +134,32 @@ describe('sqlite storage', () => {
       updatedAt: 40,
     }
 
-    storage.putAmazonPlannerSession(session)
-    expect(storage.getAllAmazonPlannerSessions()).toEqual([session])
+    storage.putAmazonPlannerSession('admin', session)
+    expect(storage.getAllAmazonPlannerSessions('admin')).toEqual([session])
 
-    storage.clearAmazonPlannerSessions()
-    expect(storage.getAllAmazonPlannerSessions()).toEqual([])
+    storage.clearAmazonPlannerSessions('admin')
+    expect(storage.getAllAmazonPlannerSessions('admin')).toEqual([])
+  })
+
+  it('migrates existing single-account rows to the configured legacy owner', () => {
+    const sqlitePath = join(tempDir, 'legacy.sqlite')
+    const legacyTask = {
+      id: 'task-a',
+      prompt: 'legacy',
+      createdAt: 1,
+      inputImageIds: [],
+      outputImages: [],
+      status: 'done',
+      error: null,
+    }
+    const legacyDb = new Database(sqlitePath)
+    legacyDb.exec('create table tasks (id text primary key, record_json text not null, created_at integer)')
+    legacyDb.prepare('insert into tasks (id, record_json, created_at) values (?, ?, ?)').run(legacyTask.id, JSON.stringify(legacyTask), legacyTask.createdAt)
+    legacyDb.close()
+
+    const migratedStorage = createStorage(sqlitePath, { legacyOwner: 'operator' })
+    expect(migratedStorage.getAllTasks('operator')).toEqual([legacyTask])
+    expect(migratedStorage.getAllTasks('admin')).toEqual([])
+    migratedStorage.close()
   })
 })

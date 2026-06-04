@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { initStore } from './store'
+import { useEffect, useRef, useState } from 'react'
+import { initStore, prepareStoreForAuthenticatedUser, resetUserScopedLocalState } from './store'
 import { useStore } from './store'
 import { getCurrentSession, login, logout, type AuthSession } from './lib/auth'
 import { buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
@@ -22,6 +22,8 @@ import { useGlobalClickSuppression } from './lib/clickSuppression'
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
   const [authSession, setAuthSession] = useState<AuthSession | null>(null)
+  const [accountDataReady, setAccountDataReady] = useState(false)
+  const initializedUsernameRef = useRef<string | null>(null)
   useDockerApiUrlMigrationNotice()
   useGlobalClickSuppression()
 
@@ -39,8 +41,10 @@ export default function App() {
     }
   }, [])
 
-  useEffect(() => {
-    if (!authSession?.authenticated) return
+  const loadAccountData = async (username: string, isActive = () => true) => {
+    setAccountDataReady(false)
+    await prepareStoreForAuthenticatedUser(username)
+    if (!isActive()) return
 
     const searchParams = new URLSearchParams(window.location.search)
     const nextSettings = buildSettingsFromUrlParams(useStore.getState().settings, searchParams)
@@ -55,9 +59,29 @@ export default function App() {
       window.history.replaceState(null, '', nextUrl)
     }
 
-    initStore()
+    await initStore()
+    if (!isActive()) return
+
     useStore.getState().setAppMode('gallery')
-  }, [authSession?.authenticated, setSettings])
+    initializedUsernameRef.current = username
+    setAccountDataReady(true)
+  }
+
+  useEffect(() => {
+    if (!authSession?.authenticated || !authSession.username) {
+      initializedUsernameRef.current = null
+      setAccountDataReady(false)
+      return
+    }
+    if (initializedUsernameRef.current === authSession.username && accountDataReady) return
+
+    let active = true
+    void loadAccountData(authSession.username, () => active)
+
+    return () => {
+      active = false
+    }
+  }, [authSession?.authenticated, authSession?.username, accountDataReady])
 
   useEffect(() => {
     const preventPageImageDrag = (e: DragEvent) => {
@@ -72,12 +96,20 @@ export default function App() {
 
   const handleLogin = async (username: string, password: string) => {
     const session = await login(username, password)
+    if (session.authenticated && session.username) {
+      await loadAccountData(session.username)
+    }
     setAuthSession(session)
     return session
   }
 
   const handleLogout = () => {
-    void logout().then(() => setAuthSession({ authenticated: false }))
+    void logout().then(() => {
+      resetUserScopedLocalState()
+      initializedUsernameRef.current = null
+      setAccountDataReady(false)
+      setAuthSession({ authenticated: false })
+    })
   }
 
   if (!authSession) {
@@ -90,6 +122,14 @@ export default function App() {
 
   if (!authSession.authenticated) {
     return <LoginPage onLogin={handleLogin} />
+  }
+
+  if (!accountDataReady) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-gray-50 text-sm text-gray-500 dark:bg-gray-950 dark:text-gray-400">
+        正在加载账号数据
+      </main>
+    )
   }
 
   return (

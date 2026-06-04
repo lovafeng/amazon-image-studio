@@ -12,6 +12,14 @@ const config = {
   sessionSecret: 'test-session-secret',
 }
 
+const multiAccountConfig = {
+  sessionSecret: 'test-session-secret',
+  accounts: [
+    { username: 'admin', password: 'secret' },
+    { username: 'operator', password: 'operator-secret' },
+  ],
+}
+
 describe('server auth sessions', () => {
   it('verifies a signed token created for the admin user', () => {
     const token = createSessionToken(config, 'admin', 1_900_000_000_000)
@@ -19,6 +27,20 @@ describe('server auth sessions', () => {
     expect(verifySessionToken(config, token, 1_800_000_000_000)).toEqual({
       username: 'admin',
     })
+  })
+
+  it('verifies a signed token created for any configured account', () => {
+    const token = createSessionToken(multiAccountConfig, 'operator', 1_900_000_000_000)
+
+    expect(verifySessionToken(multiAccountConfig, token, 1_800_000_000_000)).toEqual({
+      username: 'operator',
+    })
+  })
+
+  it('rejects a signed token for a removed account', () => {
+    const token = createSessionToken(multiAccountConfig, 'operator', 1_900_000_000_000)
+
+    expect(verifySessionToken(config, token, 1_800_000_000_000)).toBeNull()
   })
 
   it('rejects a token signed with a different secret', () => {

@@ -69,6 +69,15 @@ describe('task history categories', () => {
     expect(category.workflow).toBe('amazon-listing')
   })
 
+  it('handles legacy tasks without params', () => {
+    const legacyTask = task({
+      params: undefined as unknown as TaskRecord['params'],
+    })
+
+    expect(getTaskHistoryCategory(legacyTask).aspect).toBe('square')
+    expect(getTaskProductFilterOptions([legacyTask]).map((option) => option.label)).toEqual(['Large Folding Umbrella'])
+  })
+
   it('keeps tasks without product title under the uncategorized product filter', () => {
     expect(matchesTaskHistoryFilters(task({
       prompt: 'A regular creative prompt',
@@ -128,4 +137,3 @@ describe('task history categories', () => {
     ])
   })
 })
-

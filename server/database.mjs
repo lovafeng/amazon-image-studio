@@ -24,119 +24,183 @@ function parseThumbnail(row) {
   }
 }
 
-export function createStorage(sqlitePath) {
+const DEFAULT_LEGACY_OWNER = 'admin'
+
+function normalizeOwner(owner) {
+  return String(owner || DEFAULT_LEGACY_OWNER)
+}
+
+function getTableInfo(db, tableName) {
+  return db.prepare(`pragma table_info(${tableName})`).all()
+}
+
+function createOwnedTables(db) {
+  db.exec(`
+    create table if not exists tasks (
+      owner text not null,
+      id text not null,
+      record_json text not null,
+      created_at integer,
+      primary key (owner, id)
+    );
+
+    create table if not exists images (
+      owner text not null,
+      id text not null,
+      data_url text not null,
+      metadata_json text not null,
+      created_at integer,
+      primary key (owner, id)
+    );
+
+    create table if not exists thumbnails (
+      owner text not null,
+      id text not null,
+      thumbnail_data_url text not null,
+      metadata_json text not null,
+      primary key (owner, id)
+    );
+
+    create table if not exists amazon_planner_sessions (
+      owner text not null,
+      id text not null,
+      record_json text not null,
+      updated_at integer,
+      primary key (owner, id)
+    );
+  `)
+}
+
+function createOwnedIndexes(db) {
+  db.exec(`
+    create index if not exists tasks_owner_created_idx on tasks (owner, created_at desc, id desc);
+    create index if not exists images_owner_created_idx on images (owner, created_at desc, id desc);
+    create index if not exists amazon_planner_sessions_owner_updated_idx on amazon_planner_sessions (owner, updated_at desc, id desc);
+  `)
+}
+
+function migrateOwnedTable(db, tableName, legacyOwner) {
+  const columns = getTableInfo(db, tableName)
+  if (!columns.length) return
+  const ownerColumn = columns.find((column) => column.name === 'owner')
+  const idColumn = columns.find((column) => column.name === 'id')
+  if (ownerColumn?.pk === 1 && idColumn?.pk === 2) return
+
+  const legacyTable = `${tableName}_legacy_${Date.now()}`
+  const ownerExpr = ownerColumn ? "coalesce(nullif(owner, ''), ?)" : '?'
+  db.exec(`alter table ${tableName} rename to ${legacyTable}`)
+  createOwnedTables(db)
+  if (tableName === 'tasks') {
+    db.prepare(`insert or replace into tasks (owner, id, record_json, created_at) select ${ownerExpr}, id, record_json, created_at from ${legacyTable}`).run(legacyOwner)
+  } else if (tableName === 'images') {
+    db.prepare(`insert or replace into images (owner, id, data_url, metadata_json, created_at) select ${ownerExpr}, id, data_url, metadata_json, created_at from ${legacyTable}`).run(legacyOwner)
+  } else if (tableName === 'thumbnails') {
+    db.prepare(`insert or replace into thumbnails (owner, id, thumbnail_data_url, metadata_json) select ${ownerExpr}, id, thumbnail_data_url, metadata_json from ${legacyTable}`).run(legacyOwner)
+  } else if (tableName === 'amazon_planner_sessions') {
+    db.prepare(`insert or replace into amazon_planner_sessions (owner, id, record_json, updated_at) select ${ownerExpr}, id, record_json, updated_at from ${legacyTable}`).run(legacyOwner)
+  }
+  db.exec(`drop table ${legacyTable}`)
+}
+
+function migrateOwnedSchema(db, legacyOwner) {
+  createOwnedTables(db)
+  for (const tableName of ['tasks', 'images', 'thumbnails', 'amazon_planner_sessions']) {
+    migrateOwnedTable(db, tableName, legacyOwner)
+  }
+  createOwnedIndexes(db)
+}
+
+export function createStorage(sqlitePath, options = {}) {
   mkdirSync(dirname(sqlitePath), { recursive: true })
 
   const db = new Database(sqlitePath)
   db.pragma('journal_mode = WAL')
-  db.exec(`
-    create table if not exists tasks (
-      id text primary key,
-      record_json text not null,
-      created_at integer
-    );
-
-    create table if not exists images (
-      id text primary key,
-      data_url text not null,
-      metadata_json text not null,
-      created_at integer
-    );
-
-    create table if not exists thumbnails (
-      id text primary key,
-      thumbnail_data_url text not null,
-      metadata_json text not null
-    );
-
-    create table if not exists amazon_planner_sessions (
-      id text primary key,
-      record_json text not null,
-      updated_at integer
-    );
-  `)
+  const legacyOwner = normalizeOwner(options.legacyOwner)
+  migrateOwnedSchema(db, legacyOwner)
 
   const statements = {
-    getAllTasks: db.prepare('select record_json from tasks order by created_at desc, id desc'),
-    putTask: db.prepare('insert into tasks (id, record_json, created_at) values (?, ?, ?) on conflict(id) do update set record_json = excluded.record_json, created_at = excluded.created_at'),
-    deleteTask: db.prepare('delete from tasks where id = ?'),
-    clearTasks: db.prepare('delete from tasks'),
-    getImage: db.prepare('select id, data_url, metadata_json from images where id = ?'),
-    getAllImages: db.prepare('select id, data_url, metadata_json from images order by created_at desc, id desc'),
-    getAllImageIds: db.prepare('select id from images order by created_at desc, id desc'),
-    putImage: db.prepare('insert into images (id, data_url, metadata_json, created_at) values (?, ?, ?, ?) on conflict(id) do update set data_url = excluded.data_url, metadata_json = excluded.metadata_json, created_at = excluded.created_at'),
-    deleteImage: db.prepare('delete from images where id = ?'),
-    clearImages: db.prepare('delete from images'),
-    deleteImageThumbnail: db.prepare('delete from thumbnails where id = ?'),
-    clearThumbnails: db.prepare('delete from thumbnails'),
-    getThumbnail: db.prepare('select id, thumbnail_data_url, metadata_json from thumbnails where id = ?'),
-    putThumbnail: db.prepare('insert into thumbnails (id, thumbnail_data_url, metadata_json) values (?, ?, ?) on conflict(id) do update set thumbnail_data_url = excluded.thumbnail_data_url, metadata_json = excluded.metadata_json'),
-    getAllAmazonPlannerSessions: db.prepare('select record_json from amazon_planner_sessions order by updated_at desc, id desc'),
-    putAmazonPlannerSession: db.prepare('insert into amazon_planner_sessions (id, record_json, updated_at) values (?, ?, ?) on conflict(id) do update set record_json = excluded.record_json, updated_at = excluded.updated_at'),
-    deleteAmazonPlannerSession: db.prepare('delete from amazon_planner_sessions where id = ?'),
-    clearAmazonPlannerSessions: db.prepare('delete from amazon_planner_sessions'),
+    getAllTasks: db.prepare('select record_json from tasks where owner = ? order by created_at desc, id desc'),
+    putTask: db.prepare('insert into tasks (owner, id, record_json, created_at) values (?, ?, ?, ?) on conflict(owner, id) do update set record_json = excluded.record_json, created_at = excluded.created_at'),
+    deleteTask: db.prepare('delete from tasks where owner = ? and id = ?'),
+    clearTasks: db.prepare('delete from tasks where owner = ?'),
+    getImage: db.prepare('select id, data_url, metadata_json from images where owner = ? and id = ?'),
+    getAllImages: db.prepare('select id, data_url, metadata_json from images where owner = ? order by created_at desc, id desc'),
+    getAllImageIds: db.prepare('select id from images where owner = ? order by created_at desc, id desc'),
+    putImage: db.prepare('insert into images (owner, id, data_url, metadata_json, created_at) values (?, ?, ?, ?, ?) on conflict(owner, id) do update set data_url = excluded.data_url, metadata_json = excluded.metadata_json, created_at = excluded.created_at'),
+    deleteImage: db.prepare('delete from images where owner = ? and id = ?'),
+    clearImages: db.prepare('delete from images where owner = ?'),
+    deleteImageThumbnail: db.prepare('delete from thumbnails where owner = ? and id = ?'),
+    clearThumbnails: db.prepare('delete from thumbnails where owner = ?'),
+    getThumbnail: db.prepare('select id, thumbnail_data_url, metadata_json from thumbnails where owner = ? and id = ?'),
+    putThumbnail: db.prepare('insert into thumbnails (owner, id, thumbnail_data_url, metadata_json) values (?, ?, ?, ?) on conflict(owner, id) do update set thumbnail_data_url = excluded.thumbnail_data_url, metadata_json = excluded.metadata_json'),
+    getAllAmazonPlannerSessions: db.prepare('select record_json from amazon_planner_sessions where owner = ? order by updated_at desc, id desc'),
+    putAmazonPlannerSession: db.prepare('insert into amazon_planner_sessions (owner, id, record_json, updated_at) values (?, ?, ?, ?) on conflict(owner, id) do update set record_json = excluded.record_json, updated_at = excluded.updated_at'),
+    deleteAmazonPlannerSession: db.prepare('delete from amazon_planner_sessions where owner = ? and id = ?'),
+    clearAmazonPlannerSessions: db.prepare('delete from amazon_planner_sessions where owner = ?'),
   }
 
   return {
-    getAllTasks() {
-      return statements.getAllTasks.all().map(parseJsonRecord)
+    getAllTasks(owner) {
+      return statements.getAllTasks.all(normalizeOwner(owner)).map(parseJsonRecord)
     },
-    putTask(task) {
-      statements.putTask.run(task.id, JSON.stringify(task), task.createdAt ?? null)
+    putTask(owner, task) {
+      statements.putTask.run(normalizeOwner(owner), task.id, JSON.stringify(task), task.createdAt ?? null)
       return task.id
     },
-    deleteTask(id) {
-      statements.deleteTask.run(id)
+    deleteTask(owner, id) {
+      statements.deleteTask.run(normalizeOwner(owner), id)
     },
-    clearTasks() {
-      statements.clearTasks.run()
+    clearTasks(owner) {
+      statements.clearTasks.run(normalizeOwner(owner))
     },
-    getImage(id) {
-      return parseImage(statements.getImage.get(id))
+    getImage(owner, id) {
+      return parseImage(statements.getImage.get(normalizeOwner(owner), id))
     },
-    getAllImages() {
-      return statements.getAllImages.all().map(parseImage)
+    getAllImages(owner) {
+      return statements.getAllImages.all(normalizeOwner(owner)).map(parseImage)
     },
-    getAllImageIds() {
-      return statements.getAllImageIds.all().map((row) => row.id)
+    getAllImageIds(owner) {
+      return statements.getAllImageIds.all(normalizeOwner(owner)).map((row) => row.id)
     },
-    putImage(image) {
+    putImage(owner, image) {
       const { id, dataUrl, ...metadata } = image
-      statements.putImage.run(id, dataUrl, JSON.stringify(metadata), image.createdAt ?? null)
+      statements.putImage.run(normalizeOwner(owner), id, dataUrl, JSON.stringify(metadata), image.createdAt ?? null)
       return id
     },
-    deleteImage(id) {
+    deleteImage(owner, id) {
+      const normalizedOwner = normalizeOwner(owner)
       db.transaction(() => {
-        statements.deleteImage.run(id)
-        statements.deleteImageThumbnail.run(id)
+        statements.deleteImage.run(normalizedOwner, id)
+        statements.deleteImageThumbnail.run(normalizedOwner, id)
       })()
     },
-    clearImages() {
+    clearImages(owner) {
+      const normalizedOwner = normalizeOwner(owner)
       db.transaction(() => {
-        statements.clearImages.run()
-        statements.clearThumbnails.run()
+        statements.clearImages.run(normalizedOwner)
+        statements.clearThumbnails.run(normalizedOwner)
       })()
     },
-    getStoredImageThumbnail(id) {
-      return parseThumbnail(statements.getThumbnail.get(id))
+    getStoredImageThumbnail(owner, id) {
+      return parseThumbnail(statements.getThumbnail.get(normalizeOwner(owner), id))
     },
-    putImageThumbnail(thumbnail) {
+    putImageThumbnail(owner, thumbnail) {
       const { id, thumbnailDataUrl, ...metadata } = thumbnail
-      statements.putThumbnail.run(id, thumbnailDataUrl, JSON.stringify(metadata))
+      statements.putThumbnail.run(normalizeOwner(owner), id, thumbnailDataUrl, JSON.stringify(metadata))
       return id
     },
-    getAllAmazonPlannerSessions() {
-      return statements.getAllAmazonPlannerSessions.all().map(parseJsonRecord)
+    getAllAmazonPlannerSessions(owner) {
+      return statements.getAllAmazonPlannerSessions.all(normalizeOwner(owner)).map(parseJsonRecord)
     },
-    putAmazonPlannerSession(session) {
-      statements.putAmazonPlannerSession.run(session.id, JSON.stringify(session), session.updatedAt ?? null)
+    putAmazonPlannerSession(owner, session) {
+      statements.putAmazonPlannerSession.run(normalizeOwner(owner), session.id, JSON.stringify(session), session.updatedAt ?? null)
       return session.id
     },
-    deleteAmazonPlannerSession(id) {
-      statements.deleteAmazonPlannerSession.run(id)
+    deleteAmazonPlannerSession(owner, id) {
+      statements.deleteAmazonPlannerSession.run(normalizeOwner(owner), id)
     },
-    clearAmazonPlannerSessions() {
-      statements.clearAmazonPlannerSessions.run()
+    clearAmazonPlannerSessions(owner) {
+      statements.clearAmazonPlannerSessions.run(normalizeOwner(owner))
     },
     close() {
       db.close()

@@ -303,4 +303,71 @@ describe('http app', () => {
     })
     await upstream.close()
   })
+
+  it('allows admin to list users and reset a user password', async () => {
+    const userRegister = await postJson('/api/auth/register', { email: 'user@example.com', password: 'old-secret' })
+    const userId = userRegister.json().user.id
+    const adminLogin = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const adminCookie = adminLogin.headers['set-cookie'][0]
+
+    const users = await request('/api/admin/users', { headers: { cookie: adminCookie } })
+    expect(users.status).toBe(200)
+    expect(users.json().items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: userId, email: 'user@example.com', role: 'user' }),
+    ]))
+
+    const reset = await postJson(`/api/admin/users/${userId}/reset-password`, { password: 'new-secret' }, adminCookie)
+    expect(reset.status).toBe(200)
+    expect((await postJson('/api/auth/login', { identifier: 'user@example.com', password: 'new-secret' })).status).toBe(200)
+  })
+
+  it('allows admin to update user status', async () => {
+    const userRegister = await postJson('/api/auth/register', { email: 'user@example.com', password: 'secret' })
+    const userId = userRegister.json().user.id
+    const adminLogin = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+
+    const response = await request(`/api/admin/users/${userId}/status`, {
+      method: 'PATCH',
+      headers: { cookie: adminLogin.headers['set-cookie'][0], 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'disabled' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(appStorage.getUserById(userId)).toMatchObject({ status: 'disabled' })
+  })
+
+  it('prevents ordinary users from admin APIs', async () => {
+    const register = await postJson('/api/auth/register', { email: 'user@example.com', password: 'secret' })
+
+    const response = await request('/api/admin/users', { headers: { cookie: register.headers['set-cookie'][0] } })
+
+    expect(response.status).toBe(403)
+    expect(response.json()).toEqual({ error: '需要管理员权限' })
+  })
+
+  it('returns current-user usage and admin all-user usage', async () => {
+    const user = await postJson('/api/auth/register', { email: 'user@example.com', password: 'secret' })
+    const userId = user.json().user.id
+    const admin = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    appStorage.recordUsageEvent({
+      userId,
+      eventType: 'ai_proxy',
+      status: 'ok',
+      endpoint: '/api-proxy/v1/responses',
+      model: 'gpt-image-1',
+      generatedImages: 1,
+      totalTokens: 10,
+      createdAt: 10,
+    })
+
+    const mine = await request('/api/usage/me', { headers: { cookie: user.headers['set-cookie'][0] } })
+    expect(mine.status).toBe(200)
+    expect(mine.json().summary).toMatchObject({ calls: 1, generatedImages: 1, totalTokens: 10 })
+
+    const all = await request('/api/admin/usage', { headers: { cookie: admin.headers['set-cookie'][0] } })
+    expect(all.status).toBe(200)
+    expect(all.json().summaries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ userId, email: 'user@example.com', calls: 1 }),
+    ]))
+  })
 })

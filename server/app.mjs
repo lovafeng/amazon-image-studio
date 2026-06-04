@@ -308,6 +308,78 @@ async function handleData(req, res, storage, pathname, session) {
   return false
 }
 
+function requireAdmin(res, session) {
+  if (session.role !== 'admin') {
+    sendJson(res, 403, { error: '需要管理员权限' })
+    return false
+  }
+  return true
+}
+
+async function handleUsageAndAdmin(req, res, storage, pathname, session) {
+  if (req.method === 'GET' && pathname === '/api/usage/me') {
+    sendOk(res, {
+      summary: storage.getUsageSummary(session.userId),
+      events: storage.getUsageEvents(session.userId),
+    })
+    return true
+  }
+
+  if (!pathname.startsWith('/api/admin/')) return false
+  if (!requireAdmin(res, session)) return true
+
+  if (req.method === 'GET' && pathname === '/api/admin/summary') {
+    const users = storage.listUsers()
+    const summaries = storage.getAllUsageSummaries()
+    sendOk(res, {
+      users: users.length,
+      activeUsers: users.filter((user) => user.status === 'active').length,
+      calls: summaries.reduce((sum, item) => sum + item.calls, 0),
+      successes: summaries.reduce((sum, item) => sum + item.successes, 0),
+      failures: summaries.reduce((sum, item) => sum + item.failures, 0),
+      generatedImages: summaries.reduce((sum, item) => sum + item.generatedImages, 0),
+      totalTokens: summaries.reduce((sum, item) => sum + item.totalTokens, 0),
+    })
+    return true
+  }
+
+  if (req.method === 'GET' && pathname === '/api/admin/users') {
+    sendOk(res, {
+      items: storage.listUsers().map((user) => ({
+        ...publicUser(user),
+        usage: storage.getUsageSummary(user.id),
+      })),
+    })
+    return true
+  }
+
+  if (req.method === 'GET' && pathname === '/api/admin/usage') {
+    sendOk(res, {
+      summaries: storage.getAllUsageSummaries(),
+      events: storage.getAllUsageEvents(),
+    })
+    return true
+  }
+
+  if (pathname.startsWith('/api/admin/users/') && pathname.endsWith('/status') && req.method === 'PATCH') {
+    const id = pathname.slice('/api/admin/users/'.length, -'/status'.length)
+    const body = await readJson(req)
+    storage.setUserStatus(id, String(body.status))
+    sendOk(res, { user: publicUser(storage.getUserById(id)) })
+    return true
+  }
+
+  if (pathname.startsWith('/api/admin/users/') && pathname.endsWith('/reset-password') && req.method === 'POST') {
+    const id = pathname.slice('/api/admin/users/'.length, -'/reset-password'.length)
+    const body = await readJson(req)
+    storage.setUserPasswordHash(id, hashPassword(String(body.password ?? '')))
+    sendOk(res)
+    return true
+  }
+
+  return false
+}
+
 export function createRequestHandler({ config, storage }) {
   return (req, res) => {
     void (async () => {
@@ -323,6 +395,7 @@ export function createRequestHandler({ config, storage }) {
           sendJson(res, 401, { error: '未登录' })
           return
         }
+        if (await handleUsageAndAdmin(req, res, storage, pathname, session)) return
         if (await handleData(req, res, storage, pathname, session)) return
       }
 

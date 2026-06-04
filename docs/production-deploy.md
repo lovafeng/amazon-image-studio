@@ -81,18 +81,20 @@ npm run deploy:prod -- --no-auth-smoke
 
 生产 `.env` 必须留在服务器上，不提交到仓库。
 
-多账号推荐使用：
+首次启动时，服务会把配置账号写入 SQLite 作为 admin。多个初始 admin 可使用：
 
 ```env
 APP_ACCOUNTS_JSON='[{"username":"admin","password":"..."},{"username":"operator","password":"..."}]'
 ```
 
-如果没有 `APP_ACCOUNTS_JSON`，服务仍兼容旧配置：
+如果没有 `APP_ACCOUNTS_JSON`，服务仍兼容单个 admin 配置：
 
 ```env
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=...
 ```
+
+普通用户不需要写入 `.env`，可在页面自助注册，注册后立即可登录。admin 可在管理模块查看全部用户、全部使用统计，并重置普通用户密码。
 
 AI Key 继续只配置在服务端：
 
@@ -155,6 +157,6 @@ ssh siliconvalley 'systemctl start amazon-image-studio.service && systemctl is-a
 ## 注意事项
 
 - 不要把 `.env`、SQLite 数据库或备份文件同步回仓库。
-- 新增账号只改生产 `.env` 即可，不需要重新构建前端。
+- 新增普通用户通过页面注册；新增初始 admin 才需要改生产 `.env` 并重启服务。
 - 修改 `server/`、`src/`、`public/sw.js` 后需要重新部署。
 - 如果用户反馈切账号后仍看到上一个账号历史，优先确认 `sw.js` 是新版，并让用户刷新页面或重新打开浏览器。

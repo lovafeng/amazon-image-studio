@@ -3,6 +3,8 @@ import {
   createSessionCookie,
   createSessionToken,
   getCookieHeader,
+  hashPassword,
+  verifyPassword,
   verifySessionToken,
 } from './auth.mjs'
 
@@ -21,6 +23,15 @@ const multiAccountConfig = {
 }
 
 describe('server auth sessions', () => {
+  it('hashes and verifies passwords without storing plaintext', () => {
+    const hash = hashPassword('secret', 'fixed-salt')
+
+    expect(hash).toMatch(/^scrypt:fixed-salt:/)
+    expect(hash).not.toContain('secret')
+    expect(verifyPassword('secret', hash)).toBe(true)
+    expect(verifyPassword('wrong', hash)).toBe(false)
+  })
+
   it('verifies a signed token created for the admin user', () => {
     const token = createSessionToken(config, 'admin', 1_900_000_000_000)
 

@@ -1,7 +1,18 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 
 export const SESSION_COOKIE_NAME = 'ais_session'
 export const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+
+export function hashPassword(password, salt = randomBytes(16).toString('base64url')) {
+  const hash = scryptSync(String(password), salt, 32).toString('base64url')
+  return `scrypt:${salt}:${hash}`
+}
+
+export function verifyPassword(password, storedHash) {
+  const [, salt, expected] = String(storedHash).split(':')
+  const actual = scryptSync(String(password), salt, 32).toString('base64url')
+  return actual === expected
+}
 
 function sign(config, payload) {
   return createHmac('sha256', config.sessionSecret).update(payload).digest('base64url')

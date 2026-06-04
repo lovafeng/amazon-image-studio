@@ -19,6 +19,71 @@ afterEach(() => {
 })
 
 describe('sqlite storage', () => {
+  it('creates users and finds them by email or phone', () => {
+    const user = storage.createUser({
+      email: 'user@example.com',
+      phone: '13800000000',
+      passwordHash: 'hash',
+      role: 'user',
+      status: 'active',
+      createdAt: 1,
+    })
+
+    expect(storage.getUserById(user.id)).toMatchObject({
+      email: 'user@example.com',
+      phone: '13800000000',
+      passwordHash: 'hash',
+      role: 'user',
+      status: 'active',
+      createdAt: 1,
+    })
+    expect(storage.findUserByIdentifier('user@example.com')).toMatchObject({ id: user.id })
+    expect(storage.findUserByIdentifier('13800000000')).toMatchObject({ id: user.id })
+  })
+
+  it('updates user status, password hash, and last login time', () => {
+    const user = storage.createUser({
+      email: 'user@example.com',
+      phone: '',
+      passwordHash: 'old',
+      role: 'user',
+      status: 'active',
+      createdAt: 1,
+    })
+
+    storage.setUserStatus(user.id, 'disabled')
+    storage.setUserPasswordHash(user.id, 'new')
+    storage.touchUserLogin(user.id, 20)
+
+    expect(storage.getUserById(user.id)).toMatchObject({
+      status: 'disabled',
+      passwordHash: 'new',
+      lastLoginAt: 20,
+    })
+  })
+
+  it('ensures a configured admin user exists', () => {
+    const admin = storage.ensureAdminUser({
+      email: 'admin@example.com',
+      phone: '',
+      passwordHash: 'hash',
+      createdAt: 1,
+    })
+
+    expect(storage.findUserByIdentifier('admin@example.com')).toMatchObject({
+      id: admin.id,
+      email: 'admin@example.com',
+      role: 'admin',
+      status: 'active',
+    })
+    expect(storage.ensureAdminUser({
+      email: 'admin@example.com',
+      phone: '',
+      passwordHash: 'next-hash',
+      createdAt: 2,
+    })).toMatchObject({ id: admin.id, passwordHash: 'hash' })
+  })
+
   it('stores, lists, updates, deletes, and clears tasks', () => {
     const task = {
       id: 'task-a',

@@ -27,6 +27,7 @@ coverage/
 .cache/
 .vite/
 .vitest/
+.worktrees/
 
 # Deployment tool local state
 .wrangler/

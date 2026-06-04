@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream'
-import { createClearSessionCookie, createSessionCookie, getRequestSession, isAdminLogin } from './auth.mjs'
+import { createClearSessionCookie, createSessionCookie, getRequestSession, hashPassword, verifyPassword } from './auth.mjs'
 
 const API_PROXY_PATH_PATTERN = /^\/api-proxy\/((v1\/)?(images\/generations|images\/edits|responses|chat\/completions))$/
 
@@ -24,6 +24,18 @@ function routeId(pathname, prefix) {
 
 function sendOk(res, value = { ok: true }, headers = {}) {
   sendJson(res, 200, value, headers)
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    status: user.status,
+    createdAt: user.createdAt,
+    lastLoginAt: user.lastLoginAt,
+  }
 }
 
 function buildAiProxyUrl(baseUrl, pathname, search) {
@@ -58,23 +70,55 @@ function createResponseHeaders(response) {
   return headers
 }
 
-async function handleAuth(req, res, config, pathname) {
+async function handleAuth(req, res, config, storage, pathname) {
   if (req.method === 'GET' && pathname === '/api/auth/me') {
-    const session = getRequestSession(config, req)
-    sendOk(res, session ? { authenticated: true, username: session.username } : { authenticated: false })
+    const session = getRequestSession(config, storage, req)
+    const user = session ? storage.getUserById(session.userId) : null
+    sendOk(res, user ? { authenticated: true, user: publicUser(user) } : { authenticated: false })
+    return true
+  }
+
+  if (req.method === 'POST' && pathname === '/api/auth/register') {
+    const body = await readJson(req)
+    const email = String(body.email ?? '').trim()
+    const phone = String(body.phone ?? '').trim()
+    const password = String(body.password ?? '')
+    if (!email && !phone) {
+      sendJson(res, 400, { error: '请填写邮箱或电话' })
+      return true
+    }
+    if ((email && storage.findUserByIdentifier(email)) || (phone && storage.findUserByIdentifier(phone))) {
+      sendJson(res, 409, { error: '邮箱或电话已注册' })
+      return true
+    }
+
+    const user = storage.createUser({
+      email,
+      phone,
+      passwordHash: hashPassword(password),
+      role: 'user',
+      status: 'active',
+      createdAt: Date.now(),
+    })
+    sendOk(res, { authenticated: true, user: publicUser(user) }, {
+      'set-cookie': createSessionCookie(config, user),
+    })
     return true
   }
 
   if (req.method === 'POST' && pathname === '/api/auth/login') {
     const credentials = await readJson(req)
-    if (!isAdminLogin(config, credentials)) {
+    const identifier = String(credentials.identifier ?? credentials.username ?? '').trim()
+    const user = storage.findUserByIdentifier(identifier)
+    if (!user || user.status !== 'active' || !verifyPassword(String(credentials.password ?? ''), user.passwordHash)) {
       sendJson(res, 401, { error: '账号或密码错误' })
       return true
     }
 
-    const username = String(credentials.username)
-    sendOk(res, { authenticated: true, username }, {
-      'set-cookie': createSessionCookie(config, username),
+    storage.touchUserLogin(user.id, Date.now())
+    const nextUser = storage.getUserById(user.id)
+    sendOk(res, { authenticated: true, user: publicUser(nextUser) }, {
+      'set-cookie': createSessionCookie(config, nextUser),
     })
     return true
   }
@@ -89,7 +133,7 @@ async function handleAuth(req, res, config, pathname) {
   return false
 }
 
-async function handleApiProxy(req, res, config, pathname, search) {
+async function handleApiProxy(req, res, config, storage, pathname, search) {
   if (!pathname.startsWith('/api-proxy/')) return false
 
   if (!API_PROXY_PATH_PATTERN.test(pathname)) {
@@ -108,7 +152,7 @@ async function handleApiProxy(req, res, config, pathname, search) {
     return true
   }
 
-  if (!getRequestSession(config, req)) {
+  if (!getRequestSession(config, storage, req)) {
     sendJson(res, 401, { error: '未登录' })
     return true
   }
@@ -135,7 +179,7 @@ async function handleApiProxy(req, res, config, pathname, search) {
 }
 
 async function handleData(req, res, storage, pathname, session) {
-  const owner = session.username
+  const owner = session.userId
   if (req.method === 'GET' && pathname === '/api/tasks') {
     sendOk(res, storage.getAllTasks(owner))
     return true
@@ -235,11 +279,11 @@ export function createRequestHandler({ config, storage }) {
       const url = new URL(req.url ?? '/', 'http://localhost')
       const pathname = url.pathname
 
-      if (await handleAuth(req, res, config, pathname)) return
-      if (await handleApiProxy(req, res, config, pathname, url.search)) return
+      if (await handleAuth(req, res, config, storage, pathname)) return
+      if (await handleApiProxy(req, res, config, storage, pathname, url.search)) return
 
       if (pathname.startsWith('/api/')) {
-        const session = getRequestSession(config, req)
+        const session = getRequestSession(config, storage, req)
         if (!session) {
           sendJson(res, 401, { error: '未登录' })
           return

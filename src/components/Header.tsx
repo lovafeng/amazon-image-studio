@@ -24,6 +24,7 @@ interface HeaderProps {
 export default function Header({ username, onLogout }: HeaderProps) {
   const setShowSettings = useStore((s) => s.setShowSettings)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
+  const appMode = useStore((s) => s.appMode)
   const [showHelp, setShowHelp] = useState(false)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isPwaInstalled, setIsPwaInstalled] = useState(isInstalledPwa)
@@ -185,7 +186,7 @@ export default function Header({ username, onLogout }: HeaderProps) {
       <div className="safe-area-top invisible pointer-events-none" aria-hidden="true">
         <div className="safe-header-inner" />
       </div>
-      {showHelp && <HelpModal appMode="gallery" onClose={() => setShowHelp(false)} />}
+      {showHelp && <HelpModal appMode={appMode} onClose={() => setShowHelp(false)} />}
     </>
   )
 }

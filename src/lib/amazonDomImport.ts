@@ -1,6 +1,6 @@
 import type { AmazonPromptDraft } from './amazonPrompt'
 
-export const AMAZON_DOM_URL_IMPORT_FAILURE_MESSAGE = 'URL 导入失败，可能被跨域或反爬拦截；请上传该页面保存下来的 DOM 文件。'
+export const AMAZON_DOM_URL_IMPORT_FAILURE_MESSAGE = '亚马逊限制了直接读取，请上传保存的商品页面文件。'
 export const AMAZON_DOM_PARSE_FAILURE_MESSAGE = 'DOM 中未识别到商品标题或五点描述，请确认文件来自 Amazon 商品详情页。'
 
 export interface AmazonImageCandidate {

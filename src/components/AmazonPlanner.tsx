@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
-import { addImageFromFile, ensureImageCached, submitTask, useStore } from '../store'
+import { addImageFromFile, addImageFromUrl, ensureImageCached, submitTask, useStore } from '../store'
 import { getAmazonPlannerProfile, getDefaultImageProfile, normalizeSettings, validateApiProfile } from '../lib/apiProfiles'
 import {
   DEFAULT_AMAZON_PROMPT_DRAFT,
@@ -36,12 +36,13 @@ import {
   AMAZON_DOM_PARSE_FAILURE_MESSAGE,
   AMAZON_DOM_URL_IMPORT_FAILURE_MESSAGE,
   importAmazonDomFromUrl,
+  parseAmazonImportPayload,
   parseAmazonDomHtml,
   type AmazonDomImportResult,
 } from '../lib/amazonDomImport'
 import { DEFAULT_PARAMS } from '../types'
 import type { AmazonPlannerSession, TaskRecord } from '../types'
-import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, EyeIcon, HistoryIcon, ImportIcon, PhotoIcon, PlusIcon, TrashIcon } from './icons'
+import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, DownloadIcon, EyeIcon, HistoryIcon, ImportIcon, PhotoIcon, PlusIcon, TrashIcon } from './icons'
 
 const FIELD_CLASS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
 const LABEL_CLASS = 'mb-1.5 block text-xs font-medium text-gray-500 dark:text-gray-400'
@@ -51,6 +52,7 @@ const API_MAX_IMAGES = 16
 const STYLE_PREVIEW_WIDTH = 420
 const STYLE_PREVIEW_HEIGHT = 500
 const STYLE_PREVIEW_OFFSET = 16
+const AMAZON_IMPORT_EXTENSION_ZIP = 'amazon-image-studio-amazon-importer.zip'
 const STYLE_DENSITY_OPTIONS: Array<{ value: AmazonStyleDensityMode; label: string }> = [
   { value: 'rich', label: '信息丰富' },
   { value: 'minimal', label: '简约' },
@@ -322,6 +324,8 @@ export default function AmazonPlanner() {
   const [amazonImportUrl, setAmazonImportUrl] = useState('')
   const [amazonImportStatus, setAmazonImportStatus] = useState('')
   const [isAmazonImporting, setIsAmazonImporting] = useState(false)
+  const [amazonImportPreview, setAmazonImportPreview] = useState<AmazonDomImportResult | null>(null)
+  const [addingAmazonImageUrl, setAddingAmazonImageUrl] = useState('')
   const [imagePlans, setImagePlans] = useState<AmazonImagePlan[]>([])
   const [aPlusPlans, setAPlusPlans] = useState<AmazonAPlusPlan[]>([])
   const [seriesStyleGuides, setSeriesStyleGuides] = useState<{ listing: string; aplus: string }>({
@@ -517,6 +521,26 @@ export default function AmazonPlanner() {
     ? getAmazonAPlusComplianceChecks(draft, selectedAPlusPlan, aPlusType, inputImages.length, hasStyleReference)
     : getAmazonListingPlannerChecks(draft, targetSize, inputImages.length, hasStyleReference, styleReferenceRequired)
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+    const payload = params.get('amazon-import')
+    if (!payload) return
+
+    try {
+      const result = parseAmazonImportPayload(payload)
+      setAmazonImportPreview(result)
+      setAmazonImportStatus('已从浏览器插件读取商品信息，请确认后应用。')
+      showToast('已从浏览器插件读取商品信息', 'success')
+    } catch {
+      setAmazonImportStatus(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
+      showToast('插件导入内容解析失败', 'error')
+    }
+
+    params.delete('amazon-import')
+    const nextHash = params.toString()
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ''}`)
+  }, [showToast])
 
   useEffect(() => {
     let cancelled = false
@@ -990,8 +1014,32 @@ export default function AmazonPlanner() {
       sellingPoints: result.draft.sellingPoints ?? current.sellingPoints,
     }))
     setPlannerError('')
-    setAmazonImportStatus(result.asin ? `已导入亚马逊商品信息（ASIN ${result.asin}）` : '已导入亚马逊商品信息')
-    showToast('已导入亚马逊商品信息', 'success')
+    setAmazonImportPreview(null)
+    setAmazonImportStatus(result.asin ? `已应用亚马逊商品信息（ASIN ${result.asin}）` : '已应用亚马逊商品信息')
+    showToast('已应用到策划', 'success')
+  }
+
+  const previewAmazonDomImportResult = (result: AmazonDomImportResult) => {
+    setAmazonImportPreview(result)
+    setPlannerError('')
+    setAmazonImportStatus(result.asin ? `已读取商品信息（ASIN ${result.asin}），请确认后应用。` : '已读取商品信息，请确认后应用。')
+  }
+
+  const addAmazonImportImage = async (url: string) => {
+    if (useStore.getState().inputImages.length >= API_MAX_IMAGES) {
+      showToast(`参考图数量已达上限（${API_MAX_IMAGES} 张）`, 'error')
+      return
+    }
+    setAddingAmazonImageUrl(url)
+    try {
+      await addImageFromUrl(url)
+      updateCurrentPlannerSession({ referenceImageIds: useStore.getState().inputImages.map((image) => image.id) })
+      showToast('已添加为参考图', 'success')
+    } catch {
+      showToast('图片读取受限，请右键保存图片后上传参考图。', 'error')
+    } finally {
+      setAddingAmazonImageUrl('')
+    }
   }
 
   const importAmazonUrl = async () => {
@@ -1004,7 +1052,7 @@ export default function AmazonPlanner() {
     setIsAmazonImporting(true)
     setAmazonImportStatus('正在读取亚马逊页面...')
     try {
-      applyAmazonDomImportResult(await importAmazonDomFromUrl(amazonImportUrl))
+      previewAmazonDomImportResult(await importAmazonDomFromUrl(amazonImportUrl))
     } catch (err) {
       const message = err instanceof Error && err.message === AMAZON_DOM_PARSE_FAILURE_MESSAGE
         ? AMAZON_DOM_PARSE_FAILURE_MESSAGE
@@ -1022,12 +1070,12 @@ export default function AmazonPlanner() {
     if (!file) return
 
     setIsAmazonImporting(true)
-    setAmazonImportStatus('正在解析 DOM 文件...')
+    setAmazonImportStatus('正在解析网页文件...')
     try {
-      applyAmazonDomImportResult(parseAmazonDomHtml(await file.text(), amazonImportUrl))
+      previewAmazonDomImportResult(parseAmazonDomHtml(await file.text(), amazonImportUrl))
     } catch {
       setAmazonImportStatus(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
-      showToast('DOM 文件解析失败', 'error')
+      showToast('网页文件解析失败', 'error')
     } finally {
       setIsAmazonImporting(false)
     }
@@ -1489,7 +1537,7 @@ export default function AmazonPlanner() {
             <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/[0.08] dark:bg-gray-950">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                 <label className="min-w-0 flex-1">
-                  <span className={LABEL_CLASS}>亚马逊 URL / DOM 导入</span>
+                  <span className={LABEL_CLASS}>导入亚马逊商品</span>
                   <input
                     value={amazonImportUrl}
                     onChange={(event) => setAmazonImportUrl(event.target.value)}
@@ -1505,7 +1553,7 @@ export default function AmazonPlanner() {
                     className={`inline-flex h-10 items-center gap-2 rounded-xl px-3 text-sm font-semibold text-white transition ${isAmazonImporting ? 'cursor-wait bg-gray-400' : 'bg-gray-800 hover:bg-gray-700 dark:bg-white/[0.12] dark:hover:bg-white/[0.20]'}`}
                   >
                     <ImportIcon className="h-4 w-4" />
-                    {isAmazonImporting ? '导入中...' : '导入 URL'}
+                    {isAmazonImporting ? '导入中...' : '一键导入'}
                   </button>
                   <button
                     type="button"
@@ -1514,8 +1562,16 @@ export default function AmazonPlanner() {
                     className="inline-flex h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 transition hover:bg-gray-100 disabled:cursor-wait disabled:text-gray-400 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-white/[0.06]"
                   >
                     <ImportIcon className="h-4 w-4" />
-                    上传 DOM
+                    上传网页文件
                   </button>
+                  <a
+                    href={AMAZON_IMPORT_EXTENSION_ZIP}
+                    download
+                    className="inline-flex h-10 items-center gap-2 rounded-xl px-3 text-sm font-medium text-blue-600 transition hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-400/10"
+                  >
+                    <DownloadIcon className="h-4 w-4" />
+                    下载浏览器插件
+                  </a>
                 </div>
               </div>
               {amazonImportStatus && (
@@ -1523,7 +1579,81 @@ export default function AmazonPlanner() {
                   {amazonImportStatus}
                 </div>
               )}
-              <input ref={amazonDomFileInputRef} type="file" accept=".html,.htm,.txt,text/html,text/plain" className="hidden" onChange={importAmazonDomFile} />
+              {amazonImportPreview && (
+                <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3 dark:border-white/[0.08] dark:bg-gray-900">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">导入预览</div>
+                      <div className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                        请确认识别结果，再应用到策划字段。
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => applyAmazonDomImportResult(amazonImportPreview)}
+                        className="inline-flex h-9 items-center rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white transition hover:bg-blue-500"
+                      >
+                        应用到策划
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAmazonImportPreview(null)}
+                        className="inline-flex h-9 items-center rounded-lg px-3 text-sm font-medium text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+                      >
+                        重新导入
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                    <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-white/[0.04]">
+                      <span className="font-medium text-gray-500 dark:text-gray-400">商品标题</span>
+                      <div className="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">{amazonImportPreview.title || '未识别'}</div>
+                    </div>
+                    <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-white/[0.04]">
+                      <span className="font-medium text-gray-500 dark:text-gray-400">五点描述</span>
+                      <div className="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">{amazonImportPreview.bullets.length} 条</div>
+                    </div>
+                    <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-white/[0.04]">
+                      <span className="font-medium text-gray-500 dark:text-gray-400">品牌</span>
+                      <div className="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">{amazonImportPreview.draft.brand || '未识别'}</div>
+                    </div>
+                    <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-white/[0.04]">
+                      <span className="font-medium text-gray-500 dark:text-gray-400">颜色</span>
+                      <div className="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">{amazonImportPreview.draft.color || '未识别'}</div>
+                    </div>
+                    <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-white/[0.04]">
+                      <span className="font-medium text-gray-500 dark:text-gray-400">材质</span>
+                      <div className="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">{amazonImportPreview.draft.material || '未识别'}</div>
+                    </div>
+                    <div className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-white/[0.04]">
+                      <span className="font-medium text-gray-500 dark:text-gray-400">包装清单</span>
+                      <div className="mt-1 text-sm font-medium text-gray-800 dark:text-gray-100">{amazonImportPreview.draft.packageIncludes || '未识别'}</div>
+                    </div>
+                  </div>
+                  {amazonImportPreview.imageCandidates.length > 0 && (
+                    <div className="mt-3">
+                      <div className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">商品图片候选</div>
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,88px)]">
+                        {amazonImportPreview.imageCandidates.map((image) => (
+                          <div key={image.url} className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04]">
+                            <img src={image.url} alt={image.label} className="aspect-square w-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => void addAmazonImportImage(image.url)}
+                              disabled={Boolean(addingAmazonImageUrl)}
+                              className="w-full px-1.5 py-1.5 text-[11px] font-medium text-blue-600 transition hover:bg-blue-50 disabled:cursor-wait disabled:text-gray-400 dark:text-blue-300 dark:hover:bg-blue-400/10"
+                            >
+                              {addingAmazonImageUrl === image.url ? '添加中' : '添加参考图'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              <input ref={amazonDomFileInputRef} type="file" className="hidden" onChange={importAmazonDomFile} />
             </div>
             <label className={`mt-3 block rounded-xl transition ${getGuideFocusClass(guideState.target === 'planner-input')}`}>
               <span className={LABEL_CLASS}>{plannerMode === 'aplus' ? '标题 / 五点描述 / 品牌说明' : '标题 / 五点描述'}</span>

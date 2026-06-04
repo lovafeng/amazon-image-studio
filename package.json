@@ -11,6 +11,7 @@
     "mock:api": "node scripts/mock-image-api.mjs",
     "build": "tsc -b && vite build",
     "deploy:cf": "npm run build && wrangler deploy",
+    "deploy:prod": "bash scripts/deploy-production.sh",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

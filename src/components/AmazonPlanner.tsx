@@ -27,6 +27,7 @@ import {
   type AmazonStyleDensityMode,
 } from '../lib/listingPlanner'
 import { callAmazonPlannerApi, type PlannerApiResult } from '../lib/listingPlannerApi'
+import { getBatchSubmitStatusText, getPlannerActionGuidance, getSubmitButtonLabel } from '../lib/amazonPlannerAction'
 import { callImageApi } from '../lib/api'
 import { deleteAmazonPlannerSession, getAllAmazonPlannerSessions, putAmazonPlannerSession, storeImage } from '../lib/db'
 import { normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -408,13 +409,20 @@ export default function AmazonPlanner() {
   const currentActionFilled = currentActionProgress === 'filled' || currentActionProgress === 'submitted'
   const currentActionSubmitted = currentActionProgress === 'submitted'
   const actionKindLabel = plannerMode === 'aplus' ? '模块' : isMainListingPlan ? '主图' : '图片'
-  const actionGuidance = !hasSelectedPlan
-    ? plannerMode === 'aplus' ? '先选择一个 A+ 模块' : '先选择一个图片位'
-    : currentActionSubmitted
-      ? `已提交 ${actionSlot ?? '当前'} ${actionKindLabel}，${canGoNext ? '点击下一张继续' : '已是最后一张'}`
-      : currentActionFilled
-        ? '已填入右侧输入框，下一步提交生成'
-        : `可直接一键生图，也可先填入当前 ${actionSlot ?? '当前'} ${actionKindLabel}提示词`
+  const actionGuidance = getPlannerActionGuidance({
+    plannerMode,
+    hasSelectedPlan,
+    currentActionSubmitted,
+    currentActionFilled,
+    canGoNext,
+    actionSlot,
+    actionKindLabel,
+    styleReferenceRequired,
+    hasStyleReference,
+    styleReferenceLimitExceeded,
+    effectiveReferenceCount,
+    apiMaxImages: API_MAX_IMAGES,
+  })
   const mainStyleGuidance = isMainListingPlan
     ? hasStyleReference
       ? 'MAIN 主图不附加风格板；附图和 A+ 会使用已选风格。'
@@ -449,6 +457,20 @@ export default function AmazonPlanner() {
   const submittedVisiblePlanCount = (plannerMode === 'aplus' ? aPlusPlansWithSizes : imagePlans).filter((plan, index) =>
     actionProgress[getPlannerActionKey(plannerMode, index, plan.slot)] === 'submitted',
   ).length
+  const batchSubmitStatusText = getBatchSubmitStatusText({
+    isBatchSubmitting,
+    batchSubmittedCount,
+    visiblePlanCount,
+    submittedVisiblePlanCount,
+    seriesStyleReferenceNeeded,
+    hasStyleReference,
+  })
+  const submitButtonLabel = getSubmitButtonLabel({
+    currentActionSubmitted,
+    styleReferenceRequired,
+    hasStyleReference,
+    styleReferenceLimitExceeded,
+  })
   const batchSubmitDisabled = isBatchSubmitting || !hasPlanOptions || isPlanning || isGeneratingStyleImages || (seriesStyleReferenceNeeded && !hasStyleReference) || batchStyleReferenceLimitExceeded
   const guideState: PlannerGuideState = !hasUsablePlannerProfile
     ? {
@@ -1842,13 +1864,7 @@ export default function AmazonPlanner() {
 
                   <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                     <div className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${batchStyleReferenceLimitExceeded ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200' : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300'}`}>
-                      {isBatchSubmitting
-                        ? `批量提交中：${batchSubmittedCount}/${visiblePlanCount}`
-                        : submittedVisiblePlanCount > 0
-                          ? `已提交 ${submittedVisiblePlanCount}/${visiblePlanCount}`
-                          : seriesStyleReferenceNeeded && !hasStyleReference
-                            ? '先选择风格板后可一键生图'
-                            : `准备提交 ${visiblePlanCount} 张`}
+                      {batchSubmitStatusText}
                       {batchStyleReferenceLimitExceeded && (
                         <span className="mt-1 block">当前参考图加隐藏风格板共 {batchEffectiveReferenceCount} 张，超过上限 {API_MAX_IMAGES} 张。</span>
                       )}
@@ -1895,7 +1911,7 @@ export default function AmazonPlanner() {
                       disabled={submitDisabled || currentActionSubmitted}
                       className={`inline-flex h-9 items-center justify-center rounded-lg px-2 text-xs font-semibold transition ${currentActionSubmitted ? 'cursor-default bg-emerald-600 text-white' : submitDisabled ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : 'bg-blue-600 text-white hover:bg-blue-500'}`}
                     >
-                      {currentActionSubmitted ? '已提交' : '提交生成'}
+                      {submitButtonLabel}
                     </button>
                   </div>
                 </div>

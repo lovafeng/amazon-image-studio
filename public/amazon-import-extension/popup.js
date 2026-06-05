@@ -1,5 +1,8 @@
-const DEFAULT_STUDIO_URL = 'https://lovafeng.github.io/amazon-image-studio/'
-const LEGACY_STUDIO_URLS = ['https://ali-aria.github.io/amazon-image-studio/']
+const DEFAULT_STUDIO_URL = 'https://amzimage.amzdataincn.com/'
+const LEGACY_STUDIO_URLS = [
+  'https://ali-aria.github.io/amazon-image-studio/',
+  'https://lovafeng.github.io/amazon-image-studio/',
+]
 const DOM_IMPORT_EVENT = 'amazon-image-studio-dom-import'
 const DOM_IMPORT_STORAGE_KEY = 'amazon-image-studio-dom-import-payload'
 

@@ -228,8 +228,9 @@ describe('amazon DOM import helpers', () => {
   })
 
   it('opens the deployed workbench by default and migrates the old Pages URL', () => {
-    expect(extensionPopupSource).toContain("const DEFAULT_STUDIO_URL = 'https://lovafeng.github.io/amazon-image-studio/'")
-    expect(extensionPopupSource).toContain("const LEGACY_STUDIO_URLS = ['https://ali-aria.github.io/amazon-image-studio/']")
+    expect(extensionPopupSource).toContain("const DEFAULT_STUDIO_URL = 'https://amzimage.amzdataincn.com/'")
+    expect(extensionPopupSource).toContain("'https://ali-aria.github.io/amazon-image-studio/'")
+    expect(extensionPopupSource).toContain("'https://lovafeng.github.io/amazon-image-studio/'")
     expect(extensionPopupSource).toContain('LEGACY_STUDIO_URLS.includes(normalizeStudioUrl(saved.studioUrl)) ? DEFAULT_STUDIO_URL : saved.studioUrl')
   })
 

@@ -13,6 +13,9 @@
     "http://localhost/*"
   ],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_title": "导入到 Amazon Image Studio"

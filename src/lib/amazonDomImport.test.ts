@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import extensionBackgroundSource from '../../public/amazon-import-extension/background.js?raw'
+import extensionManifestSource from '../../public/amazon-import-extension/manifest.json?raw'
 import extensionPopupSource from '../../public/amazon-import-extension/popup.js?raw'
 import {
   AMAZON_DOM_TRANSFER_EVENT,
@@ -214,15 +216,15 @@ describe('amazon DOM import helpers', () => {
   })
 
   it('sends Amazon DOM through the browser extension instead of encoding product fields in the URL', () => {
-    const functionStart = extensionPopupSource.indexOf('function captureDomFromPage()')
-    const functionEnd = extensionPopupSource.indexOf('function normalizeStudioUrl')
-    const injectedFunctionSource = extensionPopupSource.slice(functionStart, functionEnd)
+    const functionStart = extensionBackgroundSource.indexOf('function captureDomFromPage()')
+    const functionEnd = extensionBackgroundSource.indexOf('async function getActiveTab')
+    const injectedFunctionSource = extensionBackgroundSource.slice(functionStart, functionEnd)
 
     expect(extensionPopupSource).not.toContain('#amazon-import=')
-    expect(extensionPopupSource).toContain('#amazon-dom-import=1')
-    expect(extensionPopupSource).toContain(AMAZON_DOM_TRANSFER_EVENT)
-    expect(extensionPopupSource).toContain(AMAZON_DOM_TRANSFER_STORAGE_KEY)
-    expect(extensionPopupSource).toContain('window.postMessage')
+    expect(extensionBackgroundSource).toContain('#amazon-dom-import=1')
+    expect(extensionBackgroundSource).toContain(AMAZON_DOM_TRANSFER_EVENT)
+    expect(extensionBackgroundSource).toContain(AMAZON_DOM_TRANSFER_STORAGE_KEY)
+    expect(extensionBackgroundSource).toContain('window.postMessage')
     expect(injectedFunctionSource).toContain('document.documentElement.cloneNode(true)')
     expect(injectedFunctionSource).toContain('script, style, noscript, iframe')
   })
@@ -232,6 +234,63 @@ describe('amazon DOM import helpers', () => {
     expect(extensionPopupSource).toContain("'https://ali-aria.github.io/amazon-image-studio/'")
     expect(extensionPopupSource).toContain("'https://lovafeng.github.io/amazon-image-studio/'")
     expect(extensionPopupSource).toContain('LEGACY_STUDIO_URLS.includes(normalizeStudioUrl(saved.studioUrl)) ? DEFAULT_STUDIO_URL : saved.studioUrl')
+  })
+
+  it('delegates long-running browser import work to the extension background worker', () => {
+    expect(extensionManifestSource).toContain('"service_worker": "background.js"')
+    expect(extensionPopupSource).toContain('chrome.runtime.sendMessage')
+    expect(extensionPopupSource).not.toContain('chrome.tabs.create')
+    expect(extensionPopupSource).not.toContain('chrome.scripting.executeScript')
+  })
+
+  it('background worker reads the active Amazon tab and injects DOM into the workbench tab', async () => {
+    const listeners: Array<(message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => boolean> = []
+    const capturedDom = '<!doctype html><html><body><h1 id="productTitle">Commercial Ice Maker</h1></body></html>'
+    const executeScript = vi.fn(async (options: { target: { tabId: number }; args?: unknown[] }) => {
+      if (options.target.tabId === 1) return [{ result: { sourceUrl: FULL_AMAZON_URL, html: capturedDom } }]
+      return []
+    })
+    const chrome = {
+      permissions: {
+        contains: vi.fn(async () => true),
+        request: vi.fn(),
+      },
+      tabs: {
+        query: vi.fn(async () => [{ id: 1, url: FULL_AMAZON_URL }]),
+        create: vi.fn(async (options: { url: string }) => ({ id: 2, url: options.url })),
+        get: vi.fn(async () => ({ id: 2, status: 'complete' })),
+        onUpdated: {
+          addListener: vi.fn(),
+          removeListener: vi.fn(),
+        },
+      },
+      scripting: { executeScript },
+      runtime: {
+        onMessage: {
+          addListener: (listener: (message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => boolean) => {
+            listeners.push(listener)
+          },
+        },
+      },
+    }
+
+    new Function('chrome', extensionBackgroundSource)(chrome)
+    const response = await new Promise((resolve) => {
+      listeners[0]?.({ type: 'amazon-image-studio-import-current-page', studioUrl: 'https://amzimage.amzdataincn.com/' }, {}, resolve)
+    })
+
+    expect(response).toEqual({ ok: true })
+    expect(chrome.tabs.query).toHaveBeenCalledWith({ active: true, currentWindow: true })
+    expect(chrome.tabs.create).toHaveBeenCalledWith({ url: 'https://amzimage.amzdataincn.com/#amazon-dom-import=1' })
+    expect(executeScript).toHaveBeenCalledWith(expect.objectContaining({ target: { tabId: 1 } }))
+    expect(executeScript).toHaveBeenCalledWith(expect.objectContaining({
+      target: { tabId: 2 },
+      args: [
+        { sourceUrl: FULL_AMAZON_URL, html: capturedDom },
+        AMAZON_DOM_TRANSFER_EVENT,
+        AMAZON_DOM_TRANSFER_STORAGE_KEY,
+      ],
+    }))
   })
 
   it('parses structured payloads from the browser extension', () => {

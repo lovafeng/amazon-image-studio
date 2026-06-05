@@ -33,11 +33,14 @@ import { deleteAmazonPlannerSession, getAllAmazonPlannerSessions, putAmazonPlann
 import { normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { prepareReferenceImagePayload, type PlannerReferenceImagePayload } from '../lib/referenceImagePayload'
 import {
+  AMAZON_DOM_TRANSFER_EVENT,
+  AMAZON_DOM_TRANSFER_STORAGE_KEY,
   AMAZON_DOM_PARSE_FAILURE_MESSAGE,
   AMAZON_DOM_URL_IMPORT_FAILURE_MESSAGE,
   importAmazonDomFromUrl,
   parseAmazonImportPayload,
   parseAmazonDomHtml,
+  parseAmazonDomTransferPayload,
   type AmazonDomImportResult,
 } from '../lib/amazonDomImport'
 import { DEFAULT_PARAMS } from '../types'
@@ -200,6 +203,10 @@ function updateDraft<K extends keyof AmazonPromptDraft>(
   value: AmazonPromptDraft[K],
 ) {
   return { ...draft, [key]: value }
+}
+
+function getCurrentAmazonImportImage(result: AmazonDomImportResult) {
+  return result.imageCandidates.find((image) => image.isCurrent) ?? result.imageCandidates[0] ?? null
 }
 
 function isAbortError(err: unknown): boolean {
@@ -523,23 +530,79 @@ export default function AmazonPlanner() {
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
-    const payload = params.get('amazon-import')
-    if (!payload) return
-
-    try {
-      const result = parseAmazonImportPayload(payload)
+    const previewDomTransferPayload = (payload: unknown) => {
+      const transferPayload = parseAmazonDomTransferPayload(payload)
+      const result = parseAmazonDomHtml(transferPayload.html, transferPayload.sourceUrl)
       setAmazonImportPreview(result)
-      setAmazonImportStatus('已从浏览器插件读取商品信息，请确认后应用。')
-      showToast('已从浏览器插件读取商品信息', 'success')
-    } catch {
-      setAmazonImportStatus(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
-      showToast('插件导入内容解析失败', 'error')
+      setAmazonImportStatus(result.asin ? `已从浏览器插件读取当前页面 DOM（ASIN ${result.asin}），请确认后应用。` : '已从浏览器插件读取当前页面 DOM，请确认后应用。')
+      showToast('已从浏览器插件读取当前页面 DOM', 'success')
     }
 
-    params.delete('amazon-import')
+    const previewStoredDomTransferPayload = () => {
+      const storedPayload = window.sessionStorage.getItem(AMAZON_DOM_TRANSFER_STORAGE_KEY)
+      if (!storedPayload) return false
+      window.sessionStorage.removeItem(AMAZON_DOM_TRANSFER_STORAGE_KEY)
+      previewDomTransferPayload(JSON.parse(storedPayload))
+      return true
+    }
+
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+    const payload = params.get('amazon-import')
+    if (payload) {
+      try {
+        const result = parseAmazonImportPayload(payload)
+        setAmazonImportPreview(result)
+        setAmazonImportStatus('已从浏览器插件读取商品信息，请确认后应用。')
+        showToast('已从浏览器插件读取商品信息', 'success')
+      } catch {
+        setAmazonImportStatus(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
+        showToast('插件导入内容解析失败', 'error')
+      }
+      params.delete('amazon-import')
+    }
+
+    if (params.has('amazon-dom-import')) {
+      setAmazonImportStatus('正在接收浏览器插件传来的当前页面 DOM...')
+      params.delete('amazon-dom-import')
+    }
+
     const nextHash = params.toString()
     window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ''}`)
+
+    try {
+      previewStoredDomTransferPayload()
+    } catch {
+      setAmazonImportStatus(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
+      showToast('插件 DOM 导入内容解析失败', 'error')
+    }
+
+    const handleAmazonDomTransferMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return
+      const data = event.data as { type?: string; payload?: unknown }
+      if (data?.type !== AMAZON_DOM_TRANSFER_EVENT) return
+      try {
+        previewDomTransferPayload(data.payload)
+      } catch {
+        setAmazonImportStatus(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
+        showToast('插件 DOM 导入内容解析失败', 'error')
+      }
+    }
+
+    const handleAmazonDomTransferReady = () => {
+      try {
+        previewStoredDomTransferPayload()
+      } catch {
+        setAmazonImportStatus(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
+        showToast('插件 DOM 导入内容解析失败', 'error')
+      }
+    }
+
+    window.addEventListener('message', handleAmazonDomTransferMessage)
+    window.addEventListener(AMAZON_DOM_TRANSFER_EVENT, handleAmazonDomTransferReady)
+    return () => {
+      window.removeEventListener('message', handleAmazonDomTransferMessage)
+      window.removeEventListener(AMAZON_DOM_TRANSFER_EVENT, handleAmazonDomTransferReady)
+    }
   }, [showToast])
 
   useEffect(() => {
@@ -1005,7 +1068,7 @@ export default function AmazonPlanner() {
     showToast(`${sourceLabel}已生成 ${result.mode === 'aplus' ? result.aPlusPlans.length : result.plans.length} 张图片策划`, 'success')
   }
 
-  const applyAmazonDomImportResult = (result: AmazonDomImportResult) => {
+  const applyAmazonDomImportResult = async (result: AmazonDomImportResult) => {
     setListingText(result.listingText)
     setDraft((current) => ({
       ...current,
@@ -1016,7 +1079,12 @@ export default function AmazonPlanner() {
     setPlannerError('')
     setAmazonImportPreview(null)
     setAmazonImportStatus(result.asin ? `已应用亚马逊商品信息（ASIN ${result.asin}）` : '已应用亚马逊商品信息')
-    showToast('已应用到策划', 'success')
+    const currentImage = getCurrentAmazonImportImage(result)
+    if (currentImage) {
+      await addAmazonImportImage(currentImage.url, { successMessage: '已应用商品信息并添加当前图片' })
+    } else {
+      showToast('已应用到策划', 'success')
+    }
   }
 
   const previewAmazonDomImportResult = (result: AmazonDomImportResult) => {
@@ -1025,7 +1093,7 @@ export default function AmazonPlanner() {
     setAmazonImportStatus(result.asin ? `已读取商品信息（ASIN ${result.asin}），请确认后应用。` : '已读取商品信息，请确认后应用。')
   }
 
-  const addAmazonImportImage = async (url: string) => {
+  const addAmazonImportImage = async (url: string, options: { successMessage?: string } = {}) => {
     if (useStore.getState().inputImages.length >= API_MAX_IMAGES) {
       showToast(`参考图数量已达上限（${API_MAX_IMAGES} 张）`, 'error')
       return
@@ -1034,7 +1102,7 @@ export default function AmazonPlanner() {
     try {
       await addImageFromUrl(url)
       updateCurrentPlannerSession({ referenceImageIds: useStore.getState().inputImages.map((image) => image.id) })
-      showToast('已添加为参考图', 'success')
+      showToast(options.successMessage ?? '已添加为参考图', 'success')
     } catch {
       showToast('图片读取受限，请右键保存图片后上传参考图。', 'error')
     } finally {
@@ -1428,7 +1496,7 @@ export default function AmazonPlanner() {
               <div>
                 <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">策划历史</div>
                 <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                  保存在当前浏览器中，恢复后会带回 Listing、策划卡片、风格候选和已选风格板。
+                  保存在当前账号中，旧版浏览器历史会自动导入；恢复后会带回 Listing、策划卡片、风格候选和已选风格板。
                 </div>
               </div>
               <button
@@ -1535,7 +1603,7 @@ export default function AmazonPlanner() {
               </div>
             )}
             <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/[0.08] dark:bg-gray-950">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <div className="flex flex-col gap-2 2xl:flex-row 2xl:items-end">
                 <label className="min-w-0 flex-1">
                   <span className={LABEL_CLASS}>导入亚马逊商品</span>
                   <input
@@ -1591,10 +1659,10 @@ export default function AmazonPlanner() {
                     <div className="flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => applyAmazonDomImportResult(amazonImportPreview)}
+                        onClick={() => void applyAmazonDomImportResult(amazonImportPreview)}
                         className="inline-flex h-9 items-center rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white transition hover:bg-blue-500"
                       >
-                        应用到策划
+                        {getCurrentAmazonImportImage(amazonImportPreview) ? '应用并添加当前图' : '应用到策划'}
                       </button>
                       <button
                         type="button"
@@ -1633,10 +1701,15 @@ export default function AmazonPlanner() {
                   </div>
                   {amazonImportPreview.imageCandidates.length > 0 && (
                     <div className="mt-3">
-                      <div className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">商品图片候选</div>
+                      <div className="mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">商品图片（当前图优先）</div>
                       <div className="grid grid-cols-[repeat(auto-fill,minmax(72px,1fr))] gap-2 sm:grid-cols-[repeat(auto-fill,88px)]">
                         {amazonImportPreview.imageCandidates.map((image) => (
                           <div key={image.url} className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50 dark:border-white/[0.08] dark:bg-white/[0.04]">
+                            {image.isCurrent && (
+                              <div className="bg-blue-600 px-1.5 py-1 text-center text-[10px] font-semibold text-white">
+                                当前图
+                              </div>
+                            )}
                             <img src={image.url} alt={image.label} className="aspect-square w-full object-cover" />
                             <button
                               type="button"
@@ -1644,7 +1717,7 @@ export default function AmazonPlanner() {
                               disabled={Boolean(addingAmazonImageUrl)}
                               className="w-full px-1.5 py-1.5 text-[11px] font-medium text-blue-600 transition hover:bg-blue-50 disabled:cursor-wait disabled:text-gray-400 dark:text-blue-300 dark:hover:bg-blue-400/10"
                             >
-                              {addingAmazonImageUrl === image.url ? '添加中' : '添加参考图'}
+                              {addingAmazonImageUrl === image.url ? '添加中' : image.isCurrent ? '添加当前图' : '添加参考图'}
                             </button>
                           </div>
                         ))}

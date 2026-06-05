@@ -1,70 +1,20 @@
 const DEFAULT_STUDIO_URL = 'https://ali-aria.github.io/amazon-image-studio/'
+const DOM_IMPORT_EVENT = 'amazon-image-studio-dom-import'
+const DOM_IMPORT_STORAGE_KEY = 'amazon-image-studio-dom-import-payload'
 
 function cleanText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim()
 }
 
-function cleanBullet(value) {
-  const text = cleanText(value).replace(/[【】]/g, ' ').replace(/^[-•]+/, '').replace(/\s+/g, ' ').trim()
-  return /^make sure this fits/i.test(text) || /^note:/i.test(text) ? '' : text
-}
-
-function extractPayloadFromPage() {
-  const getText = (selector) => cleanText(document.querySelector(selector)?.textContent)
-  const getValue = (selector) => cleanText(document.querySelector(selector)?.value)
-  const details = {}
-
-  for (const selector of ['#productDetails_detailBullets_sections1 tr', '#productDetails_techSpec_section_1 tr', '#productDetails_feature_div tr']) {
-    for (const row of document.querySelectorAll(selector)) {
-      const key = cleanText(row.querySelector('th')?.textContent).replace(/:$/, '')
-      const value = cleanText(row.querySelector('td')?.textContent)
-      if (key && value) details[key] = value
-    }
+function captureDomFromPage() {
+  const root = document.documentElement.cloneNode(true)
+  for (const element of root.querySelectorAll('script, style, noscript, iframe')) {
+    element.remove()
   }
-
-  for (const item of document.querySelectorAll('#detailBullets_feature_div li')) {
-    const text = cleanText(item.textContent)
-    const [key, ...rest] = text.split(':')
-    const value = rest.join(':').trim()
-    const normalizedKey = cleanText(key).replace(/^[^A-Za-z\u3400-\u9fff]+/, '')
-    if (normalizedKey && value) details[normalizedKey] = value
-  }
-
-  const imageUrls = []
-  for (const image of document.querySelectorAll('#imgTagWrapperId img, #landingImage, #main-image-container img, #altImages img')) {
-    const oldHires = image.getAttribute('data-old-hires')
-    if (oldHires) imageUrls.push(oldHires)
-    const dynamic = image.getAttribute('data-a-dynamic-image')
-    if (dynamic) {
-      try {
-        imageUrls.push(...Object.keys(JSON.parse(dynamic)))
-      } catch {
-        // Ignore malformed Amazon image metadata.
-      }
-    }
-    const src = image.getAttribute('src')
-    if (src && !oldHires) imageUrls.push(src)
-  }
-
-  const title = cleanText(getText('#productTitle') || getValue('input[name="productTitle"], input#productTitle') || getText('#pqv-title')).replace(/^Product Summary:\s*/i, '')
-  const bullets = Array.from(document.querySelectorAll('#feature-bullets li span, #pqv-feature-bullets li span'))
-    .map((item) => cleanBullet(item.textContent))
-    .filter(Boolean)
-    .slice(0, 5)
-  const asin = location.href.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?#]|$)/i)?.[1]?.toUpperCase()
-    || getValue('input[name="asin"], input#asin, input[name="ASIN"], input#ASIN').toUpperCase()
-
   return {
-    ...(asin ? { asin } : {}),
-    title,
-    bullets,
-    details,
-    imageUrls: Array.from(new Set(imageUrls.filter((url) => /^https?:\/\//i.test(url)))).slice(0, 12),
+    sourceUrl: location.href,
+    html: `<!doctype html>\n${root.outerHTML}`,
   }
-}
-
-function encodePayload(payload) {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
 }
 
 function normalizeStudioUrl(value) {
@@ -77,15 +27,46 @@ async function getActiveTab() {
   return tab
 }
 
+function getOriginPattern(value) {
+  return `${new URL(value).origin}/*`
+}
+
+async function ensureStudioPermission(studioUrl) {
+  const origin = getOriginPattern(studioUrl)
+  if (await chrome.permissions.contains({ origins: [origin] })) return
+  const granted = await chrome.permissions.request({ origins: [origin] })
+  if (!granted) throw new Error('请允许插件向工作台传递 DOM。')
+}
+
+function waitForTabComplete(tabId) {
+  return new Promise((resolve) => {
+    chrome.tabs.onUpdated.addListener(function listener(updatedTabId, changeInfo) {
+      if (updatedTabId !== tabId || changeInfo.status !== 'complete') return
+      chrome.tabs.onUpdated.removeListener(listener)
+      resolve()
+    })
+  })
+}
+
+function receiveDomInStudio(payload, eventName, storageKey) {
+  const serializedPayload = JSON.stringify(payload)
+  if (serializedPayload.length < 4000000) {
+    window.sessionStorage.setItem(storageKey, serializedPayload)
+  }
+  window.postMessage({ type: eventName, payload }, window.location.origin)
+  window.dispatchEvent(new Event(eventName))
+}
+
 async function importCurrentPage() {
   const button = document.getElementById('importButton')
   const status = document.getElementById('status')
   const studioInput = document.getElementById('studioUrl')
   button.disabled = true
-  status.textContent = '正在读取当前商品页...'
+  status.textContent = '正在读取当前商品页 DOM...'
 
   const studioUrl = normalizeStudioUrl(studioInput.value)
   await chrome.storage.sync.set({ studioUrl })
+  await ensureStudioPermission(studioUrl)
   const tab = await getActiveTab()
   if (!tab?.id || !/^https:\/\/www\.amazon\./i.test(tab.url || '')) {
     status.textContent = '请先切换到 Amazon 商品详情页。'
@@ -95,16 +76,24 @@ async function importCurrentPage() {
 
   const [result] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: extractPayloadFromPage,
+    func: captureDomFromPage,
   })
   const payload = result?.result
-  if (!payload?.title && !payload?.bullets?.length) {
-    status.textContent = '未识别到商品标题或五点描述，请确认当前是 Amazon 商品详情页。'
+  if (!payload?.html) {
+    status.textContent = '未读取到当前页面 DOM，请确认当前是 Amazon 商品详情页。'
     button.disabled = false
     return
   }
 
-  await chrome.tabs.create({ url: `${studioUrl}#amazon-import=${encodeURIComponent(encodePayload(payload))}` })
+  status.textContent = '已读取 DOM，正在打开工作台...'
+  const studioTab = await chrome.tabs.create({ url: `${studioUrl}#amazon-dom-import=1` })
+  await waitForTabComplete(studioTab.id)
+  await chrome.scripting.executeScript({
+    target: { tabId: studioTab.id },
+    func: receiveDomInStudio,
+    args: [payload, DOM_IMPORT_EVENT, DOM_IMPORT_STORAGE_KEY],
+  })
+  status.textContent = '已发送 DOM 到工作台，请在导入预览中确认。'
   button.disabled = false
 }
 

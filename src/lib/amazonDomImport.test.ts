@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import extensionPopupSource from '../../public/amazon-import-extension/popup.js?raw'
 import {
+  AMAZON_DOM_TRANSFER_EVENT,
+  AMAZON_DOM_TRANSFER_STORAGE_KEY,
   AMAZON_DOM_URL_IMPORT_FAILURE_MESSAGE,
   buildAmazonDomListingText,
   cleanAmazonBulletText,
@@ -8,6 +11,7 @@ import {
   fetchAmazonDomHtml,
   parseAmazonImportPayload,
   parseAmazonDomDocument,
+  parseAmazonDomTransferPayload,
 } from './amazonDomImport'
 
 const FULL_AMAZON_URL = 'https://www.amazon.com/EGGKITPO-Commercial-Stainless-Countertop-Restaurant/dp/B0G1MSW4RW/ref=fabric-ww-slds-dp-fsdpnewarrivals-fa-xcat-unreg_d_sccl_2_3/134-0736988-0770416?pd_rd_w=f3JcG&content-id=amzn1.sym.e25a62e2-5204-48a4-8389-3767244711a3&pf_rd_p=e25a62e2-5204-48a4-8389-3767244711a3&pf_rd_r=WEG8GTSASH1S9NF158Y0&pd_rd_wg=BEAz8&pd_rd_r=5254f4ab-9ff5-469b-9984-07f9eadd54f1&pd_rd_i=B0G1MSW4RW&th=1'
@@ -144,6 +148,85 @@ describe('amazon DOM import helpers', () => {
     expect(result.listingText).toContain('About this item')
   })
 
+  it('parses visible Amazon bullets and prioritizes the current product image', () => {
+    const document = testDocument({
+      elements: {
+        '#productTitle': testElement('STANLEY IceFlow Stainless Steel Tumbler'),
+        '#bylineInfo': testElement('Visit the STANLEY Store'),
+        '#variation_color_name .selection': testElement('Rose Quartz'),
+        'input[name="asin"], input#asin, input[name="ASIN"], input#ASIN': testElement('', {}, 'B0FAKESTAN'),
+        '#landingImage': testElement('', {}, undefined, {
+          alt: 'Rose Quartz tumbler current image',
+          src: 'https://m.media-amazon.com/images/I/current._AC_SX679_.jpg',
+          'data-old-hires': 'https://m.media-amazon.com/images/I/current.jpg',
+        }),
+      },
+      lists: {
+        '#feature-bullets li span': [],
+        '#feature-bullets .a-list-item': [
+          testElement('LEAKPROOF, WORRY-FREE HYDRATION: The locking lid prevents accidental openings.'),
+          testElement('COLD THAT KEEPS UP WITH YOU: Double-wall vacuum insulation keeps drinks cold.'),
+        ],
+        '#productOverview_feature_div tr': [
+          testRow('Brand', 'STANLEY'),
+          testRow('Material', 'Stainless Steel'),
+          testRow('Color', 'Rose Quartz'),
+        ],
+        '#imgTagWrapperId img, #landingImage, #main-image-container img, #altImages img': [
+          testElement('', {}, undefined, {
+            alt: 'Rose Quartz tumbler current image',
+            src: 'https://m.media-amazon.com/images/I/current._AC_SX679_.jpg',
+            'data-old-hires': 'https://m.media-amazon.com/images/I/current.jpg',
+          }),
+          testElement('', {}, undefined, {
+            alt: 'detail image',
+            src: 'https://m.media-amazon.com/images/I/detail._AC_US40_.jpg',
+          }),
+        ],
+      },
+    })
+
+    const result = parseAmazonDomDocument(document, 'https://www.amazon.com/dp/B0FAKESTAN?th=1')
+
+    expect(result.title).toBe('STANLEY IceFlow Stainless Steel Tumbler')
+    expect(result.bullets).toEqual([
+      'LEAKPROOF, WORRY-FREE HYDRATION: The locking lid prevents accidental openings.',
+      'COLD THAT KEEPS UP WITH YOU: Double-wall vacuum insulation keeps drinks cold.',
+    ])
+    expect(result.draft.brand).toBe('STANLEY')
+    expect(result.draft.color).toBe('Rose Quartz')
+    expect(result.draft.material).toBe('Stainless Steel')
+    expect(result.imageCandidates[0]).toEqual({
+      url: 'https://m.media-amazon.com/images/I/current.jpg',
+      label: '当前商品图片',
+      isCurrent: true,
+    })
+  })
+
+  it('parses DOM transfer payloads from the browser extension without changing the source URL', () => {
+    const payload = parseAmazonDomTransferPayload({
+      sourceUrl: FULL_AMAZON_URL,
+      html: '<!doctype html><html><body><h1 id="productTitle">Commercial Ice Maker</h1></body></html>',
+    })
+
+    expect(payload.sourceUrl).toBe(FULL_AMAZON_URL)
+    expect(payload.html).toContain('Commercial Ice Maker')
+  })
+
+  it('sends Amazon DOM through the browser extension instead of encoding product fields in the URL', () => {
+    const functionStart = extensionPopupSource.indexOf('function captureDomFromPage()')
+    const functionEnd = extensionPopupSource.indexOf('function normalizeStudioUrl')
+    const injectedFunctionSource = extensionPopupSource.slice(functionStart, functionEnd)
+
+    expect(extensionPopupSource).not.toContain('#amazon-import=')
+    expect(extensionPopupSource).toContain('#amazon-dom-import=1')
+    expect(extensionPopupSource).toContain(AMAZON_DOM_TRANSFER_EVENT)
+    expect(extensionPopupSource).toContain(AMAZON_DOM_TRANSFER_STORAGE_KEY)
+    expect(extensionPopupSource).toContain('window.postMessage')
+    expect(injectedFunctionSource).toContain('document.documentElement.cloneNode(true)')
+    expect(injectedFunctionSource).toContain('script, style, noscript, iframe')
+  })
+
   it('parses structured payloads from the browser extension', () => {
     const encoded = encodeAmazonImportPayload({
       asin: 'B0G1MSW4RW',
@@ -155,7 +238,9 @@ describe('amazon DOM import helpers', () => {
         Material: 'Stainless Steel',
         'Included Components': 'Ice maker, scoop',
       },
-      imageUrls: ['https://m.media-amazon.com/images/I/main.jpg'],
+      imageCandidates: [
+        { url: 'https://m.media-amazon.com/images/I/main.jpg', label: '当前商品图片', isCurrent: true },
+      ],
     })
 
     const result = parseAmazonImportPayload(encoded)
@@ -166,7 +251,7 @@ describe('amazon DOM import helpers', () => {
     expect(result.draft.color).toBe('Silver')
     expect(result.draft.material).toBe('Stainless Steel')
     expect(result.draft.packageIncludes).toBe('Ice maker, scoop')
-    expect(result.imageCandidates).toEqual([{ url: 'https://m.media-amazon.com/images/I/main.jpg', label: '商品图片 1' }])
+    expect(result.imageCandidates).toEqual([{ url: 'https://m.media-amazon.com/images/I/main.jpg', label: '当前商品图片', isCurrent: true }])
     expect(result.listingText).toContain('- Produces clear ice quickly')
   })
 })

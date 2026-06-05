@@ -2,9 +2,15 @@
   "manifest_version": 3,
   "name": "Amazon Image Studio Importer",
   "version": "0.1.0",
-  "description": "Import Amazon product facts into Amazon Image Studio.",
+  "description": "Import Amazon product DOM into Amazon Image Studio.",
   "permissions": ["activeTab", "scripting", "storage"],
-  "host_permissions": ["https://www.amazon.com/*"],
+  "host_permissions": [
+    "https://www.amazon.com/*",
+    "https://ali-aria.github.io/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "导入到 Amazon Image Studio"

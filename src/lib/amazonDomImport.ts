@@ -2,10 +2,13 @@ import type { AmazonPromptDraft } from './amazonPrompt'
 
 export const AMAZON_DOM_URL_IMPORT_FAILURE_MESSAGE = '亚马逊限制了直接读取，请上传保存的商品页面文件。'
 export const AMAZON_DOM_PARSE_FAILURE_MESSAGE = 'DOM 中未识别到商品标题或五点描述，请确认文件来自 Amazon 商品详情页。'
+export const AMAZON_DOM_TRANSFER_EVENT = 'amazon-image-studio-dom-import'
+export const AMAZON_DOM_TRANSFER_STORAGE_KEY = 'amazon-image-studio-dom-import-payload'
 
 export interface AmazonImageCandidate {
   url: string
   label: string
+  isCurrent?: boolean
 }
 
 export interface AmazonDomImportResult {
@@ -24,9 +27,23 @@ export interface AmazonImportPayload {
   bullets: string[]
   details?: Record<string, string>
   imageUrls?: string[]
+  imageCandidates?: Array<{ url: string; label?: string; isCurrent?: boolean }>
+}
+
+export interface AmazonDomTransferPayload {
+  sourceUrl: string
+  html: string
 }
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
+
+export function parseAmazonDomTransferPayload(input: unknown): AmazonDomTransferPayload {
+  const record = input as Partial<AmazonDomTransferPayload>
+  return {
+    sourceUrl: typeof record.sourceUrl === 'string' ? record.sourceUrl : '',
+    html: typeof record.html === 'string' ? record.html : '',
+  }
+}
 
 export function extractAmazonAsinFromUrl(value: string): string | undefined {
   const match = value.trim().match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?:[/?#]|$)/i)
@@ -67,6 +84,10 @@ function getElementValue(document: Document, selector: string): string {
   return cleanAmazonText(document.querySelector<HTMLInputElement>(selector)?.value ?? '')
 }
 
+function getMetaContent(document: Document, selector: string): string {
+  return cleanAmazonText(document.querySelector<HTMLMetaElement>(selector)?.content ?? '')
+}
+
 function getTextList(document: Document, selector: string): string[] {
   return Array.from(document.querySelectorAll(selector))
     .map((element) => cleanAmazonText(element.textContent ?? ''))
@@ -92,22 +113,47 @@ function cleanAmazonByline(value: string): string {
 }
 
 function getAmazonBullets(document: Document): string[] {
-  const bullets = getElementsText(document, '#feature-bullets li span')
-  const fallbackBullets = bullets.length ? bullets : getElementsText(document, '#pqv-feature-bullets li span')
-  return fallbackBullets.filter((item) => !/^Note:/i.test(item)).slice(0, 5)
+  const selectors = [
+    '#feature-bullets li span',
+    '#feature-bullets .a-list-item',
+    '#featurebullets_feature_div .a-list-item',
+    '#pqv-feature-bullets li span',
+    '#pqv-feature-bullets .a-list-item',
+  ]
+  const seen = new Set<string>()
+  const bullets: string[] = []
+  for (const selector of selectors) {
+    for (const item of getElementsText(document, selector)) {
+      if (/^Note:/i.test(item) || seen.has(item)) continue
+      seen.add(item)
+      bullets.push(item)
+      if (bullets.length >= 5) return bullets
+    }
+  }
+  return bullets
 }
 
 function readDetailRows(document: Document): Record<string, string> {
   const details: Record<string, string> = {}
   const rowSelectors = [
+    '#productOverview_feature_div tr',
+    '#poExpander tr',
     '#productDetails_detailBullets_sections1 tr',
     '#productDetails_techSpec_section_1 tr',
     '#productDetails_feature_div tr',
   ]
   for (const selector of rowSelectors) {
     for (const row of Array.from(document.querySelectorAll(selector))) {
-      const key = cleanAmazonText(row.querySelector('th')?.textContent ?? '').replace(/:$/, '')
-      const value = cleanAmazonText(row.querySelector('td')?.textContent ?? '')
+      const key = cleanAmazonText(
+        row.querySelector('th')?.textContent
+          ?? row.querySelector('td:nth-child(1)')?.textContent
+          ?? '',
+      ).replace(/:$/, '')
+      const value = cleanAmazonText(
+        row.querySelector('td:nth-child(2)')?.textContent
+          ?? row.querySelector('td')?.textContent
+          ?? '',
+      )
       if (key && value) details[key] = value
     }
   }
@@ -153,7 +199,7 @@ function getAmazonImageDedupeKey(url: string): string {
     .replace(/\._[A-Z0-9_,]+_\.(?=[^.]+$)/i, '.')
 }
 
-function normalizeImageCandidates(input: Array<{ url: string; label?: string }>): AmazonImageCandidate[] {
+function normalizeImageCandidates(input: Array<{ url: string; label?: string; isCurrent?: boolean }>): AmazonImageCandidate[] {
   const seen = new Set<string>()
   const candidates: AmazonImageCandidate[] = []
   for (const item of input) {
@@ -164,6 +210,7 @@ function normalizeImageCandidates(input: Array<{ url: string; label?: string }>)
     candidates.push({
       url,
       label: cleanAmazonText(item.label ?? '') || `商品图片 ${candidates.length + 1}`,
+      ...(item.isCurrent ? { isCurrent: true } : {}),
     })
     if (candidates.length >= 12) break
   }
@@ -182,17 +229,42 @@ function readDynamicImageUrls(value: string | null): string[] {
   return urls
 }
 
+function readSrcSetUrls(value: string | null): string[] {
+  if (!value) return []
+  return value
+    .split(',')
+    .map((item) => item.trim().split(/\s+/)[0] ?? '')
+    .filter(Boolean)
+}
+
+function readImageElementCandidates(image: Element, label: string, isCurrent = false): Array<{ url: string; label?: string; isCurrent?: boolean }> {
+  const rawCandidates: Array<{ url: string; label?: string; isCurrent?: boolean }> = []
+  const oldHires = image.getAttribute('data-old-hires')
+  const dynamicUrls = readDynamicImageUrls(image.getAttribute('data-a-dynamic-image'))
+  if (oldHires) rawCandidates.push({ url: oldHires, label, isCurrent })
+  for (const url of dynamicUrls) rawCandidates.push({ url, label, isCurrent })
+  for (const url of readSrcSetUrls(image.getAttribute('srcset'))) rawCandidates.push({ url, label, isCurrent })
+  const src = image.getAttribute('src')
+  if (src && !oldHires && dynamicUrls.length === 0) rawCandidates.push({ url: src, label, isCurrent })
+  return rawCandidates
+}
+
 function getImageCandidates(document: Document): AmazonImageCandidate[] {
-  const images = Array.from(document.querySelectorAll('#imgTagWrapperId img, #landingImage, #main-image-container img, #altImages img'))
-  const rawCandidates: Array<{ url: string; label?: string }> = []
+  const rawCandidates: Array<{ url: string; label?: string; isCurrent?: boolean }> = []
+  const currentImage = document.querySelector('#landingImage')
+    ?? document.querySelector('#imgTagWrapperId img')
+    ?? document.querySelector('#main-image-container img')
+  if (currentImage) {
+    rawCandidates.push(...readImageElementCandidates(currentImage, '当前商品图片', true))
+  }
+
+  const images = [
+    ...Array.from(document.querySelectorAll('#imgTagWrapperId img, #landingImage, #main-image-container img, #altImages img')),
+    ...Array.from(document.querySelectorAll('#imageBlockThumbs img')),
+  ]
   for (const image of images) {
     const label = image.getAttribute('alt') ?? undefined
-    const oldHires = image.getAttribute('data-old-hires')
-    const dynamicUrls = readDynamicImageUrls(image.getAttribute('data-a-dynamic-image'))
-    if (oldHires) rawCandidates.push({ url: oldHires, label })
-    for (const url of dynamicUrls) rawCandidates.push({ url, label })
-    const src = image.getAttribute('src')
-    if (src && !oldHires && dynamicUrls.length === 0) rawCandidates.push({ url: src, label })
+    rawCandidates.push(...readImageElementCandidates(image, label ?? '', false))
   }
   return normalizeImageCandidates(rawCandidates)
 }
@@ -226,7 +298,8 @@ export function parseAmazonDomDocument(document: Document, sourceUrl = ''): Amaz
   const title = cleanAmazonTitle(
     getElementText(document, '#productTitle')
       || getElementValue(document, 'input[name="productTitle"], input#productTitle')
-      || getElementText(document, '#pqv-title'),
+      || getElementText(document, '#pqv-title')
+      || getMetaContent(document, 'meta[property="og:title"], meta[name="title"]'),
   )
   const bullets = getAmazonBullets(document)
   const details = readDetailRows(document)
@@ -282,10 +355,13 @@ export function parseAmazonImportPayload(encoded: string): AmazonDomImportResult
   const bullets = Array.isArray(payload.bullets) ? payload.bullets.map(cleanAmazonBulletText).filter(Boolean).slice(0, 5) : []
   const details = payload.details ?? {}
   if (!title && bullets.length === 0) throw new Error(AMAZON_DOM_PARSE_FAILURE_MESSAGE)
-  const imageCandidates = normalizeImageCandidates((payload.imageUrls ?? []).map((url, index) => ({
-    url,
-    label: `商品图片 ${index + 1}`,
-  })))
+  const imageCandidates = normalizeImageCandidates(payload.imageCandidates?.length
+    ? payload.imageCandidates
+    : (payload.imageUrls ?? []).map((url, index) => ({
+        url,
+        label: `商品图片 ${index + 1}`,
+        ...(index === 0 ? { isCurrent: true } : {}),
+      })))
   return {
     ...(payload.asin ? { asin: payload.asin } : {}),
     title,

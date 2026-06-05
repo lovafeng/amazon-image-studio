@@ -6,6 +6,7 @@
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
     "https://www.amazon.com/*",
+    "https://lovafeng.github.io/*",
     "https://ali-aria.github.io/*",
     "http://127.0.0.1/*",
     "http://localhost/*"

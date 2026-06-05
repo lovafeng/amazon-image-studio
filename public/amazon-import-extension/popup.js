@@ -1,4 +1,5 @@
-const DEFAULT_STUDIO_URL = 'https://ali-aria.github.io/amazon-image-studio/'
+const DEFAULT_STUDIO_URL = 'https://lovafeng.github.io/amazon-image-studio/'
+const LEGACY_STUDIO_URLS = ['https://ali-aria.github.io/amazon-image-studio/']
 const DOM_IMPORT_EVENT = 'amazon-image-studio-dom-import'
 const DOM_IMPORT_STORAGE_KEY = 'amazon-image-studio-dom-import-payload'
 
@@ -99,7 +100,8 @@ async function importCurrentPage() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   const saved = await chrome.storage.sync.get({ studioUrl: DEFAULT_STUDIO_URL })
-  document.getElementById('studioUrl').value = saved.studioUrl
+  const studioUrl = LEGACY_STUDIO_URLS.includes(normalizeStudioUrl(saved.studioUrl)) ? DEFAULT_STUDIO_URL : saved.studioUrl
+  document.getElementById('studioUrl').value = studioUrl
   document.getElementById('importButton').addEventListener('click', () => {
     importCurrentPage().catch((error) => {
       document.getElementById('status').textContent = `导入失败：${error instanceof Error ? error.message : String(error)}`

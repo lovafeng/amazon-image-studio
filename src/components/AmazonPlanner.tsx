@@ -1642,6 +1642,9 @@ export default function AmazonPlanner() {
                   </a>
                 </div>
               </div>
+              <div className="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                DOM 导入不需要 API Key；提示缺少 API Key 时，只影响 AI 策划和生图。
+              </div>
               {amazonImportStatus && (
                 <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs leading-relaxed text-blue-800 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200">
                   {amazonImportStatus}

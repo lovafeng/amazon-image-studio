@@ -10,7 +10,7 @@ export type ReferenceImageEditAction = 'ask' | 'replace-reference' | 'add-mask'
 export type BuiltInApiProvider = 'openai' | 'fal'
 export type ApiProvider = BuiltInApiProvider | string
 export type CustomProviderTemplate = 'http-image'
-export const DEFAULT_STREAM_PARTIAL_IMAGES = 1
+export const DEFAULT_STREAM_PARTIAL_IMAGES = 3
 export const DEFAULT_AGENT_MAX_TOOL_ROUNDS = 15
 
 export type CustomProviderRequestMethod = 'GET' | 'POST'
@@ -310,7 +310,7 @@ export interface AmazonPlannerSession {
   title: string
   mode: 'listing' | 'aplus' | 'dsp'
   aPlusType: 'standard' | 'standard-large' | 'premium'
-  resolution: '2k' | '4k'
+  resolution: '1k' | '2k' | '4k'
   listingText: string
   referenceImageIds: string[]
   draft: AmazonPlannerSessionDraft

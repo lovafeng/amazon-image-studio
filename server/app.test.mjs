@@ -267,6 +267,53 @@ describe('http app', () => {
     expect((await request('/api/agent-conversations', { headers: { cookie: operatorCookie } })).json()).toEqual([operatorConversation])
   })
 
+  it('serves stored images and thumbnails as raw blob responses after login', async () => {
+    const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const cookie = login.headers['set-cookie'][0]
+
+    await request('/api/images/image-a', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        id: 'image-a',
+        dataUrl: 'data:image/png;base64,aGVsbG8=',
+        createdAt: 1,
+        source: 'upload',
+      }),
+    })
+    await request('/api/thumbnails/image-a', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        id: 'image-a',
+        thumbnailDataUrl: 'data:image/webp;base64,dGh1bWI=',
+        thumbnailVersion: 2,
+      }),
+    })
+
+    const image = await request('/api/images/image-a/blob', { headers: { cookie } })
+    expect(image.status).toBe(200)
+    expect(image.headers['content-type']).toBe('image/png')
+    expect(image.headers['content-length']).toBe('5')
+    expect(image.text()).toBe('hello')
+
+    const thumbnail = await request('/api/thumbnails/image-a/blob', { headers: { cookie } })
+    expect(thumbnail.status).toBe(200)
+    expect(thumbnail.headers['content-type']).toBe('image/webp')
+    expect(thumbnail.headers['content-length']).toBe('5')
+    expect(thumbnail.text()).toBe('thumb')
+  })
+
+  it('returns 404 for missing raw image content after login', async () => {
+    const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const cookie = login.headers['set-cookie'][0]
+
+    const response = await request('/api/images/missing/blob', { headers: { cookie } })
+
+    expect(response.status).toBe(404)
+    expect(response.json()).toEqual({ error: '图片不存在' })
+  })
+
   it('requires login for the API proxy', async () => {
     const response = await request('/api-proxy/v1/responses', {
       method: 'POST',

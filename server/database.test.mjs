@@ -374,6 +374,111 @@ describe('sqlite storage', () => {
     expect(storage.getStoredImageThumbnail('admin', 'image-a')).toBeUndefined()
   })
 
+  it('stores new image and thumbnail bytes outside data url text', () => {
+    const image = {
+      id: 'image-binary',
+      dataUrl: 'data:image/png;base64,aGVsbG8=',
+      createdAt: 21,
+      source: 'upload',
+      width: 10,
+      height: 8,
+    }
+    const thumbnail = {
+      id: 'image-binary',
+      thumbnailDataUrl: 'data:image/webp;base64,dGh1bWI=',
+      width: 10,
+      height: 8,
+      thumbnailVersion: 2,
+    }
+
+    storage.putImage('admin', image)
+    storage.putImageThumbnail('admin', thumbnail)
+
+    const rawDb = new Database(join(tempDir, 'app.sqlite'), { readonly: true })
+    const imageRow = rawDb.prepare('select data_url, content_blob, mime_type, byte_size from images where owner = ? and id = ?').get('admin', 'image-binary')
+    const thumbnailRow = rawDb.prepare('select thumbnail_data_url, content_blob, mime_type, byte_size from thumbnails where owner = ? and id = ?').get('admin', 'image-binary')
+    rawDb.close()
+
+    expect(imageRow.data_url).toBe('')
+    expect(imageRow.content_blob.equals(Buffer.from('hello'))).toBe(true)
+    expect(imageRow.mime_type).toBe('image/png')
+    expect(imageRow.byte_size).toBe(5)
+    expect(thumbnailRow.thumbnail_data_url).toBe('')
+    expect(thumbnailRow.content_blob.equals(Buffer.from('thumb'))).toBe(true)
+    expect(thumbnailRow.mime_type).toBe('image/webp')
+    expect(thumbnailRow.byte_size).toBe(5)
+
+    expect(storage.getImage('admin', 'image-binary')).toEqual(image)
+    const imageContent = storage.getImageContent('admin', 'image-binary')
+    expect(imageContent).toMatchObject({
+      id: 'image-binary',
+      mimeType: 'image/png',
+      byteSize: 5,
+      createdAt: 21,
+      source: 'upload',
+      width: 10,
+      height: 8,
+    })
+    expect(imageContent.bytes.equals(Buffer.from('hello'))).toBe(true)
+
+    expect(storage.getStoredImageThumbnail('admin', 'image-binary')).toEqual(thumbnail)
+    const thumbnailContent = storage.getImageThumbnailContent('admin', 'image-binary')
+    expect(thumbnailContent).toMatchObject({
+      id: 'image-binary',
+      mimeType: 'image/webp',
+      byteSize: 5,
+      width: 10,
+      height: 8,
+      thumbnailVersion: 2,
+    })
+    expect(thumbnailContent.bytes.equals(Buffer.from('thumb'))).toBe(true)
+  })
+
+  it('serves raw content for legacy data url rows after binary schema migration', () => {
+    const sqlitePath = join(tempDir, 'legacy-image-content.sqlite')
+    const legacyDb = new Database(sqlitePath)
+    legacyDb.exec(`
+      create table images (
+        owner text not null,
+        id text not null,
+        data_url text not null,
+        metadata_json text not null,
+        created_at integer,
+        primary key (owner, id)
+      );
+    `)
+    legacyDb.prepare('insert into images (owner, id, data_url, metadata_json, created_at) values (?, ?, ?, ?, ?)').run(
+      'admin',
+      'legacy-image',
+      'data:image/jpeg;base64,bGVnYWN5',
+      JSON.stringify({ createdAt: 30, source: 'generated', width: 20, height: 10 }),
+      30,
+    )
+    legacyDb.close()
+
+    const legacyStorage = createStorage(sqlitePath)
+    expect(legacyStorage.getImage('admin', 'legacy-image')).toEqual({
+      id: 'legacy-image',
+      dataUrl: 'data:image/jpeg;base64,bGVnYWN5',
+      createdAt: 30,
+      source: 'generated',
+      width: 20,
+      height: 10,
+    })
+    const content = legacyStorage.getImageContent('admin', 'legacy-image')
+    expect(content).toMatchObject({
+      id: 'legacy-image',
+      mimeType: 'image/jpeg',
+      byteSize: 6,
+      createdAt: 30,
+      source: 'generated',
+      width: 20,
+      height: 10,
+    })
+    expect(content.bytes.equals(Buffer.from('legacy'))).toBe(true)
+    legacyStorage.close()
+  })
+
   it('isolates images and thumbnails with the same id by owner', () => {
     const adminImage = {
       id: 'image-a',

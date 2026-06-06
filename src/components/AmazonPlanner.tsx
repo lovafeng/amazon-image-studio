@@ -90,6 +90,7 @@ type BatchGenerateJob = {
   targetSize: string
   category: NonNullable<TaskRecord['category']>
 }
+type AmazonPlannerResolution = '1k' | '2k' | '4k'
 type StyleImageState = {
   candidateIndex: number
   status: 'running' | 'done' | 'error'
@@ -263,6 +264,40 @@ function createPlannerSessionId() {
 
 function createPlannerBatchId() {
   return `amazon-planner-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+export function getAmazonPlannerResolutionTier(resolution: AmazonPlannerResolution) {
+  if (resolution === '4k') return '4K'
+  if (resolution === '2k') return '2K'
+  return '1K'
+}
+
+export function getListingTargetSizeForResolution(resolution: AmazonPlannerResolution) {
+  if (resolution === '4k') return '4096x4096'
+  if (resolution === '2k') return '2048x2048'
+  return '1024x1024'
+}
+
+function findPlannerBatchTask(plannerBatchId: string, slot: string, createdAfter: number) {
+  return useStore.getState().tasks.find((task) =>
+    task.createdAt >= createdAfter &&
+    task.category?.plannerBatchId === plannerBatchId &&
+    task.category?.amazonSlot === slot,
+  )
+}
+
+function waitForPlannerTaskCompletion(taskId: string) {
+  const task = useStore.getState().tasks.find((item) => item.id === taskId)
+  if (!task || task.status !== 'running') return Promise.resolve()
+
+  return new Promise<void>((resolve) => {
+    const unsubscribe = useStore.subscribe((state) => {
+      const nextTask = state.tasks.find((item) => item.id === taskId)
+      if (!nextTask || nextTask.status === 'running') return
+      unsubscribe()
+      resolve()
+    })
+  })
 }
 
 function normalizeHistoryTitle(value: string) {
@@ -478,8 +513,8 @@ function getAmazonListingPlannerChecks(
     },
     {
       label: '图片规格',
-      status: /^(2048|4096)x(2048|4096)$/.test(size) ? 'ready' : 'warning',
-      detail: /4096x4096/.test(size) ? '4K 方图' : /2048x2048/.test(size) ? '2K 方图' : size || '未选择 2K/4K',
+      status: /^(1024x1024|2048x2048|4096x4096)$/.test(size) ? 'ready' : 'warning',
+      detail: /4096x4096/.test(size) ? '4K 方图' : /2048x2048/.test(size) ? '2K 方图' : /1024x1024/.test(size) ? '1K 方图' : size || '未选择 1K/2K/4K',
     },
     {
       label: '参考图',
@@ -548,7 +583,7 @@ export default function AmazonPlanner() {
   const amazonDomFileInputRef = useRef<HTMLInputElement>(null)
   const plannerAbortControllerRef = useRef<AbortController | null>(null)
   const [draft, setDraft] = useState<AmazonPromptDraft>(DEFAULT_AMAZON_PROMPT_DRAFT)
-  const [resolution, setResolution] = useState<'2k' | '4k'>('2k')
+  const [resolution, setResolution] = useState<AmazonPlannerResolution>('1k')
   const [plannerMode, setPlannerMode] = useState<AmazonPlannerMode>('listing')
   const [aPlusType, setAPlusType] = useState<APlusContentType>('standard-large')
   const [listingText, setListingText] = useState('')
@@ -592,7 +627,7 @@ export default function AmazonPlanner() {
   const [isBatchSubmitting, setIsBatchSubmitting] = useState(false)
   const [batchSubmittedCount, setBatchSubmittedCount] = useState(0)
   const [activePlannerBatchId, setActivePlannerBatchId] = useState<string | null>(null)
-  const resolutionTier = resolution === '4k' ? '4K' : '2K'
+  const resolutionTier = getAmazonPlannerResolutionTier(resolution)
   const aPlusSpecs = useMemo(() => getAPlusModuleSpecs(aPlusType), [aPlusType])
   const dspSpecs = useMemo(() => getDspImageAssetSpecs(), [])
   const aPlusPlansWithSizes = useMemo(() => withAPlusGenerationSizes(aPlusPlans, resolutionTier), [aPlusPlans, resolutionTier])
@@ -663,7 +698,7 @@ export default function AmazonPlanner() {
   const plannerApiLabel = plannerProfile?.apiMode === 'chat' ? 'Chat Completions' : 'Responses API'
   const imageProfile = getDefaultImageProfile(settings)
   const imageProfileValidation = imageProfile ? validateApiProfile(imageProfile) : '未选择 Images API 生图配置'
-  const listingTargetSize = resolution === '4k' ? '4096x4096' : '2048x2048'
+  const listingTargetSize = getListingTargetSizeForResolution(resolution)
   const targetSize = plannerMode === 'aplus' && selectedAPlusPlan
     ? selectedAPlusPlan.generationSize
     : plannerMode === 'dsp' && selectedDspPlan
@@ -1264,6 +1299,7 @@ export default function AmazonPlanner() {
     if (!imageProfile) return
 
     const plannerBatchId = createPlannerBatchId()
+    const batchStartedAt = Date.now()
     const jobs = buildBatchGenerateJobs(plannerBatchId).filter((job) => actionProgress[job.actionKey] !== 'submitted')
     if (!jobs.length) {
       showToast('当前没有未提交的图片方案', 'error')
@@ -1299,6 +1335,8 @@ export default function AmazonPlanner() {
       }
       markActionProgress(job.actionKey, 'submitted')
       setBatchSubmittedCount((count) => count + 1)
+      const submittedTask = findPlannerBatchTask(plannerBatchId, job.slot, batchStartedAt)
+      if (submittedTask) await waitForPlannerTaskCompletion(submittedTask.id)
     }
 
     setInputImages(batchInputImages)
@@ -2059,7 +2097,7 @@ export default function AmazonPlanner() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
-              {(['2k', '4k'] as const).map((item) => (
+              {(['1k', '2k', '4k'] as const).map((item) => (
                 <button
                   key={item}
                   type="button"

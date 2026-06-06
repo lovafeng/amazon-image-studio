@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { DEFAULT_PARAMS, type TaskRecord } from '../types'
-import { useStore, getCachedImage, ensureImageCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
+import { useStore, getCachedImage, ensureImageCached, ensureImageUrlCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
@@ -16,6 +16,12 @@ import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashI
 import TaskReuseMenu from './TaskReuseMenu'
 
 import ViewportTooltip from './ViewportTooltip'
+
+export function getNearbyOutputImageIds(outputImageIds: string[], imageIndex: number) {
+  const start = Math.max(0, imageIndex - 1)
+  const end = Math.min(outputImageIds.length, imageIndex + 2)
+  return outputImageIds.slice(start, end)
+}
 
 export default function DetailModal() {
   const tasks = useStore((s) => s.tasks)
@@ -171,27 +177,23 @@ export default function DetailModal() {
     }
 
     let cancelled = false
-    const setOutputImage = (imageId: string, dataUrl: string) => {
-      if (!cancelled) setOutputPreviewSrcs((prev) => ({ ...prev, [imageId]: dataUrl }))
+    const setOutputImage = (imageId: string, url: string) => {
+      if (!cancelled) setOutputPreviewSrcs((prev) => ({ ...prev, [imageId]: url }))
     }
 
-    for (const imageId of outputImageIds) {
-      const cached = getCachedImage(imageId)
-      if (cached) {
-        setOutputImage(imageId, cached)
-      } else {
-        ensureImageCached(imageId)
-          .then((dataUrl) => {
-            if (dataUrl) setOutputImage(imageId, dataUrl)
-          })
-          .catch(() => {})
-      }
+    const nearbyOutputImageIds = getNearbyOutputImageIds(outputImageIds, imageIndex)
+    for (const imageId of nearbyOutputImageIds) {
+      ensureImageUrlCached(imageId)
+        .then((url) => {
+          if (url) setOutputImage(imageId, url)
+        })
+        .catch(() => {})
     }
 
     return () => {
       cancelled = true
     }
-  }, [task?.outputImages])
+  }, [task?.outputImages, imageIndex])
 
   useEffect(() => {
     let cancelled = false

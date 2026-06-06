@@ -12,4 +12,16 @@ describe('TaskCard thumbnail loading', () => {
     )
     expect(thumbnailEffectBlock).toContain('if (!isThumbnailVisible) return')
   })
+
+  it('uses thumbnail object URLs for card image display', () => {
+    expect(taskCardSource).toContain('ensureImageThumbnailUrlCached')
+    expect(taskCardSource).not.toContain('ensureImageThumbnailCached')
+
+    const thumbnailEffectBlock = taskCardSource.slice(
+      taskCardSource.indexOf('// 加载缩略图'),
+      taskCardSource.indexOf('const duration = (() => {'),
+    )
+    expect(thumbnailEffectBlock).toContain('thumbnail.url')
+    expect(thumbnailEffectBlock).not.toContain('thumbnail.dataUrl')
+  })
 })

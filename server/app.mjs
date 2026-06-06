@@ -31,8 +31,21 @@ function routeId(pathname, prefix) {
   return decodeURIComponent(pathname.slice(prefix.length))
 }
 
+function routeBlobId(pathname, prefix) {
+  return decodeURIComponent(pathname.slice(prefix.length, -'/blob'.length))
+}
+
 function sendOk(res, value = { ok: true }, headers = {}) {
   sendJson(res, 200, value, headers)
+}
+
+function sendImageContent(res, content) {
+  res.writeHead(200, {
+    'content-type': content.mimeType,
+    'content-length': String(content.bytes.byteLength),
+    'cache-control': 'private, max-age=86400',
+  })
+  res.end(content.bytes)
 }
 
 function publicUser(user) {
@@ -634,6 +647,16 @@ async function handleData(req, res, storage, pathname, session) {
     sendOk(res)
     return true
   }
+  if (req.method === 'GET' && pathname.startsWith('/api/images/') && pathname.endsWith('/blob')) {
+    const id = routeBlobId(pathname, '/api/images/')
+    const content = storage.getImageContent(owner, id)
+    if (!content) {
+      sendJson(res, 404, { error: '图片不存在' })
+      return true
+    }
+    sendImageContent(res, content)
+    return true
+  }
   if (pathname.startsWith('/api/images/')) {
     const id = routeId(pathname, '/api/images/')
     if (req.method === 'GET') {
@@ -652,6 +675,16 @@ async function handleData(req, res, storage, pathname, session) {
     }
   }
 
+  if (req.method === 'GET' && pathname.startsWith('/api/thumbnails/') && pathname.endsWith('/blob')) {
+    const id = routeBlobId(pathname, '/api/thumbnails/')
+    const content = storage.getImageThumbnailContent(owner, id)
+    if (!content) {
+      sendJson(res, 404, { error: '缩略图不存在' })
+      return true
+    }
+    sendImageContent(res, content)
+    return true
+  }
   if (pathname.startsWith('/api/thumbnails/')) {
     const id = routeId(pathname, '/api/thumbnails/')
     if (req.method === 'GET') {

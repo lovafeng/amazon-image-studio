@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { useStore, getCachedImage, ensureImageCached } from '../store'
+import { useStore, getCachedImage, ensureImageCached, ensureImageUrlCached } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { createMaskPreviewDataUrl } from '../lib/canvasImage'
@@ -45,14 +45,9 @@ export default function Lightbox() {
     setSrc('')
 
     const imageId = lightboxImageId
-    const cached = getCachedImage(imageId)
-    if (cached) {
-      setSrc(cached)
-    } else {
-      ensureImageCached(imageId).then((url) => {
-        if (!cancelled && url) setSrc(url)
-      })
-    }
+    ensureImageUrlCached(imageId).then((url) => {
+      if (!cancelled && url) setSrc(url)
+    })
 
     return () => {
       cancelled = true

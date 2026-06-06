@@ -7,20 +7,48 @@ function parseJsonRecord(row) {
   return row ? JSON.parse(row.record_json) : undefined
 }
 
+function decodeDataUrl(dataUrl) {
+  const match = /^data:([^;,]+)(;base64)?,(.*)$/s.exec(dataUrl)
+  const mimeType = match[1]
+  const bytes = Buffer.from(match[3], match[2] ? 'base64' : 'utf8')
+  const storageDataUrl = match[2] && encodeDataUrl(mimeType, bytes) !== dataUrl ? dataUrl : ''
+  return { mimeType, bytes, storageDataUrl }
+}
+
+function encodeDataUrl(mimeType, bytes) {
+  return `data:${mimeType};base64,${Buffer.from(bytes).toString('base64')}`
+}
+
 function parseImage(row) {
   if (!row) return undefined
+  const dataUrl = row.data_url || encodeDataUrl(row.mime_type, row.content_blob)
   return {
     id: row.id,
-    dataUrl: row.data_url,
+    dataUrl,
     ...JSON.parse(row.metadata_json),
   }
 }
 
 function parseThumbnail(row) {
   if (!row) return undefined
+  const thumbnailDataUrl = row.thumbnail_data_url || encodeDataUrl(row.mime_type, row.content_blob)
   return {
     id: row.id,
-    thumbnailDataUrl: row.thumbnail_data_url,
+    thumbnailDataUrl,
+    ...JSON.parse(row.metadata_json),
+  }
+}
+
+function parseImageContent(row) {
+  if (!row) return undefined
+  const content = row.content_blob
+    ? { mimeType: row.mime_type, bytes: Buffer.from(row.content_blob) }
+    : decodeDataUrl(row.data_url)
+  return {
+    id: row.id,
+    bytes: content.bytes,
+    mimeType: content.mimeType,
+    byteSize: row.byte_size ?? content.bytes.byteLength,
     ...JSON.parse(row.metadata_json),
   }
 }
@@ -158,7 +186,10 @@ function createOwnedTables(db) {
     create table if not exists images (
       owner text not null,
       id text not null,
-      data_url text not null,
+      data_url text not null default '',
+      content_blob blob,
+      mime_type text,
+      byte_size integer,
       metadata_json text not null,
       created_at integer,
       primary key (owner, id)
@@ -167,7 +198,10 @@ function createOwnedTables(db) {
     create table if not exists thumbnails (
       owner text not null,
       id text not null,
-      thumbnail_data_url text not null,
+      thumbnail_data_url text not null default '',
+      content_blob blob,
+      mime_type text,
+      byte_size integer,
       metadata_json text not null,
       primary key (owner, id)
     );
@@ -222,6 +256,24 @@ function migrateUserSchema(db) {
   }
 }
 
+function addColumnIfMissing(db, tableName, columns, columnName, definition) {
+  if (!columns.some((column) => column.name === columnName)) {
+    db.exec(`alter table ${tableName} add column ${columnName} ${definition}`)
+  }
+}
+
+function migrateBinaryResourceSchema(db) {
+  const imageColumns = getTableInfo(db, 'images')
+  addColumnIfMissing(db, 'images', imageColumns, 'content_blob', 'blob')
+  addColumnIfMissing(db, 'images', imageColumns, 'mime_type', 'text')
+  addColumnIfMissing(db, 'images', imageColumns, 'byte_size', 'integer')
+
+  const thumbnailColumns = getTableInfo(db, 'thumbnails')
+  addColumnIfMissing(db, 'thumbnails', thumbnailColumns, 'content_blob', 'blob')
+  addColumnIfMissing(db, 'thumbnails', thumbnailColumns, 'mime_type', 'text')
+  addColumnIfMissing(db, 'thumbnails', thumbnailColumns, 'byte_size', 'integer')
+}
+
 function createOwnedIndexes(db) {
   db.exec(`
     create index if not exists users_role_status_idx on users (role, status);
@@ -266,6 +318,7 @@ function migrateOwnedSchema(db, legacyOwner) {
   for (const tableName of ['tasks', 'agent_conversations', 'images', 'thumbnails', 'amazon_planner_sessions']) {
     migrateOwnedTable(db, tableName, legacyOwner)
   }
+  migrateBinaryResourceSchema(db)
   createOwnedIndexes(db)
 }
 
@@ -286,16 +339,16 @@ export function createStorage(sqlitePath, options = {}) {
     putAgentConversation: db.prepare('insert into agent_conversations (owner, id, record_json, updated_at) values (?, ?, ?, ?) on conflict(owner, id) do update set record_json = excluded.record_json, updated_at = excluded.updated_at'),
     deleteAgentConversation: db.prepare('delete from agent_conversations where owner = ? and id = ?'),
     clearAgentConversations: db.prepare('delete from agent_conversations where owner = ?'),
-    getImage: db.prepare('select id, data_url, metadata_json from images where owner = ? and id = ?'),
-    getAllImages: db.prepare('select id, data_url, metadata_json from images where owner = ? order by created_at desc, id desc'),
+    getImage: db.prepare('select id, data_url, content_blob, mime_type, byte_size, metadata_json from images where owner = ? and id = ?'),
+    getAllImages: db.prepare('select id, data_url, content_blob, mime_type, byte_size, metadata_json from images where owner = ? order by created_at desc, id desc'),
     getAllImageIds: db.prepare('select id from images where owner = ? order by created_at desc, id desc'),
-    putImage: db.prepare('insert into images (owner, id, data_url, metadata_json, created_at) values (?, ?, ?, ?, ?) on conflict(owner, id) do update set data_url = excluded.data_url, metadata_json = excluded.metadata_json, created_at = excluded.created_at'),
+    putImage: db.prepare('insert into images (owner, id, data_url, content_blob, mime_type, byte_size, metadata_json, created_at) values (?, ?, ?, ?, ?, ?, ?, ?) on conflict(owner, id) do update set data_url = excluded.data_url, content_blob = excluded.content_blob, mime_type = excluded.mime_type, byte_size = excluded.byte_size, metadata_json = excluded.metadata_json, created_at = excluded.created_at'),
     deleteImage: db.prepare('delete from images where owner = ? and id = ?'),
     clearImages: db.prepare('delete from images where owner = ?'),
     deleteImageThumbnail: db.prepare('delete from thumbnails where owner = ? and id = ?'),
     clearThumbnails: db.prepare('delete from thumbnails where owner = ?'),
-    getThumbnail: db.prepare('select id, thumbnail_data_url, metadata_json from thumbnails where owner = ? and id = ?'),
-    putThumbnail: db.prepare('insert into thumbnails (owner, id, thumbnail_data_url, metadata_json) values (?, ?, ?, ?) on conflict(owner, id) do update set thumbnail_data_url = excluded.thumbnail_data_url, metadata_json = excluded.metadata_json'),
+    getThumbnail: db.prepare('select id, thumbnail_data_url, content_blob, mime_type, byte_size, metadata_json from thumbnails where owner = ? and id = ?'),
+    putThumbnail: db.prepare('insert into thumbnails (owner, id, thumbnail_data_url, content_blob, mime_type, byte_size, metadata_json) values (?, ?, ?, ?, ?, ?, ?) on conflict(owner, id) do update set thumbnail_data_url = excluded.thumbnail_data_url, content_blob = excluded.content_blob, mime_type = excluded.mime_type, byte_size = excluded.byte_size, metadata_json = excluded.metadata_json'),
     getAllAmazonPlannerSessions: db.prepare('select record_json from amazon_planner_sessions where owner = ? order by updated_at desc, id desc'),
     putAmazonPlannerSession: db.prepare('insert into amazon_planner_sessions (owner, id, record_json, updated_at) values (?, ?, ?, ?) on conflict(owner, id) do update set record_json = excluded.record_json, updated_at = excluded.updated_at'),
     deleteAmazonPlannerSession: db.prepare('delete from amazon_planner_sessions where owner = ? and id = ?'),
@@ -509,6 +562,9 @@ export function createStorage(sqlitePath, options = {}) {
     getImage(owner, id) {
       return parseImage(statements.getImage.get(normalizeOwner(owner), id))
     },
+    getImageContent(owner, id) {
+      return parseImageContent(statements.getImage.get(normalizeOwner(owner), id))
+    },
     getAllImages(owner) {
       return statements.getAllImages.all(normalizeOwner(owner)).map(parseImage)
     },
@@ -517,7 +573,8 @@ export function createStorage(sqlitePath, options = {}) {
     },
     putImage(owner, image) {
       const { id, dataUrl, ...metadata } = image
-      statements.putImage.run(normalizeOwner(owner), id, dataUrl, JSON.stringify(metadata), image.createdAt ?? null)
+      const content = decodeDataUrl(dataUrl)
+      statements.putImage.run(normalizeOwner(owner), id, content.storageDataUrl, content.bytes, content.mimeType, content.bytes.byteLength, JSON.stringify(metadata), image.createdAt ?? null)
       return id
     },
     deleteImage(owner, id) {
@@ -537,9 +594,13 @@ export function createStorage(sqlitePath, options = {}) {
     getStoredImageThumbnail(owner, id) {
       return parseThumbnail(statements.getThumbnail.get(normalizeOwner(owner), id))
     },
+    getImageThumbnailContent(owner, id) {
+      return parseImageContent(statements.getThumbnail.get(normalizeOwner(owner), id))
+    },
     putImageThumbnail(owner, thumbnail) {
       const { id, thumbnailDataUrl, ...metadata } = thumbnail
-      statements.putThumbnail.run(normalizeOwner(owner), id, thumbnailDataUrl, JSON.stringify(metadata))
+      const content = decodeDataUrl(thumbnailDataUrl)
+      statements.putThumbnail.run(normalizeOwner(owner), id, content.storageDataUrl, content.bytes, content.mimeType, content.bytes.byteLength, JSON.stringify(metadata))
       return id
     },
     getAllAmazonPlannerSessions(owner) {

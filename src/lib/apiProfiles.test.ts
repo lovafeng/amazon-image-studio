@@ -685,13 +685,13 @@ describe('custom providers', () => {
     expect(profile.model).toBe(DEFAULT_IMAGES_MODEL)
   })
 
-  it('disables streaming by default and preserves partial image count', () => {
-    expect(createDefaultOpenAIProfile().streamImages).toBe(false)
-    expect(createDefaultOpenAIProfile().streamPartialImages).toBe(1)
-    expect(DEFAULT_SETTINGS.streamImages).toBe(false)
-    expect(DEFAULT_SETTINGS.streamPartialImages).toBe(1)
-    expect(DEFAULT_SETTINGS.profiles[0].streamImages).toBe(false)
-    expect(DEFAULT_SETTINGS.profiles[0].streamPartialImages).toBe(1)
+  it('enables streaming with maximum partial images by default', () => {
+    expect(createDefaultOpenAIProfile().streamImages).toBe(true)
+    expect(createDefaultOpenAIProfile().streamPartialImages).toBe(3)
+    expect(DEFAULT_SETTINGS.streamImages).toBe(true)
+    expect(DEFAULT_SETTINGS.streamPartialImages).toBe(3)
+    expect(DEFAULT_SETTINGS.profiles[0].streamImages).toBe(true)
+    expect(DEFAULT_SETTINGS.profiles[0].streamPartialImages).toBe(3)
 
     const normalized = normalizeSettings({
       profiles: [

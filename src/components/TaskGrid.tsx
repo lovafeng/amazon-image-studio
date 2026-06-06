@@ -4,6 +4,48 @@ import type { TaskRecord } from '../types'
 import { getTaskHistoryCategory, matchesTaskHistoryFilters } from '../lib/taskHistory'
 import TaskCard from './TaskCard'
 
+const VIRTUAL_ROW_HEIGHT = 216
+const VIRTUAL_OVERSCAN_ROWS = 2
+
+interface VirtualTaskWindowInput {
+  total: number
+  scrollTop: number
+  viewportHeight: number
+  rowHeight: number
+  columnCount: number
+  overscanRows: number
+}
+
+export function getVirtualTaskWindow({
+  total,
+  scrollTop,
+  viewportHeight,
+  rowHeight,
+  columnCount,
+  overscanRows,
+}: VirtualTaskWindowInput) {
+  const rowCount = Math.ceil(total / columnCount)
+  const firstVisibleRow = Math.floor(Math.max(0, scrollTop) / rowHeight)
+  const visibleRowCount = Math.ceil(viewportHeight / rowHeight)
+  const startRow = Math.max(0, firstVisibleRow - overscanRows)
+  const endRow = Math.min(rowCount, firstVisibleRow + visibleRowCount + overscanRows)
+
+  return {
+    startIndex: startRow * columnCount,
+    endIndex: Math.min(total, endRow * columnCount),
+    offsetTop: startRow * rowHeight,
+    totalHeight: rowCount * rowHeight,
+  }
+}
+
+function getTaskGridColumnCount(width: number) {
+  if (width >= 1536) return 3
+  if (width >= 1280) return 2
+  if (width >= 1024) return 1
+  if (width >= 640) return 2
+  return 1
+}
+
 export default function TaskGrid() {
   const tasks = useStore((s) => s.tasks)
   const searchQuery = useStore((s) => s.searchQuery)
@@ -23,6 +65,11 @@ export default function TaskGrid() {
   const rootRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const [selectionBox, setSelectionBox] = useState<{ startPageX: number; startPageY: number; currentPageX: number; currentPageY: number } | null>(null)
+  const [viewport, setViewport] = useState(() => ({
+    scrollY: window.scrollY,
+    height: window.innerHeight,
+    width: window.innerWidth,
+  }))
   const dragStart = useRef<{ pageX: number; pageY: number } | null>(null)
   const lastClientPoint = useRef<{ x: number; y: number } | null>(null)
   const hasDragged = useRef(false)
@@ -48,6 +95,37 @@ export default function TaskGrid() {
       filterAspect,
     }))
   }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect])
+
+  useEffect(() => {
+    const updateViewport = () => {
+      setViewport({
+        scrollY: window.scrollY,
+        height: window.innerHeight,
+        width: window.innerWidth,
+      })
+    }
+
+    updateViewport()
+    window.addEventListener('scroll', updateViewport, { passive: true })
+    window.addEventListener('resize', updateViewport)
+    return () => {
+      window.removeEventListener('scroll', updateViewport)
+      window.removeEventListener('resize', updateViewport)
+    }
+  }, [])
+
+  const virtualWindow = useMemo(() => {
+    const rootTop = rootRef.current ? rootRef.current.getBoundingClientRect().top + window.scrollY : 0
+    return getVirtualTaskWindow({
+      total: filteredTasks.length,
+      scrollTop: viewport.scrollY - rootTop,
+      viewportHeight: viewport.height,
+      rowHeight: VIRTUAL_ROW_HEIGHT,
+      columnCount: getTaskGridColumnCount(viewport.width),
+      overscanRows: VIRTUAL_OVERSCAN_ROWS,
+    })
+  }, [filteredTasks.length, viewport])
+  const visibleTasks = filteredTasks.slice(virtualWindow.startIndex, virtualWindow.endIndex)
 
   const getTaskStyleReferenceLabel = (task: TaskRecord) => {
     const category = getTaskHistoryCategory(task)
@@ -341,9 +419,14 @@ export default function TaskGrid() {
       ref={rootRef}
       data-task-grid-root
       className="relative min-h-[50vh]"
+      style={{ height: virtualWindow.totalHeight }}
     >
-      <div ref={gridRef} className="grid grid-cols-1 gap-4 pb-10 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3">
-        {filteredTasks.map((task) => (
+      <div
+        ref={gridRef}
+        className="absolute left-0 right-0 grid grid-cols-1 gap-4 pb-10 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3"
+        style={{ transform: `translateY(${virtualWindow.offsetTop}px)` }}
+      >
+        {visibleTasks.map((task) => (
           <div key={task.id} className="task-card-wrapper" data-task-id={task.id}>
             <TaskCard
               task={task}

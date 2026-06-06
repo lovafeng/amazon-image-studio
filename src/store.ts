@@ -37,10 +37,11 @@ import {
   putAmazonPlannerSession,
   clearAmazonPlannerSessions as dbClearAmazonPlannerSessions,
   getImage,
+  getImageBlob,
   getImageThumbnail,
+  getImageThumbnailBlob,
   getStoredFreshImageThumbnail,
   getAllImageIds,
-  getAllImages,
   putImage,
   putImageThumbnail,
   deleteImage,
@@ -59,6 +60,7 @@ import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompati
 import { prepareReferenceImageAndMaskPayload } from './lib/referenceImagePayload'
 import { getTaskHistoryCategory } from './lib/taskHistory'
 import { isAmazonListingMainSlot } from './lib/listingPlanner'
+import { createImageObjectUrlCache } from './lib/imageObjectUrlCache'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 // ===== Image cache =====
@@ -66,6 +68,8 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 const imageCache = new Map<string, string>()
 const thumbnailCache = new Map<string, { dataUrl: string; width?: number; height?: number; thumbnailVersion?: number }>()
+const imageUrlCache = createImageObjectUrlCache<undefined>(24)
+const thumbnailUrlCache = createImageObjectUrlCache<{ width?: number; height?: number; thumbnailVersion?: number }>(80)
 const thumbnailBackfillIds = new Map<string, 'visible' | 'background'>()
 const thumbnailBackfillRunningIds = new Set<string>()
 const thumbnailSubscribers = new Map<string, Set<(thumbnail: { dataUrl: string; width?: number; height?: number }) => void>>()
@@ -220,6 +224,20 @@ function cacheImage(id: string, dataUrl: string) {
   }
 }
 
+function clearImageMemoryCache(id: string) {
+  imageCache.delete(id)
+  thumbnailCache.delete(id)
+  imageUrlCache.delete(id)
+  thumbnailUrlCache.delete(id)
+}
+
+function clearAllImageMemoryCaches() {
+  imageCache.clear()
+  thumbnailCache.clear()
+  imageUrlCache.clear()
+  thumbnailUrlCache.clear()
+}
+
 function getCachedThumbnail(id: string) {
   const thumbnail = thumbnailCache.get(id)
   if (thumbnail?.thumbnailVersion === CURRENT_THUMBNAIL_VERSION) {
@@ -255,6 +273,14 @@ export async function ensureImageCached(id: string): Promise<string | undefined>
   return undefined
 }
 
+export async function ensureImageUrlCached(id: string): Promise<string | undefined> {
+  const cached = imageUrlCache.get(id)
+  if (cached) return cached.url
+  const blob = await getImageBlob(id)
+  if (!blob) return undefined
+  return imageUrlCache.set(id, URL.createObjectURL(blob), undefined).url
+}
+
 export async function ensureImageThumbnailCached(id: string): Promise<{ dataUrl: string; width?: number; height?: number } | undefined> {
   const cached = getCachedThumbnail(id)
   if (cached) return cached
@@ -273,6 +299,38 @@ export async function ensureImageThumbnailCached(id: string): Promise<{ dataUrl:
   }
   cacheThumbnail(id, thumbnail)
   return thumbnail
+}
+
+export async function ensureImageThumbnailUrlCached(id: string): Promise<{ url: string; width?: number; height?: number } | undefined> {
+  const cached = thumbnailUrlCache.get(id)
+  if (cached?.metadata.thumbnailVersion === CURRENT_THUMBNAIL_VERSION) {
+    return {
+      url: cached.url,
+      width: cached.metadata.width,
+      height: cached.metadata.height,
+    }
+  }
+  if (cached) thumbnailUrlCache.delete(id)
+
+  const [blob, thumbnail] = await Promise.all([
+    getImageThumbnailBlob(id),
+    getStoredFreshImageThumbnail(id),
+  ])
+  if (!blob || !thumbnail) {
+    scheduleThumbnailBackfill([id], 'visible')
+    return undefined
+  }
+
+  const entry = thumbnailUrlCache.set(id, URL.createObjectURL(blob), {
+    width: thumbnail.width,
+    height: thumbnail.height,
+    thumbnailVersion: thumbnail.thumbnailVersion,
+  })
+  return {
+    url: entry.url,
+    width: entry.metadata.width,
+    height: entry.metadata.height,
+  }
 }
 
 export function subscribeImageThumbnail(id: string, callback: (thumbnail: { dataUrl: string; width?: number; height?: number }) => void) {
@@ -873,8 +931,7 @@ async function addStoredAmazonPlannerSessionReferencedImageIds(target: Set<strin
 }
 
 export async function deleteImageIfUnreferenced(imageId: string) {
-  imageCache.delete(imageId)
-  thumbnailCache.delete(imageId)
+  clearImageMemoryCache(imageId)
   thumbnailBackfillIds.delete(imageId)
   thumbnailBackfillRunningIds.delete(imageId)
   thumbnailSubscribers.delete(imageId)
@@ -1168,7 +1225,7 @@ export const useStore = create<AppState>()(
         }),
       clearInputImages: () =>
         set((s) => {
-          for (const img of s.inputImages) imageCache.delete(img.id)
+          for (const img of s.inputImages) clearImageMemoryCache(img.id)
           return syncActiveInputDraft(s, {
             inputImages: [],
             prompt: remapImageMentionsForOrder(s.prompt, s.inputImages, []),
@@ -1465,8 +1522,7 @@ function getUserPersistName(username: string) {
 
 export function resetUserScopedLocalState() {
   userScopedStateVersion += 1
-  imageCache.clear()
-  thumbnailCache.clear()
+  clearAllImageMemoryCaches()
   thumbnailBackfillIds.clear()
   thumbnailBackfillRunningIds.clear()
   for (const timer of falRecoveryTimers.values()) clearTimeout(timer)
@@ -1989,6 +2045,7 @@ export async function initStore() {
     if (stateVersion !== userScopedStateVersion) return
     if (!referencedIds.has(imgId)) {
       await deleteImage(imgId)
+      clearImageMemoryCache(imgId)
       if (stateVersion !== userScopedStateVersion) return
     }
   }
@@ -2538,8 +2595,7 @@ async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
   for (const imgId of candidates) {
     if (stillUsed.has(imgId)) continue
     await deleteImage(imgId)
-    imageCache.delete(imgId)
-    thumbnailCache.delete(imgId)
+    clearImageMemoryCache(imgId)
   }
 }
 
@@ -3953,7 +4009,7 @@ async function executeTask(taskId: string) {
   } finally {
     // 释放输入图片的内存缓存（已持久化到 IndexedDB，后续按需从 DB 加载）
     for (const imgId of task.inputImageIds) {
-      imageCache.delete(imgId)
+      clearImageMemoryCache(imgId)
     }
   }
 }
@@ -4156,8 +4212,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
   for (const imgId of deletedImageIds) {
     if (!stillUsed.has(imgId)) {
       await deleteImage(imgId)
-      imageCache.delete(imgId)
-      thumbnailCache.delete(imgId)
+      clearImageMemoryCache(imgId)
     }
   }
 
@@ -4201,8 +4256,7 @@ export async function removeTask(task: TaskRecord) {
   for (const imgId of taskImageIds) {
     if (!stillUsed.has(imgId)) {
       await deleteImage(imgId)
-      imageCache.delete(imgId)
-      thumbnailCache.delete(imgId)
+      clearImageMemoryCache(imgId)
     }
   }
 
@@ -4227,8 +4281,7 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
       await dbClearAmazonPlannerSessions()
     }
     await clearImages()
-    imageCache.clear()
-    thumbnailCache.clear()
+    clearAllImageMemoryCaches()
     thumbnailBackfillIds.clear()
     setTasks([])
     useStore.setState({
@@ -4338,6 +4391,21 @@ function collectAmazonPlannerSessionImageIds(session: AmazonPlannerSession): str
   ].filter((id): id is string => typeof id === 'string' && Boolean(id.trim()))
 }
 
+function addAgentConversationReferencedImageIds(target: Set<string>, conversations: AgentConversation[]) {
+  for (const conversation of conversations) {
+    for (const round of conversation.rounds) {
+      for (const id of round.inputImageIds) target.add(id)
+      if (round.maskTargetImageId) target.add(round.maskTargetImageId)
+      if (round.maskImageId) target.add(round.maskImageId)
+    }
+    for (const message of conversation.messages) {
+      for (const id of message.inputImageIds ?? []) target.add(id)
+      if (message.maskTargetImageId) target.add(message.maskTargetImageId)
+      if (message.maskImageId) target.add(message.maskImageId)
+    }
+  }
+}
+
 /** 导出选项 */
 export interface ExportOptions {
   exportConfig?: boolean
@@ -4349,15 +4417,17 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
   try {
     const tasks = options.exportTasks ? await getAllTasks() : []
     const amazonPlannerSessions = options.exportTasks ? await getAllAmazonPlannerSessions() : []
-    const images = options.exportTasks ? await getAllImages() : []
     const { settings, agentConversations } = useStore.getState()
     const exportedAt = Date.now()
     const imageCreatedAtFallback = new Map<string, number>()
+    const exportImageIds = new Set<string>()
 
     if (options.exportTasks) {
       for (const task of tasks) {
+        addTaskReferencedImageIds(exportImageIds, task)
         for (const id of [
           ...(task.inputImageIds || []),
+          ...(task.maskTargetImageId ? [task.maskTargetImageId] : []),
           ...(task.maskImageId ? [task.maskImageId] : []),
           ...(task.outputImages || []),
           ...(task.streamPartialImageIds || []),
@@ -4370,12 +4440,14 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       }
       for (const session of amazonPlannerSessions) {
         for (const id of collectAmazonPlannerSessionImageIds(session)) {
+          exportImageIds.add(id)
           const prev = imageCreatedAtFallback.get(id)
           if (prev == null || session.createdAt < prev) {
             imageCreatedAtFallback.set(id, session.createdAt)
           }
         }
       }
+      addAgentConversationReferencedImageIds(exportImageIds, agentConversations)
     }
 
     const imageFiles: ExportData['imageFiles'] = {}
@@ -4383,7 +4455,9 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
     const zipFiles: Record<string, Uint8Array | [Uint8Array, { mtime: Date }]> = {}
 
     if (options.exportTasks) {
-      for (const img of images) {
+      for (const imageId of exportImageIds) {
+        const img = await getImage(imageId)
+        if (!img) continue
         const { ext, bytes } = dataUrlToBytes(img.dataUrl)
         const path = `images/${img.id}.${ext}`
         const createdAt = img.createdAt ?? imageCreatedAtFallback.get(img.id) ?? exportedAt

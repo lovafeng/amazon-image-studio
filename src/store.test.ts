@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import storeSource from './store.ts?raw'
 import { DEFAULT_PARAMS } from './types'
@@ -49,7 +49,15 @@ vi.mock('./lib/db', () => {
       amazonPlannerSessions.clear()
     },
     getImage: async (id: string) => images.get(id),
+    getImageBlob: async (id: string) => {
+      const response = await fetch(`/api/images/${encodeURIComponent(id)}/blob`, { credentials: 'same-origin' })
+      return response.ok ? response.blob() : undefined
+    },
     getImageThumbnail: async (id: string) => thumbnails.get(id),
+    getImageThumbnailBlob: async (id: string) => {
+      const response = await fetch(`/api/thumbnails/${encodeURIComponent(id)}/blob`, { credentials: 'same-origin' })
+      return response.ok ? response.blob() : undefined
+    },
     getStoredFreshImageThumbnail: async (id: string) => thumbnails.get(id),
     getAllImageIds: async () => [...images.keys()],
     getAllImages: async () => [...images.values()],
@@ -107,7 +115,7 @@ vi.mock('./lib/agentApi', () => ({
 }))
 import { clearAgentConversations, clearAmazonPlannerSessions, clearImages, clearTasks, getAllAgentConversations, getAllAmazonPlannerSessions, getImage, putAgentConversation, putAmazonPlannerSession, putImage } from './lib/db'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { cleanStaleAgentInputDrafts, clearData, editOutputs, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
+import { cleanStaleAgentInputDrafts, clearData, editOutputs, ensureImageUrlCached, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -139,6 +147,31 @@ describe('thumbnail backfill', () => {
     )
 
     expect(initStoreBlock).not.toContain('scheduleThumbnailBackfill(referencedImageIds)')
+  })
+})
+
+describe('image object url cache', () => {
+  beforeEach(async () => {
+    await clearImages()
+    vi.restoreAllMocks()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('loads image ids from the blob endpoint and reuses the object URL', async () => {
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-a')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(new Blob(['image-bytes'], { type: 'image/png' })),
+    )
+
+    await expect(ensureImageUrlCached('image-a')).resolves.toBe('blob:image-a')
+    await expect(ensureImageUrlCached('image-a')).resolves.toBe('blob:image-a')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith('/api/images/image-a/blob', { credentials: 'same-origin' })
+    expect(createObjectUrl).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -1219,6 +1252,7 @@ describe('data export and clearing', () => {
     await putAmazonPlannerSession(session)
     await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,YQ==', createdAt: 1_700_000_000_000, source: 'upload' })
     await putImage({ id: 'style-image-a', dataUrl: 'data:image/png;base64,Yg==', createdAt: 1_700_000_000_000, source: 'generated' })
+    await putImage({ id: 'unused-image', dataUrl: 'data:image/png;base64,dW51c2Vk', createdAt: 1_700_000_000_000, source: 'upload' })
 
     const clickedDownloads: Array<{ download?: string; href?: string }> = []
     const anchor = {
@@ -1245,11 +1279,22 @@ describe('data export and clearing', () => {
     expect(manifest.amazonPlannerSessions).toEqual([session])
     expect(manifest.imageFiles).toHaveProperty('image-a')
     expect(manifest.imageFiles).toHaveProperty('style-image-a')
+    expect(manifest.imageFiles).not.toHaveProperty('unused-image')
     expect(clickedDownloads[0]?.download).toContain('amazon-image-studio-backup')
 
     createObjectUrl.mockRestore()
     revokeObjectUrl.mockRestore()
     vi.unstubAllGlobals()
+  })
+
+  it('exports images one by one instead of materializing every stored image', () => {
+    const exportDataBlock = storeSource.slice(
+      storeSource.indexOf('export async function exportData'),
+      storeSource.indexOf('export async function importData'),
+    )
+
+    expect(exportDataBlock).not.toContain('getAllImages()')
+    expect(exportDataBlock).toContain('await getImage(imageId)')
   })
 
   it('clears Amazon planner sessions when clearing task data', async () => {

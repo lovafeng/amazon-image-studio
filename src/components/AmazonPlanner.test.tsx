@@ -99,6 +99,14 @@ describe('AmazonPlanner', () => {
     expect(amazonPlannerSource).toContain('showToast(`已提交 ${jobs.length} 张生图任务`,')
   })
 
+  it('uses 1K as the safe default and waits for each batch task to finish', () => {
+    expect(amazonPlannerSource).toContain("useState<AmazonPlannerResolution>('1k')")
+    expect(amazonPlannerSource).toContain("(['1k', '2k', '4k'] as const)")
+    expect(amazonPlannerSource).toContain('const resolutionTier = getAmazonPlannerResolutionTier(resolution)')
+    expect(amazonPlannerSource).toContain('const listingTargetSize = getListingTargetSizeForResolution(resolution)')
+    expect(amazonPlannerSource).toContain('await waitForPlannerTaskCompletion(submittedTask.id)')
+  })
+
   it('uses current-next-step copy for the submit console', () => {
     expect(amazonPlannerSource).toContain('当前下一步')
     expect(amazonPlannerSource).toContain("target: hasGeneratedStyleImages ? 'style-choice' : 'style'")

@@ -31,7 +31,7 @@ export interface ProductionGuideState {
 export interface ProductionEstimateInput {
   phase: ProductionEstimatePhase
   mode: AmazonPlannerMode
-  resolution: '2k' | '4k'
+  resolution: '1k' | '2k' | '4k'
   elapsedSeconds?: number
 }
 
@@ -121,7 +121,7 @@ export function getProductionEstimate(input: ProductionEstimateInput): Productio
   }
   return {
     label: '正式生图',
-    expectedRange: input.resolution === '4k' ? '通常 2-5 分钟' : '通常 1-3 分钟',
+    expectedRange: input.resolution === '4k' ? '通常 2-5 分钟' : input.resolution === '2k' ? '通常 1-3 分钟' : '通常 1-2 分钟',
     elapsedLabel,
     statusTone,
     note: '任务提交后可在历史记录中查看计时、预览和最终输出。',

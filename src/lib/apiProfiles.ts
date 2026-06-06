@@ -33,6 +33,7 @@ export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
 export const DEFAULT_AMAZON_PLANNER_PROFILE_ID = 'default-openai-planner'
 export const DEFAULT_API_TIMEOUT = 600
+const LEGACY_DEFAULT_STREAM_PARTIAL_IMAGES = 1
 
 const BUILT_IN_PROVIDER_IDS = new Set<ApiProvider>(['openai', 'fal'])
 const DEFAULT_CUSTOM_PROVIDER_PATHS = {
@@ -296,7 +297,7 @@ export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}):
     apiMode: 'images',
     codexCli: false,
     apiProxy: false,
-    streamImages: false,
+    streamImages: true,
     streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
     ...overrides,
   }
@@ -456,6 +457,8 @@ function applyRuntimeDefaultsToDefaultProfile(profile: ApiProfile): ApiProfile {
 
   if (!isBuiltInDefaultOpenAIProfile(migratedProfile)) return migratedProfile
 
+  const shouldUpgradeStreamDefaults = hasLegacyDefaultStreamSettings(migratedProfile)
+
   return {
     ...migratedProfile,
     baseUrl: DEFAULT_SERVER_API_KEY_AVAILABLE
@@ -463,6 +466,8 @@ function applyRuntimeDefaultsToDefaultProfile(profile: ApiProfile): ApiProfile {
       : !migratedProfile.baseUrl.trim() || migratedProfile.baseUrl === OPENAI_DEFAULT_BASE_URL ? DEFAULT_BASE_URL : migratedProfile.baseUrl,
     apiKey: DEFAULT_SERVER_API_KEY_AVAILABLE ? DEFAULT_PROFILE_API_KEY : migratedProfile.apiKey.trim() ? migratedProfile.apiKey : DEFAULT_PROFILE_API_KEY,
     apiProxy: DEFAULT_OPENAI_API_PROXY || migratedProfile.apiProxy,
+    streamImages: shouldUpgradeStreamDefaults ? true : migratedProfile.streamImages,
+    streamPartialImages: shouldUpgradeStreamDefaults ? DEFAULT_STREAM_PARTIAL_IMAGES : migratedProfile.streamPartialImages,
   }
 }
 
@@ -798,6 +803,18 @@ export function validateApiProfile(profile: ApiProfile): string | null {
   return null
 }
 
+function hasCurrentDefaultStreamSettings(profile: Pick<ApiProfile, 'streamImages' | 'streamPartialImages'>): boolean {
+  return profile.streamImages === true && profile.streamPartialImages === DEFAULT_STREAM_PARTIAL_IMAGES
+}
+
+function hasLegacyDefaultStreamSettings(profile: Pick<ApiProfile, 'streamImages' | 'streamPartialImages'>): boolean {
+  return profile.streamImages === false && profile.streamPartialImages === LEGACY_DEFAULT_STREAM_PARTIAL_IMAGES
+}
+
+function hasDefaultStreamSettings(profile: Pick<ApiProfile, 'streamImages' | 'streamPartialImages'>): boolean {
+  return hasCurrentDefaultStreamSettings(profile) || hasLegacyDefaultStreamSettings(profile)
+}
+
 function isDefaultOpenAIProfile(profile: ApiProfile): boolean {
   return profile.id === DEFAULT_OPENAI_PROFILE_ID &&
     profile.name === '生图' &&
@@ -809,8 +826,7 @@ function isDefaultOpenAIProfile(profile: ApiProfile): boolean {
     profile.apiMode === DEFAULT_IMAGE_PROFILE_API_MODE &&
     profile.codexCli === false &&
     profile.apiProxy === DEFAULT_OPENAI_API_PROXY &&
-    profile.streamImages === false &&
-    profile.streamPartialImages === DEFAULT_STREAM_PARTIAL_IMAGES
+    hasDefaultStreamSettings(profile)
 }
 
 function isLegacyDefaultImageProfile(profile: ApiProfile): boolean {
@@ -822,8 +838,7 @@ function isLegacyDefaultImageProfile(profile: ApiProfile): boolean {
     profile.timeout === DEFAULT_API_TIMEOUT &&
     profile.apiMode === 'images' &&
     profile.codexCli === false &&
-    profile.streamImages === false &&
-    profile.streamPartialImages === DEFAULT_STREAM_PARTIAL_IMAGES
+    hasDefaultStreamSettings(profile)
 }
 
 function isDefaultAmazonPlannerProfile(profile: ApiProfile): boolean {
@@ -837,8 +852,7 @@ function isDefaultAmazonPlannerProfile(profile: ApiProfile): boolean {
     profile.apiMode === 'responses' &&
     profile.codexCli === false &&
     profile.apiProxy === DEFAULT_OPENAI_API_PROXY &&
-    profile.streamImages === false &&
-    profile.streamPartialImages === DEFAULT_STREAM_PARTIAL_IMAGES
+    hasDefaultStreamSettings(profile)
 }
 
 function hasOnlyDefaultProfiles(settings: AppSettings): boolean {
@@ -995,7 +1009,7 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   apiMode: DEFAULT_IMAGE_PROFILE_API_MODE,
   codexCli: false,
   apiProxy: DEFAULT_OPENAI_API_PROXY,
-  streamImages: false,
+  streamImages: true,
   streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
   customProviders: [],
   clearInputAfterSubmit: false,

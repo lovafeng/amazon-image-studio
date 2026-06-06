@@ -10,6 +10,8 @@ const LEGACY_IDB_SERVER_MIGRATION_KEY = 'amazon-image-studio:indexeddb-server-mi
 const THUMBNAIL_MAX_SIZE = 720
 const THUMBNAIL_QUALITY = 0.9
 const THUMBNAIL_VERSION = 2
+const STORED_UPLOAD_MAX_EDGE = 2400
+const STORED_UPLOAD_QUALITY = 0.92
 
 export const CURRENT_THUMBNAIL_VERSION = THUMBNAIL_VERSION
 let legacyIndexedDbMigrationPromise: Promise<void> | null = null
@@ -176,8 +178,23 @@ export function getImage(id: string): Promise<StoredImage | undefined> {
   return migratedApiJson<StoredImage | null>(`/images/${encodeURIComponent(id)}`).then((image) => image ?? undefined)
 }
 
+async function migratedApiBlob(path: string): Promise<Blob | undefined> {
+  await migrateLegacyIndexedDBToServer()
+  const response = await fetch(`/api${path}`, { credentials: 'same-origin' })
+  if (!response.ok) return undefined
+  return response.blob()
+}
+
+export function getImageBlob(id: string): Promise<Blob | undefined> {
+  return migratedApiBlob(`/images/${encodeURIComponent(id)}/blob`)
+}
+
 export function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
   return migratedApiJson<StoredImageThumbnail | null>(`/thumbnails/${encodeURIComponent(id)}`).then((thumbnail) => thumbnail ?? undefined)
+}
+
+export function getImageThumbnailBlob(id: string): Promise<Blob | undefined> {
+  return migratedApiBlob(`/thumbnails/${encodeURIComponent(id)}/blob`)
 }
 
 export async function getStoredFreshImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
@@ -283,13 +300,14 @@ function hashDataUrlFallback(dataUrl: string): string {
  * 返回 image id。
  */
 export async function storeImage(dataUrl: string, source: NonNullable<StoredImage['source']> = 'upload'): Promise<string> {
-  const id = await hashDataUrl(dataUrl)
+  const storedDataUrl = source === 'upload' ? await prepareStoredUploadImageDataUrl(dataUrl) : dataUrl
+  const id = await hashDataUrl(storedDataUrl)
   const existing = await getImage(id)
   if (!existing) {
-    const thumbnail = await safeCreateImageThumbnail(dataUrl)
+    const thumbnail = await safeCreateImageThumbnail(storedDataUrl)
     await putImage({
       id,
-      dataUrl,
+      dataUrl: storedDataUrl,
       createdAt: Date.now(),
       source,
       width: thumbnail.width,
@@ -331,6 +349,63 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   })
 }
 
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(reader.error ?? new Error('图片编码失败'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+function getDataUrlMimeType(dataUrl: string) {
+  return /^data:([^;,]+)/i.exec(dataUrl)?.[1]?.toLowerCase() ?? 'image/png'
+}
+
+function getStoredUploadMimeType(dataUrl: string) {
+  const mimeType = getDataUrlMimeType(dataUrl)
+  return mimeType === 'image/jpeg' || mimeType === 'image/webp' || mimeType === 'image/png' ? mimeType : 'image/png'
+}
+
+function canvasToStoredUploadBlob(canvas: HTMLCanvasElement, mimeType: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) reject(new Error('图片压缩失败'))
+      else resolve(blob)
+    }, mimeType, STORED_UPLOAD_QUALITY)
+  })
+}
+
+async function prepareStoredUploadImageDataUrl(dataUrl: string): Promise<string> {
+  if (typeof document === 'undefined' || typeof Image === 'undefined' || typeof FileReader === 'undefined') return dataUrl
+
+  const image = await loadImage(dataUrl)
+  const width = image.naturalWidth
+  const height = image.naturalHeight
+  const longestEdge = Math.max(width, height)
+  if (longestEdge <= STORED_UPLOAD_MAX_EDGE) return dataUrl
+
+  const scale = STORED_UPLOAD_MAX_EDGE / longestEdge
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(width * scale))
+  canvas.height = Math.max(1, Math.round(height * scale))
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('当前浏览器不支持 Canvas')
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
+
+  const blob = await canvasToStoredUploadBlob(canvas, getStoredUploadMimeType(dataUrl))
+  return blobToDataUrl(blob)
+}
+
+function canvasToThumbnailBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) reject(new Error('缩略图导出失败'))
+      else resolve(blob)
+    }, 'image/webp', THUMBNAIL_QUALITY)
+  })
+}
+
 async function createImageThumbnail(dataUrl: string): Promise<Omit<StoredImageThumbnail, 'id'>> {
   const image = await loadImage(dataUrl)
   const width = image.naturalWidth
@@ -344,9 +419,10 @@ async function createImageThumbnail(dataUrl: string): Promise<Omit<StoredImageTh
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('当前浏览器不支持 Canvas')
   ctx.drawImage(image, 0, 0, canvas.width, canvas.height)
+  const thumbnailBlob = await canvasToThumbnailBlob(canvas)
 
   return {
-    thumbnailDataUrl: canvas.toDataURL('image/webp', THUMBNAIL_QUALITY),
+    thumbnailDataUrl: await blobToDataUrl(thumbnailBlob),
     width,
     height,
     thumbnailVersion: THUMBNAIL_VERSION,

@@ -13,6 +13,7 @@ import { downloadImageIds } from '../lib/downloadImages'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getAspectLabel, getTaskHistoryCategory, getWorkflowLabel } from '../lib/taskHistory'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
+import TaskReuseMenu from './TaskReuseMenu'
 
 import ViewportTooltip from './ViewportTooltip'
 
@@ -28,6 +29,8 @@ export default function DetailModal() {
   const dismissedCodexCliPrompts = useStore((s) => s.dismissedCodexCliPrompts)
   const streamPreviewSrc = useStore((s) => detailTaskId ? s.streamPreviews[detailTaskId] || '' : '')
   const streamPreviewSlots = useStore((s) => detailTaskId ? s.streamPreviewSlots[detailTaskId] : undefined)
+  const setInputImages = useStore((s) => s.setInputImages)
+  const setGalleryStyleReferenceRequest = useStore((s) => s.setGalleryStyleReferenceRequest)
 
   const [imageIndex, setImageIndex] = useState(0)
   const [imageSrcs, setImageSrcs] = useState<Record<string, string>>({})
@@ -268,6 +271,57 @@ export default function DetailModal() {
   const handleEdit = () => {
     editOutputs(task, currentOutputImageId || undefined)
     setDetailTaskId(null)
+  }
+
+  const getTaskStyleReferenceLabel = () => task.category?.styleReferenceLabel?.trim() ||
+    task.category?.amazonSlot?.trim() ||
+    currentHistoryCategory.productTitle ||
+    '图库风格'
+
+  const handleUseOutputAsReference = async () => {
+    const outputImageIds = task.outputImages ?? []
+    if (!outputImageIds.length) {
+      showToast('当前任务没有可复用的输出图', 'error')
+      return
+    }
+
+    const existingIds = new Set(useStore.getState().inputImages.map((image) => image.id))
+    const additions: Array<{ id: string; dataUrl: string }> = []
+    for (const imageId of outputImageIds) {
+      if (existingIds.has(imageId)) continue
+      const dataUrl = await ensureImageCached(imageId)
+      if (dataUrl) additions.push({ id: imageId, dataUrl })
+    }
+    if (!additions.length) {
+      showToast('输出图已在参考图中', 'info')
+      return
+    }
+
+    setInputImages([...useStore.getState().inputImages, ...additions])
+    setDetailTaskId(null)
+    showToast(`已添加 ${additions.length} 张输出图作参考`, 'success')
+  }
+
+  const handleUseAsStyle = () => {
+    const imageId = currentOutputImageId || task.outputImages?.[0]
+    if (!imageId) {
+      showToast('当前任务没有可用作风格的输出图', 'error')
+      return
+    }
+    setGalleryStyleReferenceRequest({
+      imageId,
+      label: getTaskStyleReferenceLabel(),
+      requestedAt: Date.now(),
+    })
+    setDetailTaskId(null)
+    showToast('已发送到亚马逊工作台当前风格', 'success')
+  }
+
+  const handleRestorePlannerSession = () => {
+    if (!task.category?.plannerSessionId) return
+    setDetailTaskId(null)
+    document.querySelector<HTMLElement>('[data-onboarding-target="planner-panel"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    showToast('请在亚马逊工作台历史记录中恢复所属策划', 'info')
   }
 
   const handleMaskEditCurrentOutput = () => {
@@ -972,6 +1026,17 @@ export default function DetailModal() {
 
           {/* 操作按钮 */}
           <div className="grid grid-cols-4 sm:flex gap-2 pt-4 border-t border-gray-100 dark:border-white/[0.08]">
+            <div className="col-span-4 sm:flex-none">
+              <TaskReuseMenu
+                hasOutputImages={Boolean(outputLen)}
+                canRestorePlannerSession={Boolean(task.category?.plannerSessionId)}
+                onReuseConfig={handleReuse}
+                onUseOutputAsReference={() => void handleUseOutputAsReference()}
+                onUseAsStyle={handleUseAsStyle}
+                onRestorePlannerSession={handleRestorePlannerSession}
+                onEditOutputs={handleEdit}
+              />
+            </div>
             <button
               onClick={handleReuse}
               className="col-span-2 sm:flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-500/20 transition text-sm font-medium whitespace-nowrap"

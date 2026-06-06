@@ -760,6 +760,8 @@ interface AppState {
   setFilterAspect: (aspect: HistoryAspectFilter) => void
   pendingTaskCategory: PendingTaskCategory | null
   setPendingTaskCategory: (category: PendingTaskCategory | null) => void
+  galleryStyleReferenceRequest: { imageId: string; label: string; requestedAt: number } | null
+  setGalleryStyleReferenceRequest: (request: AppState['galleryStyleReferenceRequest']) => void
 
   // 多选
   selectedTaskIds: string[]
@@ -1338,6 +1340,8 @@ export const useStore = create<AppState>()(
       setFilterAspect: (filterAspect) => set({ filterAspect }),
       pendingTaskCategory: null,
       setPendingTaskCategory: (pendingTaskCategory) => set({ pendingTaskCategory }),
+      galleryStyleReferenceRequest: null,
+      setGalleryStyleReferenceRequest: (galleryStyleReferenceRequest) => set({ galleryStyleReferenceRequest }),
 
       // Selection
       selectedTaskIds: [],
@@ -1447,6 +1451,7 @@ export function resetUserScopedLocalState() {
     lightboxImageId: null,
     lightboxImageList: [],
     pendingTaskCategory: null,
+    galleryStyleReferenceRequest: null,
     searchQuery: '',
     filterStatus: 'all',
     filterFavorite: false,

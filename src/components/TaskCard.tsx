@@ -7,12 +7,17 @@ import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { CodeIcon } from './icons'
+import TaskReuseMenu from './TaskReuseMenu'
 import ViewportTooltip from './ViewportTooltip'
 
 interface Props {
   task: TaskRecord
   onReuse: () => void
   onEditOutputs: () => void
+  onUseOutputAsReference?: () => void
+  onUseAsStyle?: () => void
+  onRestorePlannerSession?: () => void
+  canRestorePlannerSession?: boolean
   onDelete: () => void
   onClick: (e: React.MouseEvent | React.TouchEvent) => void
   isSelected?: boolean
@@ -83,6 +88,10 @@ export default function TaskCard({
   task,
   onReuse,
   onEditOutputs,
+  onUseOutputAsReference = () => {},
+  onUseAsStyle = () => {},
+  onRestorePlannerSession = () => {},
+  canRestorePlannerSession = false,
   onDelete,
   onClick,
   isSelected,
@@ -698,6 +707,15 @@ export default function TaskCard({
                   />
                 </svg>
               </TaskActionButton>
+              <TaskReuseMenu
+                hasOutputImages={Boolean(task.outputImages?.length)}
+                canRestorePlannerSession={canRestorePlannerSession}
+                onReuseConfig={onReuse}
+                onUseOutputAsReference={onUseOutputAsReference}
+                onUseAsStyle={onUseAsStyle}
+                onRestorePlannerSession={onRestorePlannerSession}
+                onEditOutputs={onEditOutputs}
+              />
               <TaskActionButton
                 tooltip="复用配置"
                 onClick={onReuse}

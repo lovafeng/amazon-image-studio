@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { useStore, reuseConfig, editOutputs, removeTask } from '../store'
-import { matchesTaskHistoryFilters } from '../lib/taskHistory'
+import { useStore, reuseConfig, editOutputs, removeTask, ensureImageCached } from '../store'
+import type { TaskRecord } from '../types'
+import { getTaskHistoryCategory, matchesTaskHistoryFilters } from '../lib/taskHistory'
 import TaskCard from './TaskCard'
 
 export default function TaskGrid() {
@@ -16,6 +17,9 @@ export default function TaskGrid() {
   const selectedTaskIds = useStore((s) => s.selectedTaskIds)
   const setSelectedTaskIds = useStore((s) => s.setSelectedTaskIds)
   const clearSelection = useStore((s) => s.clearSelection)
+  const setInputImages = useStore((s) => s.setInputImages)
+  const setGalleryStyleReferenceRequest = useStore((s) => s.setGalleryStyleReferenceRequest)
+  const showToast = useStore((s) => s.showToast)
   const rootRef = useRef<HTMLDivElement>(null)
   const gridRef = useRef<HTMLDivElement>(null)
   const [selectionBox, setSelectionBox] = useState<{ startPageX: number; startPageY: number; currentPageX: number; currentPageY: number } | null>(null)
@@ -44,6 +48,57 @@ export default function TaskGrid() {
       filterAspect,
     }))
   }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect])
+
+  const getTaskStyleReferenceLabel = (task: TaskRecord) => {
+    const category = getTaskHistoryCategory(task)
+    return task.category?.styleReferenceLabel?.trim() ||
+      task.category?.amazonSlot?.trim() ||
+      category.productTitle ||
+      '图库风格'
+  }
+
+  const addTaskOutputsAsInputImages = async (task: TaskRecord) => {
+    const outputImageIds = task.outputImages ?? []
+    if (!outputImageIds.length) {
+      showToast('当前任务没有可复用的输出图', 'error')
+      return
+    }
+
+    const existingIds = new Set(useStore.getState().inputImages.map((image) => image.id))
+    const additions: Array<{ id: string; dataUrl: string }> = []
+    for (const imageId of outputImageIds) {
+      if (existingIds.has(imageId)) continue
+      const dataUrl = await ensureImageCached(imageId)
+      if (dataUrl) additions.push({ id: imageId, dataUrl })
+    }
+    if (!additions.length) {
+      showToast('输出图已在参考图中', 'info')
+      return
+    }
+
+    setInputImages([...useStore.getState().inputImages, ...additions])
+    showToast(`已添加 ${additions.length} 张输出图作参考`, 'success')
+  }
+
+  const useTaskOutputAsStyle = (task: TaskRecord) => {
+    const imageId = task.outputImages?.[0]
+    if (!imageId) {
+      showToast('当前任务没有可用作风格的输出图', 'error')
+      return
+    }
+    setGalleryStyleReferenceRequest({
+      imageId,
+      label: getTaskStyleReferenceLabel(task),
+      requestedAt: Date.now(),
+    })
+    showToast('已发送到亚马逊工作台当前风格', 'success')
+  }
+
+  const restorePlannerSessionFromTask = (task: TaskRecord) => {
+    if (!task.category?.plannerSessionId) return
+    document.querySelector<HTMLElement>('[data-onboarding-target="planner-panel"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    showToast('请在亚马逊工作台历史记录中恢复所属策划', 'info')
+  }
 
   const handleDelete = (task: typeof tasks[0]) => {
     setConfirmDialog({
@@ -308,6 +363,10 @@ export default function TaskGrid() {
               }}
               onReuse={() => reuseConfig(task)}
               onEditOutputs={() => editOutputs(task)}
+              onUseOutputAsReference={() => void addTaskOutputsAsInputImages(task)}
+              onUseAsStyle={() => useTaskOutputAsStyle(task)}
+              onRestorePlannerSession={() => restorePlannerSessionFromTask(task)}
+              canRestorePlannerSession={Boolean(task.category?.plannerSessionId)}
               onDelete={() => handleDelete(task)}
               isSelected={selectedTaskIds.includes(task.id)}
             />

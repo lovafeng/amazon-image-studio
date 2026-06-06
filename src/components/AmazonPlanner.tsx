@@ -28,6 +28,7 @@ import {
 } from '../lib/listingPlanner'
 import { callAmazonPlannerApi, type PlannerApiResult } from '../lib/listingPlannerApi'
 import { getBatchSubmitStatusText, getPlannerActionGuidance, getSubmitButtonLabel } from '../lib/amazonPlannerAction'
+import { deriveProductionGuideState, getProductionEstimate, type ProductionStageId } from '../lib/plannerProductionGuide'
 import { callImageApi } from '../lib/api'
 import { deleteAmazonPlannerSession, getAllAmazonPlannerSessions, putAmazonPlannerSession, storeImage } from '../lib/db'
 import { normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -46,6 +47,7 @@ import {
 import { DEFAULT_PARAMS } from '../types'
 import type { AmazonPlannerSession, TaskRecord } from '../types'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, DownloadIcon, EyeIcon, HistoryIcon, ImportIcon, PhotoIcon, PlusIcon, TrashIcon } from './icons'
+import PlannerProductionGuide from './PlannerProductionGuide'
 
 const FIELD_CLASS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
 const LABEL_CLASS = 'mb-1.5 block text-xs font-medium text-gray-500 dark:text-gray-400'
@@ -310,6 +312,7 @@ export default function AmazonPlanner() {
   const params = useStore((s) => s.params)
   const inputImages = useStore((s) => s.inputImages)
   const settings = useStore((s) => s.settings)
+  const tasks = useStore((s) => s.tasks)
   const setPrompt = useStore((s) => s.setPrompt)
   const setParams = useStore((s) => s.setParams)
   const setPendingTaskCategory = useStore((s) => s.setPendingTaskCategory)
@@ -813,6 +816,21 @@ export default function AmazonPlanner() {
         if (submitted) markActionProgress(submittedActionKey, 'submitted')
       })
     })
+  }
+
+  const focusStyleStep = () => {
+    document.querySelector<HTMLElement>('[data-amazon-style-board]')?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    })
+  }
+
+  const handlePrimarySubmitAction = () => {
+    if (styleReferenceRequired && !hasStyleReference) {
+      focusStyleStep()
+      return
+    }
+    applyAndSubmit()
   }
 
   const submitAllPlannedImages = async () => {
@@ -1433,6 +1451,75 @@ export default function AmazonPlanner() {
     event.target.value = ''
   }
 
+  const plannerRelatedTasks = currentPlannerSessionId
+    ? tasks.some((task) => task.category?.plannerSessionId === currentPlannerSessionId)
+    : false
+  const productionGuideState = deriveProductionGuideState({
+    hasUsablePlannerProfile,
+    hasListingText,
+    hasPlanOptions,
+    needsStyleReference: seriesStyleReferenceNeeded,
+    hasStyleReference,
+    hasSelectedPlan,
+    hasRelatedTasks: plannerRelatedTasks || submittedVisiblePlanCount > 0,
+  })
+  const productionEstimate = getProductionEstimate({
+    phase: isPlanning
+      ? 'planning'
+      : isGeneratingStyleImages || productionGuideState.currentStageId === 'style'
+        ? 'style'
+        : isBatchSubmitting
+          ? 'batch'
+          : 'generation',
+    mode: plannerMode,
+    resolution,
+    elapsedSeconds: undefined,
+  })
+  const scrollToPlannerTarget = (selector: string) => {
+    document.querySelector<HTMLElement>(selector)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+  const getProductionPrimaryActionLabel = (stage: ProductionStageId) => {
+    if (stage === 'configure-api') return '配置 API'
+    if (stage === 'prepare-input') return '去填资料'
+    if (stage === 'plan') return '开始 AI 策划'
+    if (stage === 'style') return hasGeneratedStyleImages ? '选择风格板' : '生成风格板'
+    if (stage === 'select-plan') return '选择图片位'
+    if (stage === 'review-reuse') return '去历史查看'
+    return '提交当前项'
+  }
+  const handleProductionPrimaryAction = () => {
+    const stage = productionGuideState.currentStageId
+    if (stage === 'configure-api') {
+      setShowSettings(true, 'api')
+      return
+    }
+    if (stage === 'prepare-input') {
+      scrollToPlannerTarget('[data-onboarding-target="listing-input"], textarea')
+      return
+    }
+    if (stage === 'plan') {
+      void createAiPlan()
+      return
+    }
+    if (stage === 'style') {
+      if (hasGeneratedStyleImages) {
+        focusStyleStep()
+        return
+      }
+      void generateStyleImages()
+      return
+    }
+    if (stage === 'select-plan') {
+      scrollToPlannerTarget(`[${'data-amazon-action'}-bar]`)
+      return
+    }
+    if (stage === 'review-reuse') {
+      scrollToPlannerTarget('[data-onboarding-target="history-panel"]')
+      return
+    }
+    handlePrimarySubmitAction()
+  }
+
   return (
     <section data-no-drag-select className="mt-6 rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-white/[0.08] dark:bg-gray-900">
       <div className="border-b border-gray-200 px-4 py-4 dark:border-white/[0.08] sm:px-5">
@@ -1489,6 +1576,15 @@ export default function AmazonPlanner() {
               )}
             </button>
           </div>
+        </div>
+        <div className="mt-4">
+          <PlannerProductionGuide
+            currentStageId={productionGuideState.currentStageId}
+            completedStageIds={productionGuideState.completedStageIds}
+            estimate={productionEstimate}
+            primaryActionLabel={getProductionPrimaryActionLabel(productionGuideState.currentStageId)}
+            onPrimaryAction={handleProductionPrimaryAction}
+          />
         </div>
         {showPlannerHistory && (
           <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/[0.08] dark:bg-gray-950">

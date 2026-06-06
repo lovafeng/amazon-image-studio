@@ -55,6 +55,8 @@ describe('api profile runtime env defaults', () => {
         id: IMAGE_PROFILE.id,
         baseUrl: 'https://done.amzdataincn.com/reseller/v1',
         apiKey: 'server-env',
+        model: 'gpt-5.5',
+        apiMode: 'responses',
         apiProxy: true,
       },
       {
@@ -98,6 +100,8 @@ describe('api profile runtime env defaults', () => {
         id: IMAGE_PROFILE.id,
         baseUrl: 'https://done.amzdataincn.com/reseller/v1',
         apiKey: 'server-env',
+        model: 'gpt-5.5',
+        apiMode: 'responses',
         apiProxy: true,
       },
       {

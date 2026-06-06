@@ -11,8 +11,10 @@ import {
   createDefaultOpenAIProfile,
   createDefaultFalProfile,
   findEquivalentApiProfile,
+  getAgentResponsesProfile,
   getAmazonPlannerProfile,
   getDefaultImageProfile,
+  getImageGenerationProfile,
   importCustomProviderDefinitionFromJson,
   importCustomProviderSettingsFromJson,
   mergeImportedSettings,
@@ -29,14 +31,78 @@ describe('mergeImportedSettings', () => {
     expect(settings.amazonPlannerProfileId).toBe(DEFAULT_AMAZON_PLANNER_PROFILE_ID)
     expect(settings.profiles.find((profile) => profile.id === DEFAULT_OPENAI_PROFILE_ID)).toMatchObject({
       name: '生图',
-      apiMode: 'images',
-      model: DEFAULT_IMAGES_MODEL,
+      apiMode: DEFAULT_SETTINGS.apiMode,
+      model: DEFAULT_SETTINGS.model,
     })
     expect(getAmazonPlannerProfile(settings)).toMatchObject({
       id: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
       name: 'AI策划',
       apiMode: 'responses',
       model: DEFAULT_RESPONSES_MODEL,
+    })
+  })
+
+  it('migrates the untouched legacy default image profile to Responses API', () => {
+    const settings = normalizeSettings({
+      profiles: [
+        createDefaultOpenAIProfile({
+          id: DEFAULT_OPENAI_PROFILE_ID,
+          name: '生图',
+          baseUrl: DEFAULT_SETTINGS.baseUrl,
+          apiKey: DEFAULT_SETTINGS.apiKey,
+          model: DEFAULT_IMAGES_MODEL,
+          apiMode: 'images',
+          apiProxy: DEFAULT_SETTINGS.apiProxy,
+        }),
+        createDefaultOpenAIProfile({
+          id: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+          name: 'AI策划',
+          baseUrl: DEFAULT_SETTINGS.baseUrl,
+          apiKey: DEFAULT_SETTINGS.apiKey,
+          model: DEFAULT_RESPONSES_MODEL,
+          apiMode: 'responses',
+          apiProxy: DEFAULT_SETTINGS.apiProxy,
+        }),
+      ],
+      activeProfileId: DEFAULT_OPENAI_PROFILE_ID,
+      amazonPlannerProfileId: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+    })
+
+    expect(settings.profiles.find((profile) => profile.id === DEFAULT_OPENAI_PROFILE_ID)).toMatchObject({
+      apiMode: DEFAULT_SETTINGS.apiMode,
+      model: DEFAULT_SETTINGS.model,
+    })
+  })
+
+  it('keeps a customized image profile on Images API', () => {
+    const settings = normalizeSettings({
+      profiles: [
+        createDefaultOpenAIProfile({
+          id: DEFAULT_OPENAI_PROFILE_ID,
+          name: '生图',
+          baseUrl: DEFAULT_SETTINGS.baseUrl,
+          apiKey: DEFAULT_SETTINGS.apiKey,
+          model: 'custom-image-model',
+          apiMode: 'images',
+          apiProxy: DEFAULT_SETTINGS.apiProxy,
+        }),
+        createDefaultOpenAIProfile({
+          id: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+          name: 'AI策划',
+          baseUrl: DEFAULT_SETTINGS.baseUrl,
+          apiKey: DEFAULT_SETTINGS.apiKey,
+          model: DEFAULT_RESPONSES_MODEL,
+          apiMode: 'responses',
+          apiProxy: DEFAULT_SETTINGS.apiProxy,
+        }),
+      ],
+      activeProfileId: DEFAULT_OPENAI_PROFILE_ID,
+      amazonPlannerProfileId: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+    })
+
+    expect(settings.profiles.find((profile) => profile.id === DEFAULT_OPENAI_PROFILE_ID)).toMatchObject({
+      apiMode: 'images',
+      model: 'custom-image-model',
     })
   })
 
@@ -59,8 +125,8 @@ describe('mergeImportedSettings', () => {
     expect(settings.profiles.find((profile) => profile.id === DEFAULT_OPENAI_PROFILE_ID)).toMatchObject({
       name: '生图',
       apiKey: 'shared-key',
-      apiMode: 'images',
-      model: DEFAULT_IMAGES_MODEL,
+      apiMode: DEFAULT_SETTINGS.apiMode,
+      model: DEFAULT_SETTINGS.model,
     })
     expect(getAmazonPlannerProfile(settings)).toMatchObject({
       id: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
@@ -693,8 +759,8 @@ describe('amazon planner profile', () => {
 
     expect(getDefaultImageProfile(settings)).toMatchObject({
       id: DEFAULT_OPENAI_PROFILE_ID,
-      apiMode: 'images',
-      model: DEFAULT_IMAGES_MODEL,
+      apiMode: DEFAULT_SETTINGS.apiMode,
+      model: DEFAULT_SETTINGS.model,
     })
   })
 
@@ -768,6 +834,64 @@ describe('amazon planner profile', () => {
       id: 'planner-profile',
       apiKey: 'planner-key',
       model: 'deepseek-v4-flash',
+    })
+  })
+
+  it('auto-selects the image profile when the active profile is the planner profile', () => {
+    const settings = normalizeSettings({
+      profiles: [
+        createDefaultOpenAIProfile({
+          id: DEFAULT_OPENAI_PROFILE_ID,
+          name: '生图',
+          apiKey: 'image-key',
+          apiMode: 'images',
+          model: DEFAULT_IMAGES_MODEL,
+        }),
+        createDefaultOpenAIProfile({
+          id: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+          name: 'AI策划',
+          apiKey: 'planner-key',
+          apiMode: 'responses',
+          model: DEFAULT_RESPONSES_MODEL,
+        }),
+      ],
+      activeProfileId: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+      amazonPlannerProfileId: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+    })
+
+    expect(getImageGenerationProfile(settings)).toMatchObject({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
+    })
+  })
+
+  it('auto-selects the Responses profile for Agent when the active profile is image generation', () => {
+    const settings = normalizeSettings({
+      profiles: [
+        createDefaultOpenAIProfile({
+          id: DEFAULT_OPENAI_PROFILE_ID,
+          name: '生图',
+          apiKey: 'image-key',
+          apiMode: 'images',
+          model: DEFAULT_IMAGES_MODEL,
+        }),
+        createDefaultOpenAIProfile({
+          id: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+          name: 'AI策划',
+          apiKey: 'planner-key',
+          apiMode: 'responses',
+          model: DEFAULT_RESPONSES_MODEL,
+        }),
+      ],
+      activeProfileId: DEFAULT_OPENAI_PROFILE_ID,
+      amazonPlannerProfileId: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+    })
+
+    expect(getAgentResponsesProfile(settings)).toMatchObject({
+      id: DEFAULT_AMAZON_PLANNER_PROFILE_ID,
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
     })
   })
 })

@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  getAdminTasks,
   getAdminSummary,
   getAdminUsage,
   getAdminUsers,
   getMyUsage,
   resetUserPassword,
+  setUserTokenLimit,
   setUserStatus,
 } from './admin'
 
@@ -36,6 +38,18 @@ describe('frontend admin api', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/admin/usage', { credentials: 'same-origin' })
   })
 
+  it('loads admin tasks', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ items: [{ userId: 'user-a', task: { id: 'task-a' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    await expect(getAdminTasks()).resolves.toEqual([{ userId: 'user-a', task: { id: 'task-a' } }])
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/tasks', { credentials: 'same-origin' })
+  })
+
   it('updates user status', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(JSON.stringify({ ok: true }), { status: 200 }),
@@ -61,6 +75,28 @@ describe('frontend admin api', () => {
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ password: 'new-secret' }),
+    })
+  })
+
+  it('sets and clears user token limit', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }))
+
+    await setUserTokenLimit('user-a', 100)
+    await setUserTokenLimit('user-a', null)
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/admin/users/user-a/token-limit', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tokenLimit: 100 }),
+    })
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/admin/users/user-a/token-limit', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tokenLimit: null }),
     })
   })
 

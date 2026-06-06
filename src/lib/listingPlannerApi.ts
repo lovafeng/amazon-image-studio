@@ -9,8 +9,12 @@ import {
   getAPlusModuleGenerationSize,
   getAPlusModuleSpecs,
   getAPlusModuleUploadSize,
+  getDspAssetGenerationSize,
+  getDspAssetUploadSize,
+  getDspImageAssetSpecs,
   type APlusContentType,
   type AmazonAPlusPlan,
+  type AmazonDspPlan,
   type AmazonImagePlan,
   type AmazonPlannerMode,
   type AmazonStyleCandidate,
@@ -34,6 +38,7 @@ interface PlannerApiPayload {
   styleCandidates?: AmazonStyleCandidate[]
   imagePlans?: Array<Partial<AmazonImagePlan>>
   aPlusPlans?: Array<Partial<AmazonAPlusPlan>>
+  dspPlans?: Array<Partial<AmazonDspPlan>>
 }
 
 export interface PlannerApiResult {
@@ -43,10 +48,12 @@ export interface PlannerApiResult {
   styleCandidates: AmazonStyleCandidate[]
   plans: AmazonImagePlan[]
   aPlusPlans: AmazonAPlusPlan[]
+  dspPlans: AmazonDspPlan[]
   aPlusType?: APlusContentType
 }
 
 const AMAZON_PLANNER_REASONING_EFFORT = 'xhigh'
+const LISTING_IMAGE_SLOTS = ['MAIN', 'PT01', 'PT02', 'PT03', 'PT04', 'PT05', 'PT06'] as const
 
 const PRODUCT_SCHEMA = {
   type: 'object',
@@ -187,6 +194,48 @@ function createAPlusPlannerSchema(aPlusType: APlusContentType) {
       },
     },
     required: ['product', 'sellingPoints', 'seriesStyleGuide', 'styleCandidates', 'aPlusPlans'],
+  } as const
+}
+
+function createDspPlannerSchema() {
+  const specs = getDspImageAssetSpecs()
+  return {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      product: PRODUCT_SCHEMA,
+      sellingPoints: SELLING_POINTS_SCHEMA,
+      seriesStyleGuide: {
+        type: 'string',
+        description: 'LLM-authored English visual style guide to keep the whole DSP asset set coherent.',
+      },
+      styleCandidates: {
+        type: 'array',
+        minItems: 3,
+        maxItems: 3,
+        items: STYLE_CANDIDATE_SCHEMA,
+      },
+      dspPlans: {
+        type: 'array',
+        minItems: specs.length,
+        maxItems: specs.length,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            slot: { type: 'string', enum: specs.map((spec) => spec.slot) },
+            label: CHINESE_LABEL_SCHEMA,
+            group: { type: 'string', enum: Array.from(new Set(specs.map((spec) => spec.group))) },
+            assetType: { type: 'string', enum: ['image'] },
+            planMarkdown: PLAN_MARKDOWN_SCHEMA,
+            prompt: ENGLISH_IMAGE_PROMPT_SCHEMA,
+            negativePrompt: NEGATIVE_PROMPT_SCHEMA,
+          },
+          required: ['slot', 'label', 'group', 'assetType', 'planMarkdown', 'prompt', 'negativePrompt'],
+        },
+      },
+    },
+    required: ['product', 'sellingPoints', 'seriesStyleGuide', 'styleCandidates', 'dspPlans'],
   } as const
 }
 
@@ -371,9 +420,8 @@ async function readPlannerResponseText(response: Response): Promise<string> {
 }
 
 function normalizePlan(plan: Partial<AmazonImagePlan>, index: number): AmazonImagePlan {
-  const slots = ['MAIN', 'PT01', 'PT02', 'PT03', 'PT04', 'PT05', 'PT06']
   return {
-    slot: plan.slot || slots[index] || `PT${String(index).padStart(2, '0')}`,
+    slot: plan.slot || LISTING_IMAGE_SLOTS[index] || `PT${String(index).padStart(2, '0')}`,
     label: plan.label || '图片方案',
     ...(plan.kind ? { kind: plan.kind } : {}),
     planMarkdown: plan.planMarkdown || '',
@@ -427,11 +475,19 @@ function normalizeListingPlannerApiPayload(payload: PlannerApiPayload): PlannerA
   const parsed = normalizeParsedListing(payload)
   const seriesStyleGuide = normalizeSeriesStyleGuide(payload)
   const styleCandidates = normalizeStyleCandidates(payload)
-  const plans = Array.isArray(payload.imagePlans)
-    ? payload.imagePlans.map(normalizePlan).filter((plan) => plan.prompt.trim() && plan.planMarkdown.trim()).slice(0, 7)
-    : []
+  const rawPlans = Array.isArray(payload.imagePlans) ? payload.imagePlans : []
+  if (rawPlans.length !== LISTING_IMAGE_SLOTS.length) throw new Error('AI 策划结果不是 7 张图')
 
-  if (plans.length !== 7) throw new Error('AI 策划结果不是 7 张图')
+  const plans = LISTING_IMAGE_SLOTS.map((slot, index) => {
+    const bySlot = rawPlans.find((plan) => plan?.slot === slot)
+    if (!bySlot) throw new Error(`AI 策划结果缺少 ${slot} 的图片方案`)
+    return normalizePlan(bySlot, index)
+  })
+
+  const emptyPrompt = plans.find((plan) => !plan.prompt.trim())
+  if (emptyPrompt) throw new Error(`AI 策划结果缺少 ${emptyPrompt.slot} 的提示词`)
+  const emptyPlan = plans.find((plan) => !plan.planMarkdown.trim())
+  if (emptyPlan) throw new Error(`AI 策划结果缺少 ${emptyPlan.slot} 的策划说明`)
   if (styleCandidates.length !== 3) throw new Error('AI 策划结果不是 3 个风格候选')
 
   return {
@@ -441,6 +497,7 @@ function normalizeListingPlannerApiPayload(payload: PlannerApiPayload): PlannerA
     styleCandidates,
     plans,
     aPlusPlans: [],
+    dspPlans: [],
   }
 }
 
@@ -454,9 +511,9 @@ function normalizeAPlusPlan(
   if (!spec) throw new Error('A+ 模块规格不存在')
 
   return {
-    slot: plan?.slot || spec.slot,
+    slot: spec.slot,
     label: plan?.label || spec.label,
-    moduleType: plan?.moduleType || spec.moduleType,
+    moduleType: spec.moduleType,
     uploadSize: getAPlusModuleUploadSize(spec),
     generationSize: getAPlusModuleGenerationSize(spec, tier),
     planMarkdown: plan?.planMarkdown || '',
@@ -477,7 +534,8 @@ function normalizeAPlusPlannerApiPayload(payload: PlannerApiPayload, aPlusType: 
 
   const aPlusPlans = specs.map((spec, index) => {
     const bySlot = rawPlans.find((plan) => plan?.slot === spec.slot)
-    return normalizeAPlusPlan(bySlot ?? rawPlans[index], index, aPlusType, tier)
+    if (!bySlot) throw new Error(`AI A+ 策划结果缺少 ${spec.slot} 的模块方案`)
+    return normalizeAPlusPlan(bySlot, index, aPlusType, tier)
   })
 
   const emptyPrompt = aPlusPlans.find((plan) => !plan.prompt.trim())
@@ -493,7 +551,62 @@ function normalizeAPlusPlannerApiPayload(payload: PlannerApiPayload, aPlusType: 
     styleCandidates,
     plans: [],
     aPlusPlans,
+    dspPlans: [],
     aPlusType,
+  }
+}
+
+function normalizeDspPlan(
+  plan: Partial<AmazonDspPlan> | undefined,
+  index: number,
+  tier: SizeTier,
+): AmazonDspPlan {
+  const spec = getDspImageAssetSpecs()[index]
+  if (!spec) throw new Error('DSP 素材规格不存在')
+
+  return {
+    slot: spec.slot,
+    label: plan?.label || spec.label,
+    group: spec.group,
+    assetType: spec.assetType,
+    uploadSize: getDspAssetUploadSize(spec),
+    generationSize: getDspAssetGenerationSize(spec, tier),
+    fileLimit: spec.fileLimit,
+    ctaPolicy: spec.ctaPolicy,
+    planMarkdown: plan?.planMarkdown || '',
+    prompt: plan?.prompt || '',
+    negativePrompt: plan?.negativePrompt || '',
+  }
+}
+
+function normalizeDspPlannerApiPayload(payload: PlannerApiPayload, tier: SizeTier): PlannerApiResult {
+  const parsed = normalizeParsedListing(payload)
+  const seriesStyleGuide = normalizeSeriesStyleGuide(payload)
+  const styleCandidates = normalizeStyleCandidates(payload)
+  const specs = getDspImageAssetSpecs()
+  const rawPlans = Array.isArray(payload.dspPlans) ? payload.dspPlans : []
+  if (rawPlans.length !== specs.length) throw new Error(`AI DSP 策划结果不是 ${specs.length} 个素材`)
+
+  const dspPlans = specs.map((spec, index) => {
+    const bySlot = rawPlans.find((plan) => plan?.slot === spec.slot)
+    if (!bySlot) throw new Error(`AI DSP 策划结果缺少 ${spec.slot} 的素材方案`)
+    return normalizeDspPlan(bySlot, index, tier)
+  })
+
+  const emptyPrompt = dspPlans.find((plan) => !plan.prompt.trim())
+  if (emptyPrompt) throw new Error(`AI DSP 策划结果缺少 ${emptyPrompt.slot} 的提示词`)
+  const emptyPlan = dspPlans.find((plan) => !plan.planMarkdown.trim())
+  if (emptyPlan) throw new Error(`AI DSP 策划结果缺少 ${emptyPlan.slot} 的策划说明`)
+  if (styleCandidates.length !== 3) throw new Error('AI DSP 策划结果不是 3 个风格候选')
+
+  return {
+    mode: 'dsp',
+    parsed,
+    seriesStyleGuide,
+    styleCandidates,
+    plans: [],
+    aPlusPlans: [],
+    dspPlans,
   }
 }
 
@@ -555,10 +668,52 @@ function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: 
   ].filter(Boolean).join('\n')
 }
 
+function buildDspPlannerInstructions(baseDraft: AmazonPromptDraft) {
+  const specs = getDspImageAssetSpecs()
+  return [
+    'You are an Amazon DSP advertising image-planning agent. The user provides listing copy, brand notes, campaign notes, and optional product or logo reference images.',
+    'Create a complete Amazon DSP advertising asset plan. Do not generate images. Only return JSON matching the schema.',
+    `Return exactly ${specs.length} DSP image assets in this order: ${specs.map((spec) => `${spec.slot} ${spec.displayLabel} ${getDspAssetUploadSize(spec)} ${spec.fileLimit}`).join('; ')}.`,
+    'REC Logo requirement for context: logo must be 600x100 or larger, 1000KB or smaller, JPG or PNG.',
+    'REC Slogan requirement for context: slogan must be 50 characters or fewer.',
+    'Custom Image compliance:',
+    '- Every Custom Image creative must include a clear specific call to action such as Shop now, Add to Cart, or Learn more.',
+    '- Do not include vague CTA copy such as Click Here.',
+    '- Shop now must be plain text only and must not be rendered as a button.',
+    '- For 970x250, use plain text or underlined text CTA only, not a button.',
+    '- Other Custom Image sizes may use CTA button styling when composition allows.',
+    '- Add a brand logo or a clear brand logo area; logo and product image must be sharp.',
+    '- Use no more than two fonts.',
+    '- Keep on-image copy within 10 English words.',
+    '- Avoid overly strong exclamation marks, urgency, or aggressive punctuation.',
+    '- Use a visible 1px border or a high-contrast background; do not use a pure white border, black is preferred.',
+    '- Do not mimic Amazon website content and do not use a pure white background.',
+    'Semi-auto REC 600x600 compliance:',
+    '- Do not include a CTA.',
+    '- Logo and product image must be sharp.',
+    '- Use no more than two fonts.',
+    '- Keep on-image copy within 10 English words.',
+    '- Avoid overly strong exclamation marks, urgency, or aggressive punctuation.',
+    '- Use a visible 1px border or a high-contrast background; do not use a pure white border, black is preferred.',
+    baseDraft.brand
+      ? `Known brand/model: ${baseDraft.brand}. Use this real brand/model as text or logo treatment only when supported by references.`
+      : 'If no real brand/model or logo reference is provided, do not invent a logo, trademark, brand history, authorization claim, website, contact detail, or external link.',
+    'Use brand names as text only unless the user provides a real logo reference image.',
+    'For each DSP asset, write planMarkdown as a concise Simplified Chinese plan with 2-4 bullets, then write a professional English image prompt and English negative prompt.',
+    'Each image prompt should fully plan the finished DSP ad creative: composition, product evidence, brand/logo treatment, CTA policy, short on-image US-English copy, border/background treatment, visual hierarchy, and rendering style.',
+    'Return one seriesStyleGuide string in English that can keep separately generated DSP assets visually coherent.',
+    'Return exactly 3 styleCandidates for low-resolution visual style reference board generation. Each candidate should represent a distinct coherent visual style choice for this same product and DSP ad set, not a finished DSP ad.',
+    'For each styleCandidates.prompt, briefly describe a 1024x1024 visual style reference board focused on typography samples, color swatches, lighting/material samples, and icon/callout/CTA treatment.',
+    'The style board typography samples must use generic English placeholder words only, such as PRODUCT TITLE, KEY BENEFIT, DETAIL CALLOUT, 01, 02, 03. Do not include Chinese characters, real product claims, brand logos, Amazon marks, prices, promotions, QR codes, contact details, or external URLs in styleCandidates.prompt.',
+    'Field language rules: label and planMarkdown must be Simplified Chinese; seriesStyleGuide, prompt, negativePrompt, and styleCandidates.prompt/negativePrompt must be English.',
+    baseDraft.category ? `Known category: ${baseDraft.category}` : '',
+  ].filter(Boolean).join('\n')
+}
+
 function buildPlannerInstructions(baseDraft: AmazonPromptDraft, mode: AmazonPlannerMode, aPlusType: APlusContentType) {
-  return mode === 'aplus'
-    ? buildAPlusPlannerInstructions(baseDraft, aPlusType)
-    : buildListingPlannerInstructions(baseDraft)
+  if (mode === 'aplus') return buildAPlusPlannerInstructions(baseDraft, aPlusType)
+  if (mode === 'dsp') return buildDspPlannerInstructions(baseDraft)
+  return buildListingPlannerInstructions(baseDraft)
 }
 
 function buildPlannerInputText(listingText: string, mode: AmazonPlannerMode, aPlusType: APlusContentType) {
@@ -569,6 +724,17 @@ function buildPlannerInputText(listingText: string, mode: AmazonPlannerMode, aPl
       'Use the title and bullet points from the pasted text. If a field is uncertain, infer conservatively from the listing.',
       `Use these A+ modules exactly: ${specs.map((spec) => spec.slot).join(', ')}.`,
       'If reference images are attached, use them to understand the actual product appearance and included items.',
+      '',
+      listingText,
+    ].join('\n')
+  }
+  if (mode === 'dsp') {
+    const specs = getDspImageAssetSpecs()
+    return [
+      'Parse this Amazon listing copy and produce the Amazon DSP advertising asset plan.',
+      'Use the title, bullet points, brand notes, and campaign notes from the pasted text. If a field is uncertain, infer conservatively from the listing.',
+      `Use these DSP image assets exactly: ${specs.map((spec) => spec.slot).join(', ')}.`,
+      'If reference images are attached, use them to understand the actual product appearance, brand logo, package, and included items.',
       '',
       listingText,
     ].join('\n')
@@ -613,7 +779,7 @@ function buildResponsesPlannerInput(text: string, referenceImageDataUrls: string
 }
 
 function buildChatPlannerSchemaGuide(mode: AmazonPlannerMode, aPlusType: APlusContentType) {
-  const productFields = 'product { title, category, color, material, audience, packageIncludes }'
+  const productFields = 'product { title, category, brand, color, material, audience, packageIncludes }'
   const styleFields = 'seriesStyleGuide string, styleCandidates array of exactly 3 { label, description, prompt, negativePrompt }'
   if (mode === 'aplus') {
     const specs = getAPlusModuleSpecs(aPlusType)
@@ -621,6 +787,14 @@ function buildChatPlannerSchemaGuide(mode: AmazonPlannerMode, aPlusType: APlusCo
       `Return JSON with: ${productFields}, sellingPoints string[], ${styleFields}, aPlusPlans array.`,
       `aPlusPlans must contain exactly ${specs.length} items in this order: ${specs.map((spec) => spec.slot).join(', ')}.`,
       'Each aPlusPlans item must include: slot, label, moduleType, planMarkdown, textTitle, textBody, prompt, negativePrompt.',
+    ].join('\n')
+  }
+  if (mode === 'dsp') {
+    const specs = getDspImageAssetSpecs()
+    return [
+      `Return JSON with: ${productFields}, sellingPoints string[], ${styleFields}, dspPlans array.`,
+      `dspPlans must contain exactly ${specs.length} items in this order: ${specs.map((spec) => spec.slot).join(', ')}.`,
+      'Each dspPlans item must include: slot, label, group, assetType, planMarkdown, prompt, negativePrompt.',
     ].join('\n')
   }
 
@@ -659,7 +833,11 @@ export async function callAmazonPlannerApi(options: {
   const mode = options.mode ?? 'listing'
   const aPlusType = options.aPlusType ?? 'standard-large'
   const aPlusGenerationTier = options.aPlusGenerationTier ?? '2K'
-  const schema = mode === 'aplus' ? createAPlusPlannerSchema(aPlusType) : LISTING_PLANNER_SCHEMA
+  const schema = mode === 'aplus'
+    ? createAPlusPlannerSchema(aPlusType)
+    : mode === 'dsp'
+      ? createDspPlannerSchema()
+      : LISTING_PLANNER_SCHEMA
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(options.profile.apiProxy, proxyConfig)
   const inputText = buildPlannerInputText(options.listingText, mode, aPlusType)
@@ -700,7 +878,7 @@ export async function callAmazonPlannerApi(options: {
           text: {
             format: {
               type: 'json_schema',
-              name: mode === 'aplus' ? 'amazon_aplus_image_plan' : 'amazon_listing_image_plan',
+              name: mode === 'aplus' ? 'amazon_aplus_image_plan' : mode === 'dsp' ? 'amazon_dsp_image_plan' : 'amazon_listing_image_plan',
               strict: true,
               schema,
             },
@@ -717,7 +895,7 @@ export async function callAmazonPlannerApi(options: {
   }
   const text = await readPlannerResponseText(response)
   const payload = parsePlannerPayload(text)
-  return mode === 'aplus'
-    ? normalizeAPlusPlannerApiPayload(payload, aPlusType, aPlusGenerationTier)
-    : normalizeListingPlannerApiPayload(payload)
+  if (mode === 'aplus') return normalizeAPlusPlannerApiPayload(payload, aPlusType, aPlusGenerationTier)
+  if (mode === 'dsp') return normalizeDspPlannerApiPayload(payload, aPlusGenerationTier)
+  return normalizeListingPlannerApiPayload(payload)
 }

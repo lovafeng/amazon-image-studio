@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef, useCallback, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { AgentConversation, AgentMessage, AgentRound, ResponsesOutputItem, TaskRecord } from '../types'
-import { editOutputs, getActiveAgentRounds, getAgentBranchLeafId, getAgentSiblingRounds, getCachedImage, ensureImageCached, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, reuseConfig, updateTaskInStore, useStore } from '../store'
+import { editOutputs, getActiveAgentRounds, getAgentBranchLeafId, getAgentSiblingRounds, getCachedImage, ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, reuseConfig, updateTaskInStore, useStore } from '../store'
 import { getPromptMentionParts } from '../lib/promptImageMentions'
 import { copyTextToClipboard, getClipboardFailureMessage } from '../lib/clipboard'
 import { collectWebSearchCalls, getAgentRoundOutputItems, getWebSearchStatusForCalls, type AgentWebSearchStatus } from '../lib/agentWebSearch'
@@ -54,7 +54,7 @@ function AgentActionButton({
 }
 
 function ChatImageThumb({ imageId, imageIndex, maskImageId }: { imageId: string; imageIndex: number; maskImageId?: string | null }) {
-  const [src, setSrc] = useState<string>(() => getCachedImage(imageId) || '')
+  const [src, setSrc] = useState<string>('')
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
 
   useEffect(() => {
@@ -75,15 +75,17 @@ function ChatImageThumb({ imageId, imageIndex, maskImageId }: { imageId: string;
       return () => { cancelled = true }
     }
 
-    const cached = getCachedImage(imageId)
-    if (cached) {
-      setSrc(cached)
-      return () => { cancelled = true }
-    }
-    ensureImageCached(imageId).then((url) => {
-      if (!cancelled && url) setSrc(url)
+    setSrc('')
+    const unsubscribe = subscribeImageThumbnail(imageId, (thumbnail) => {
+      if (!cancelled) setSrc(thumbnail.dataUrl)
     })
-    return () => { cancelled = true }
+    ensureImageThumbnailCached(imageId).then((thumbnail) => {
+      if (!cancelled && thumbnail?.dataUrl) setSrc(thumbnail.dataUrl)
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
   }, [imageId, maskImageId])
 
   return (

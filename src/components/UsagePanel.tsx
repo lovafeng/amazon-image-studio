@@ -9,6 +9,10 @@ function formatDate(value?: number) {
   return value ? new Date(value).toLocaleString() : '暂无'
 }
 
+function formatTokenLimit(value?: number | null) {
+  return value == null ? '不限' : formatNumber(value)
+}
+
 export default function UsagePanel() {
   const [summary, setSummary] = useState<UsageSummary | null>(null)
   const [events, setEvents] = useState<UsageEvent[]>([])
@@ -40,6 +44,7 @@ export default function UsagePanel() {
           ['失败次数', summary?.failures],
           ['生成图片', summary?.generatedImages],
           ['Token', summary?.totalTokens],
+          ['Token 上限', formatTokenLimit(summary?.tokenLimit)],
           ['最近调用', formatDate(summary?.lastUsedAt)],
         ].map(([label, value]) => (
           <article key={label} className="rounded-lg border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-900">

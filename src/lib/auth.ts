@@ -9,6 +9,7 @@ export interface AuthUser {
   phone?: string
   role: 'admin' | 'user'
   status: 'active' | 'disabled'
+  tokenLimit?: number | null
   createdAt?: number
   lastLoginAt?: number
 }

@@ -28,10 +28,11 @@ describe('Amazon planner action guidance', () => {
       isBatchSubmitting: false,
       batchSubmittedCount: 0,
       visiblePlanCount: 7,
+      visibleUnsubmittedPlanCount: 6,
       submittedVisiblePlanCount: 1,
       seriesStyleReferenceNeeded: true,
       hasStyleReference: false,
-    })).toBe('已提交 1/7；先选择风格板后可继续一键生图')
+    })).toBe('已提交 1/7；先选择风格板后可继续提交未提交项')
   })
 
   it('uses a disabled submit label that points to the missing style step', () => {

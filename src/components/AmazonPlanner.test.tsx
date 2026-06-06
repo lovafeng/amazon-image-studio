@@ -1,0 +1,115 @@
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it } from 'vitest'
+import amazonPlannerSource from './AmazonPlanner.tsx?raw'
+import AmazonPlanner, { formatPlannerElapsedLabel, getPlannerRunningMessage, getStyleGenerationStatusText } from './AmazonPlanner'
+
+describe('AmazonPlanner', () => {
+  it('renders DSP as a first-class planner mode', () => {
+    const html = renderToStaticMarkup(<AmazonPlanner />)
+
+    expect(html).toContain('Listing 图')
+    expect(html).toContain('A+ 图')
+    expect(html).toContain('DSP 图')
+  })
+
+  it('renders the style chooser before the sticky action bar so it is not covered while scrolling', () => {
+    expect(amazonPlannerSource.indexOf('视觉风格选择')).toBeGreaterThan(-1)
+    expect(amazonPlannerSource.indexOf('data-amazon-action-bar')).toBeGreaterThan(-1)
+    expect(amazonPlannerSource.indexOf('视觉风格选择')).toBeLessThan(amazonPlannerSource.indexOf('data-amazon-action-bar'))
+    expect(amazonPlannerSource).not.toContain('data-amazon-action-bar className={`fixed')
+    expect(amazonPlannerSource).toContain('data-amazon-action-bar className={`sticky')
+  })
+
+  it('mentions DSP in the style board guidance for first-class planner modes', () => {
+    expect(amazonPlannerSource).toContain('下一步：选择一张风格板作为附图、A+ 和 DSP 的隐藏参考')
+    expect(amazonPlannerSource).not.toContain('下一步：选择一张风格板作为附图和 A+ 的隐藏参考')
+  })
+
+  it('restores planner style boards from compressed thumbnails instead of full images', () => {
+    const restoreBlock = amazonPlannerSource.slice(
+      amazonPlannerSource.indexOf('const restorePlannerSession = async (session: AmazonPlannerSession) => {'),
+      amazonPlannerSource.indexOf('const removePlannerSession = async (sessionId: string) => {'),
+    )
+
+    expect(restoreBlock).toContain('ensureImageThumbnailCached(image.imageId)')
+    expect(restoreBlock).not.toContain('ensureImageCached(image.imageId)')
+  })
+
+  it('formats long-running DSP planning progress for the operator', () => {
+    expect(formatPlannerElapsedLabel(65)).toBe('01:05')
+    expect(getPlannerRunningMessage('dsp', 91)).toContain('正在生成 11 个 DSP 素材方案')
+    expect(getPlannerRunningMessage('dsp', 91)).toContain('已用 01:31')
+    expect(getPlannerRunningMessage('dsp', 181)).toContain('可继续等待，或点击停止后重试')
+    expect(getPlannerRunningMessage('listing', 91)).not.toContain('11 个 DSP')
+  })
+
+  it('updates style boards as each image finishes instead of waiting for every board', () => {
+    expect(getStyleGenerationStatusText({
+      isGeneratingStyleImages: true,
+      candidateCount: 3,
+      generatedCount: 1,
+      failedCount: 0,
+      hasGeneratedStyleImages: true,
+    })).toBe('已完成 1/3 张风格板')
+    expect(amazonPlannerSource).toContain('updateStyleImageState')
+    expect(amazonPlannerSource).not.toContain('Promise.allSettled(styleCandidates.map')
+  })
+
+  it('does not attach product reference images when generating style boards', () => {
+    const styleGenerationBlock = amazonPlannerSource.slice(
+      amazonPlannerSource.indexOf('const generateStyleImages = async () => {'),
+      amazonPlannerSource.indexOf('const applyPlannerResult = (result: PlannerApiResult, sourceLabel: string) => {'),
+    )
+
+    expect(styleGenerationBlock).toContain('inputImageDataUrls: [],')
+    expect(styleGenerationBlock).not.toContain('inputImageDataUrls: referenceImages')
+  })
+
+  it('keeps style boards when switching Listing, A+ and DSP planner modes', () => {
+    const changeModeStart = amazonPlannerSource.indexOf('const changePlannerMode = (mode: AmazonPlannerMode) => {')
+    const changeAPlusTypeStart = amazonPlannerSource.indexOf('const changeAPlusType = (nextType: APlusContentType) => {')
+    expect(changeModeStart).toBeGreaterThan(-1)
+    expect(changeAPlusTypeStart).toBeGreaterThan(changeModeStart)
+
+    const changeModeBlock = amazonPlannerSource.slice(changeModeStart, changeAPlusTypeStart)
+    expect(changeModeBlock).not.toContain('setStyleCandidates([])')
+    expect(changeModeBlock).not.toContain('setStyleImages([])')
+    expect(changeModeBlock).not.toContain('setSelectedStyleIndex(null)')
+    expect(changeModeBlock).not.toContain('setStylePreview(null)')
+  })
+
+  it('resets style boards only when replanning or switching A+ content type', () => {
+    const runPlannerBlock = amazonPlannerSource.slice(
+      amazonPlannerSource.indexOf('setStyleCandidates(result.styleCandidates)'),
+      amazonPlannerSource.indexOf('void savePlannerSession({'),
+    )
+    const changeAPlusTypeBlock = amazonPlannerSource.slice(
+      amazonPlannerSource.indexOf('const changeAPlusType = (nextType: APlusContentType) => {'),
+      amazonPlannerSource.indexOf('const clearListingPlan = () => {'),
+    )
+
+    expect(runPlannerBlock).toContain('setStyleImages([])')
+    expect(runPlannerBlock).toContain('setSelectedStyleIndex(null)')
+    expect(changeAPlusTypeBlock).toContain('setStyleImages([])')
+    expect(changeAPlusTypeBlock).toContain('setSelectedStyleIndex(null)')
+  })
+
+  it('skips already submitted slots when batch submitting planned images', () => {
+    expect(amazonPlannerSource).toContain(".filter((job) => actionProgress[job.actionKey] !== 'submitted')")
+    expect(amazonPlannerSource).toContain('showToast(`已提交 ${jobs.length} 张生图任务`,')
+  })
+
+  it('uses current-next-step copy for the submit console', () => {
+    expect(amazonPlannerSource).toContain('当前下一步')
+    expect(amazonPlannerSource).toContain("target: hasGeneratedStyleImages ? 'style-choice' : 'style'")
+    expect(amazonPlannerSource).toContain('提交未提交项')
+    expect(amazonPlannerSource).not.toContain("{isBatchSubmitting ? '一键生图中...' : '一键生图'}")
+  })
+
+  it('shows submitted, pending and missing-style states on every planned card', () => {
+    expect(amazonPlannerSource).toContain('getPlanSubmitStatus')
+    expect(amazonPlannerSource).toContain('缺风格')
+    expect(amazonPlannerSource).toContain('待提交')
+    expect(amazonPlannerSource).toContain('已提交')
+  })
+})

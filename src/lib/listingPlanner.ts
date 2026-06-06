@@ -2,7 +2,7 @@ import type { AmazonImageKind, AmazonPromptDraft } from './amazonPrompt'
 import type { AmazonStyleDensityMode } from '../types'
 import { calculateImageSize, type SizeTier } from './size'
 
-export type AmazonPlannerMode = 'listing' | 'aplus'
+export type AmazonPlannerMode = 'listing' | 'aplus' | 'dsp'
 export type { AmazonStyleDensityMode } from '../types'
 export type APlusContentType = 'standard' | 'standard-large' | 'premium'
 export type APlusModuleKind =
@@ -57,6 +57,41 @@ export interface AmazonAPlusPlan {
   planMarkdown: string
   textTitle: string
   textBody: string
+  prompt: string
+  negativePrompt: string
+}
+
+export type DspAssetGroup = 'rec' | 'custom-image' | 'semi-auto-rec'
+export type DspAssetType = 'logo' | 'slogan' | 'image'
+export type DspCtaPolicy = 'required' | 'optional' | 'forbidden' | 'not-applicable'
+
+export interface AmazonDspAssetSpec {
+  group: DspAssetGroup
+  slot: string
+  label: string
+  displayLabel: string
+  assetType: DspAssetType
+  uploadWidth?: number
+  uploadHeight?: number
+  minimumWidth?: number
+  minimumHeight?: number
+  fileLimit: string
+  formats?: string[]
+  ctaPolicy: DspCtaPolicy
+  objective: string
+  rules: string[]
+}
+
+export interface AmazonDspPlan {
+  slot: string
+  label: string
+  group: DspAssetGroup
+  assetType: DspAssetType
+  uploadSize: string
+  generationSize: string
+  fileLimit: string
+  ctaPolicy: DspCtaPolicy
+  planMarkdown: string
   prompt: string
   negativePrompt: string
 }
@@ -170,6 +205,106 @@ export const OPTIONAL_A_PLUS_MODULE_SPECS: AmazonAPlusModuleSpec[] = [
     uploadWidth: 150,
     uploadHeight: 300,
     objective: '用于同品牌 SKU 对比，不默认生成不确定对比信息。',
+  },
+]
+
+const CUSTOM_DSP_COMMON_RULES = [
+  'Include a clear specific CTA such as Shop now, Add to Cart, or Learn more.',
+  'Do not use vague CTA copy such as Click Here.',
+  'Shop now must be plain text only, not a button.',
+  'Include a clear brand logo or reserved logo area; logo and product image must be sharp.',
+  'Use no more than two fonts.',
+  'Keep on-image copy within 10 English words.',
+  'Avoid overly strong exclamation marks, urgency, or aggressive punctuation.',
+  'Use a visible 1px border or high-contrast background; do not use a pure white border, black is preferred.',
+  'Do not mimic Amazon website content and do not use a pure white background.',
+]
+
+const SEMI_AUTO_DSP_RULES = [
+  'Do not include a CTA.',
+  'Logo and product image must be sharp.',
+  'Use no more than two fonts.',
+  'Keep on-image copy within 10 English words.',
+  'Avoid overly strong exclamation marks, urgency, or aggressive punctuation.',
+  'Use a visible 1px border or high-contrast background; do not use a pure white border, black is preferred.',
+]
+
+const CUSTOM_DSP_IMAGE_SIZES: Array<{ width: number; height: number; fileLimit: string }> = [
+  { width: 300, height: 250, fileLimit: '50KB' },
+  { width: 728, height: 90, fileLimit: '50KB' },
+  { width: 160, height: 600, fileLimit: '50KB' },
+  { width: 300, height: 600, fileLimit: '50KB' },
+  { width: 970, height: 250, fileLimit: '200KB' },
+  { width: 980, height: 55, fileLimit: '50KB' },
+  { width: 320, height: 50, fileLimit: '50KB' },
+  { width: 600, height: 500, fileLimit: '200KB' },
+  { width: 1242, height: 375, fileLimit: '200KB' },
+  { width: 640, height: 100, fileLimit: '200KB' },
+]
+
+export const DSP_ASSET_SPECS: AmazonDspAssetSpec[] = [
+  {
+    group: 'rec',
+    slot: 'DSP-REC-LOGO',
+    label: 'REC Logo',
+    displayLabel: 'REC Logo',
+    assetType: 'logo',
+    minimumWidth: 600,
+    minimumHeight: 100,
+    fileLimit: '1000KB',
+    formats: ['JPG', 'PNG'],
+    ctaPolicy: 'not-applicable',
+    objective: '用于 DSP REC 自动素材的品牌 Logo。',
+    rules: [
+      'Logo must be 600x100 or larger.',
+      'Logo file must be 1000KB or smaller.',
+      'Use JPG or PNG.',
+    ],
+  },
+  {
+    group: 'rec',
+    slot: 'DSP-REC-SLOGAN',
+    label: 'REC Slogan',
+    displayLabel: 'REC Slogan',
+    assetType: 'slogan',
+    fileLimit: '50 characters',
+    ctaPolicy: 'not-applicable',
+    objective: '用于 DSP REC 自动素材的短 Slogan。',
+    rules: [
+      'Slogan must be 50 characters or fewer.',
+      'Keep slogan concise and brand-safe.',
+    ],
+  },
+  ...CUSTOM_DSP_IMAGE_SIZES.map(({ width, height, fileLimit }) => ({
+    group: 'custom-image' as const,
+    slot: `DSP-CUSTOM-${width}x${height}`,
+    label: `Custom Image ${width}x${height}`,
+    displayLabel: `Custom Image ${width}x${height}`,
+    assetType: 'image' as const,
+    uploadWidth: width,
+    uploadHeight: height,
+    fileLimit,
+    ctaPolicy: 'required' as const,
+    objective: `DSP Custom Image ${width}x${height} 广告素材。`,
+    rules: [
+      ...(width === 970 && height === 250
+        ? ['For 970x250, use plain text or underlined text CTA, not a button.']
+        : ['CTA may use button styling when composition allows.']),
+      ...CUSTOM_DSP_COMMON_RULES,
+    ],
+  })),
+  {
+    group: 'semi-auto-rec',
+    slot: 'DSP-REC-600x600',
+    label: 'Semi-auto REC 600x600',
+    displayLabel: '半自动 REC 600x600',
+    assetType: 'image',
+    uploadWidth: 600,
+    uploadHeight: 600,
+    fileLimit: '5MB',
+    ctaPolicy: 'forbidden',
+    objective: '优先使用的 DSP 半自动 REC 图片素材。',
+    rules: SEMI_AUTO_DSP_RULES,
   },
 ]
 
@@ -361,7 +496,67 @@ export function withAPlusGenerationSizes(plans: AmazonAPlusPlan[], tier: SizeTie
   }))
 }
 
+export function getDspImageAssetSpecs(): AmazonDspAssetSpec[] {
+  return DSP_ASSET_SPECS.filter((spec) => spec.assetType === 'image')
+}
+
+export function findDspAssetSpec(slot: string): AmazonDspAssetSpec | undefined {
+  return DSP_ASSET_SPECS.find((spec) => spec.slot === slot)
+}
+
+export function getDspAssetDisplayName(asset: Pick<AmazonDspPlan, 'slot' | 'label'> | Pick<AmazonDspAssetSpec, 'slot' | 'label' | 'displayLabel'>): string {
+  const spec = findDspAssetSpec(asset.slot)
+  return spec?.displayLabel ?? ('displayLabel' in asset ? asset.displayLabel : asset.label)
+}
+
+export function getDspAssetUploadSize(spec: Pick<AmazonDspAssetSpec, 'uploadWidth' | 'uploadHeight' | 'minimumWidth' | 'minimumHeight' | 'assetType'>): string {
+  if (spec.uploadWidth && spec.uploadHeight) return `${spec.uploadWidth}x${spec.uploadHeight}`
+  if (spec.minimumWidth && spec.minimumHeight) return `${spec.minimumWidth}x${spec.minimumHeight}+`
+  if (spec.assetType === 'slogan') return '50 characters'
+  return ''
+}
+
+export function getDspAssetGenerationSize(spec: Pick<AmazonDspAssetSpec, 'uploadWidth' | 'uploadHeight'>, tier: SizeTier): string {
+  if (!spec.uploadWidth || !spec.uploadHeight) return ''
+  return getAPlusGenerationSizeFromDimensions(spec.uploadWidth, spec.uploadHeight, tier)
+}
+
+export function getDspPlanGenerationSize(plan: Pick<AmazonDspPlan, 'slot' | 'uploadSize'>, tier: SizeTier): string {
+  const spec = findDspAssetSpec(plan.slot)
+  if (spec) return getDspAssetGenerationSize(spec, tier)
+
+  const match = plan.uploadSize.match(/^(\d+)x(\d+)$/)
+  if (!match) return tier === '4K' ? '2880x2880' : '2048x2048'
+  return getAPlusGenerationSizeFromDimensions(Number(match[1]), Number(match[2]), tier)
+}
+
+export function withDspGenerationSizes(plans: AmazonDspPlan[], tier: SizeTier): AmazonDspPlan[] {
+  return plans.map((plan) => {
+    const spec = findDspAssetSpec(plan.slot)
+    return {
+      ...plan,
+      ...(spec ? {
+        label: plan.label || spec.label,
+        group: spec.group,
+        assetType: spec.assetType,
+        uploadSize: getDspAssetUploadSize(spec),
+        fileLimit: spec.fileLimit,
+        ctaPolicy: spec.ctaPolicy,
+      } : {}),
+      generationSize: getDspPlanGenerationSize(plan, tier),
+    }
+  })
+}
+
 export function buildAmazonAPlusPlanPrompt(plan: Pick<AmazonAPlusPlan, 'prompt' | 'negativePrompt'> & {
+  seriesStyleGuide?: string | null
+  styleReferenceAttached?: boolean
+  styleDensityMode?: AmazonStyleDensityMode
+}): string {
+  return formatPromptBlock(plan)
+}
+
+export function buildAmazonDspPlanPrompt(plan: Pick<AmazonDspPlan, 'prompt' | 'negativePrompt'> & {
   seriesStyleGuide?: string | null
   styleReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode

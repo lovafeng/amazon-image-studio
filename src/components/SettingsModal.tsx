@@ -275,7 +275,11 @@ profiles 中不要包含 apiKey（用户导入后自行填写）。
 const normalizeDraftSettings = (value: Partial<AppSettings> | unknown) =>
   normalizeSettings(value)
 
-export default function SettingsModal() {
+interface SettingsModalProps {
+  clearPlannerSessions?: boolean
+}
+
+export default function SettingsModal({ clearPlannerSessions = true }: SettingsModalProps) {
   const showSettings = useStore((s) => s.showSettings)
   const settingsTabRequest = useStore((s) => s.settingsTabRequest)
   const setShowSettings = useStore((s) => s.setShowSettings)
@@ -672,7 +676,7 @@ export default function SettingsModal() {
   }
 
   const handleClearAllData = async () => {
-    await clearData({ clearConfig, clearTasks })
+    await clearData({ clearConfig, clearTasks, clearPlannerSessions })
     const nextDraft = normalizeDraftSettings(useStore.getState().settings)
     setDraft(nextDraft)
     setTimeoutInput(String(getActiveApiProfile(nextDraft).timeout))

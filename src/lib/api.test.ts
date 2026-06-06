@@ -74,6 +74,27 @@ describe('callImageApi', () => {
     expect(result.revisedPrompts).toEqual(['移除靴子'])
   })
 
+  it('retries an interrupted OpenAI Images API request before failing the generation step', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: [{ b64_json: 'aW1hZ2U=' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+
+    const result = await callImageApi({
+      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key' },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.images).toEqual(['data:image/jpeg;base64,aW1hZ2U='])
+  })
+
   it('does not synthesize actual quality in Codex CLI mode when the API omits it', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
       output_format: 'jpeg',
@@ -103,6 +124,7 @@ describe('callImageApi', () => {
   })
 
   it('streams Images API partial images and resolves the final completed image', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     const streamBody = [
       'data: {"type":"image_generation.partial_image","partial_image_index":0,"b64_json":"cGFydGlhbA=="}',
       '',
@@ -164,6 +186,7 @@ describe('callImageApi', () => {
   })
 
   it('does not expect revised prompts on official Images API stream completed events', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     const streamBody = [
       'data: {"created_at":1779112721,"type":"image_generation.completed","b64_json":"ZmluYWw=","background":"opaque","output_format":"jpeg","quality":"medium","sequence_number":0,"size":"1448x1086","usage":{"total_tokens":1569}}',
       '',
@@ -203,6 +226,7 @@ describe('callImageApi', () => {
   })
 
   it('splits Images API streaming into concurrent single-image requests when n is greater than 1', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
       const streamBody = [
         'data: {"type":"image_generation.partial_image","partial_image_index":0,"b64_json":"cGFydGlhbA=="}',
@@ -257,7 +281,38 @@ describe('callImageApi', () => {
     ])
   })
 
+  it('retries an interrupted item in concurrent Images API requests', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: [{ b64_json: 'c2Vjb25k' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: [{ b64_json: 'Zmlyc3Q=' }],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+
+    const result = await callImageApi({
+      settings: { ...DEFAULT_SETTINGS, apiKey: 'test-key', codexCli: true },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS, n: 2 },
+      inputImageDataUrls: [],
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(result.images).toEqual([
+      'data:image/jpeg;base64,Zmlyc3Q=',
+      'data:image/jpeg;base64,c2Vjb25k',
+    ])
+  })
+
   it('streams Responses API partial images and resolves the completed response image', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     const streamBody = [
       'data: {"type":"response.image_generation_call.partial_image","partial_image_index":0,"partial_image_b64":"cGFydGlhbA=="}',
       '',
@@ -336,6 +391,137 @@ describe('callImageApi', () => {
       '/api-proxy/images/generations',
       expect.objectContaining({ method: 'POST' }),
     )
+  })
+
+  it('keeps Images API streaming when API proxy is enabled', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      data: [{ b64_json: 'aW1hZ2U=' }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        apiProxy: true,
+        streamImages: true,
+        streamPartialImages: 2,
+        profiles: DEFAULT_SETTINGS.profiles.map((profile) => ({
+          ...profile,
+          apiKey: 'test-key',
+          apiProxy: true,
+          streamImages: true,
+          streamPartialImages: 2,
+        })),
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(String((init as RequestInit).body))
+    expect(body.stream).toBe(true)
+    expect(body.partial_images).toBe(2)
+  })
+
+  it('keeps Responses API image streaming when API proxy is enabled', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      output: [{
+        type: 'image_generation_call',
+        result: 'aW1hZ2U=',
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+
+    await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        apiMode: 'responses',
+        apiProxy: true,
+        streamImages: true,
+        streamPartialImages: 2,
+        profiles: DEFAULT_SETTINGS.profiles.map((profile) => ({
+          ...profile,
+          apiKey: 'test-key',
+          apiMode: 'responses',
+          apiProxy: true,
+          streamImages: true,
+          streamPartialImages: 2,
+        })),
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(String((init as RequestInit).body))
+    expect(body.stream).toBe(true)
+    expect(body.tools[0].partial_images).toBe(2)
+  })
+
+  it('streams Images API edits through the API proxy', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
+    const streamBody = [
+      'data: {"type":"image_edit.partial_image","partial_image_index":0,"b64_json":"cGFydGlhbA=="}',
+      '',
+      'data: {"type":"image_edit.completed","b64_json":"ZmluYWw=","size":"1024x1024","quality":"auto","output_format":"jpeg"}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).startsWith('data:')) {
+        return new Response(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' }))
+      }
+      return new Response(streamBody, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    })
+    const partialImages: string[] = []
+
+    const result = await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        apiProxy: true,
+        streamImages: true,
+        streamPartialImages: 2,
+        profiles: DEFAULT_SETTINGS.profiles.map((profile) => ({
+          ...profile,
+          apiKey: 'test-key',
+          apiProxy: true,
+          streamImages: true,
+          streamPartialImages: 2,
+        })),
+      },
+      prompt: 'edit prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: ['data:image/png;base64,aW1hZ2U='],
+      onPartialImage: (partial: { image: string }) => partialImages.push(partial.image),
+    } as any)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api-proxy/images/edits',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    const apiCall = fetchMock.mock.calls.find(([url]) => String(url) === '/api-proxy/images/edits')
+    expect(apiCall).toBeTruthy()
+    const [, init] = apiCall!
+    const body = (init as RequestInit).body as FormData
+    expect(body.get('stream')).toBe('true')
+    expect(body.get('partial_images')).toBe('2')
+    expect(partialImages).toEqual(['data:image/jpeg;base64,cGFydGlhbA=='])
+    expect(result.images).toEqual(['data:image/jpeg;base64,ZmluYWw='])
   })
 
   it('uses the same-origin API proxy path when API proxy is locked', async () => {

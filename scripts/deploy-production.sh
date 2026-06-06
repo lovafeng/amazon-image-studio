@@ -10,6 +10,9 @@ RUN_REMOTE_AUTH_SMOKE="${RUN_REMOTE_AUTH_SMOKE:-1}"
 REMOTE_NPM_INSTALL="${REMOTE_NPM_INSTALL:-0}"
 SKIP_TESTS="${SKIP_TESTS:-0}"
 DRY_RUN="${DRY_RUN:-0}"
+REMOTE_NODE_BIN="${REMOTE_NODE_BIN:-/opt/amazon-image-studio/runtime/node-v22.22.2-linux-x64/bin/node}"
+REMOTE_NPM_BIN="${REMOTE_NPM_BIN:-/opt/amazon-image-studio/runtime/node-v22.22.2-linux-x64/bin/npm}"
+REMOTE_NODE_DIR="$(dirname "$REMOTE_NODE_BIN")"
 
 VITE_DEFAULT_API_URL="${VITE_DEFAULT_API_URL:-https://done.amzdataincn.com/reseller/v1}"
 VITE_API_PROXY_AVAILABLE="${VITE_API_PROXY_AVAILABLE:-true}"
@@ -33,7 +36,7 @@ Options:
 Environment overrides:
   DEPLOY_HOST, REMOTE_APP_DIR, REMOTE_FRONTEND_DIR, SERVICE_NAME, HEALTH_URL
   VITE_DEFAULT_API_URL, VITE_API_PROXY_AVAILABLE, VITE_API_PROXY_LOCKED
-  VITE_API_PROXY_SERVER_KEY_AVAILABLE
+  VITE_API_PROXY_SERVER_KEY_AVAILABLE, REMOTE_NODE_BIN, REMOTE_NPM_BIN
 USAGE
 }
 
@@ -113,7 +116,7 @@ log "Checking remote app directory and .env"
 ssh "$DEPLOY_HOST" "test -d '$REMOTE_APP_DIR' && test -f '$REMOTE_APP_DIR/.env'"
 
 log "Backing up remote SQLite database if present"
-ssh "$DEPLOY_HOST" "cd '$REMOTE_APP_DIR' && node" <<'REMOTE_NODE'
+ssh "$DEPLOY_HOST" "cd '$REMOTE_APP_DIR' && PATH='$REMOTE_NODE_DIR':\$PATH '$REMOTE_NODE_BIN'" <<'REMOTE_NODE'
 const fs = require('fs')
 const path = require('path')
 const envPath = '.env'
@@ -149,7 +152,7 @@ rsync -az --delete dist/ "$DEPLOY_HOST:$REMOTE_FRONTEND_DIR/"
 
 if [[ "$REMOTE_NPM_INSTALL" == "1" ]]; then
   log "Installing production dependencies on remote because REMOTE_NPM_INSTALL=1"
-  ssh "$DEPLOY_HOST" "cd '$REMOTE_APP_DIR' && npm ci --omit=dev"
+  ssh "$DEPLOY_HOST" "cd '$REMOTE_APP_DIR' && PATH='$REMOTE_NODE_DIR':\$PATH '$REMOTE_NPM_BIN' ci --omit=dev"
 else
   log "Skipping remote npm install; set REMOTE_NPM_INSTALL=1 when dependencies changed"
 fi
@@ -159,7 +162,7 @@ ssh "$DEPLOY_HOST" "systemctl restart '$SERVICE_NAME' && systemctl is-active '$S
 
 if [[ "$RUN_REMOTE_AUTH_SMOKE" == "1" ]]; then
   log "Running remote auth and storage smoke test"
-  ssh "$DEPLOY_HOST" "cd '$REMOTE_APP_DIR' && node" <<'REMOTE_NODE'
+  ssh "$DEPLOY_HOST" "cd '$REMOTE_APP_DIR' && PATH='$REMOTE_NODE_DIR':\$PATH '$REMOTE_NODE_BIN'" <<'REMOTE_NODE'
 const fs = require('fs')
 ;(async () => {
   const envText = fs.readFileSync('.env', 'utf8')

@@ -82,7 +82,7 @@ export default function SearchBar() {
   }, [clearLabel, filterProductTitle, filteredTasks, hasActiveFilters, productFilterActive, setConfirmDialog])
 
   return (
-    <div data-no-drag-select className="mt-6 mb-4 flex flex-col gap-2 lg:flex-row lg:items-center">
+    <div data-no-drag-select data-onboarding-target="history-panel" className="mt-6 mb-4 flex flex-col gap-2 lg:flex-row lg:items-center">
       <div className="flex flex-wrap gap-2 flex-shrink-0 z-20">
         <button
           onClick={() => setFilterFavorite(!filterFavorite)}

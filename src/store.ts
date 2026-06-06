@@ -20,7 +20,7 @@ import type {
   ResponsesOutputItem,
 } from './types'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_PARAMS } from './types'
-import { DEFAULT_SETTINGS, getActiveApiProfile, getCustomProviderDefinition, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
+import { DEFAULT_IMAGES_MODEL, DEFAULT_OPENAI_PROFILE_ID, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, getActiveApiProfile, getAgentResponsesProfile, getCustomProviderDefinition, getImageGenerationProfile, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
 import { dismissAllTooltips } from './lib/tooltipDismiss'
 import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/promptImageMentions'
 import {
@@ -29,6 +29,10 @@ import {
   putTask,
   deleteTask as dbDeleteTask,
   clearTasks as dbClearTasks,
+  getAllAgentConversations,
+  putAgentConversation,
+  deleteAgentConversation as dbDeleteAgentConversation,
+  clearAgentConversations as dbClearAgentConversations,
   getAllAmazonPlannerSessions,
   putAmazonPlannerSession,
   clearAmazonPlannerSessions as dbClearAmazonPlannerSessions,
@@ -73,6 +77,7 @@ const FAL_RECOVERY_POLL_MS = 10_000
 const CUSTOM_RECOVERY_POLL_MS = 10_000
 const SUPPORT_PROMPT_IMAGE_THRESHOLD = 50
 const AGENT_INPUT_DRAFT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000
+const DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID = `${DEFAULT_OPENAI_PROFILE_ID}-input-images`
 const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -105,8 +110,8 @@ type PendingTaskCategory =
 
 function isAmazonTaskWorkflow(
   workflow: NonNullable<TaskRecord['category']>['workflow'],
-): workflow is 'amazon-listing' | 'amazon-aplus' {
-  return workflow === 'amazon-listing' || workflow === 'amazon-aplus'
+): workflow is 'amazon-listing' | 'amazon-aplus' | 'amazon-dsp' {
+  return workflow === 'amazon-listing' || workflow === 'amazon-aplus' || workflow === 'amazon-dsp'
 }
 
 function removeMainStyleReference(
@@ -325,12 +330,7 @@ async function getNextThumbnailBackfillBatch() {
   const candidates = getOrderedThumbnailBackfillIds().slice(0, MAX_THUMBNAIL_BACKFILL_CONCURRENT)
   if (candidates.length === 0) return []
 
-  const sizes = await Promise.all(candidates.map(async (id) => {
-    const image = await getImage(id)
-    return { width: image?.width, height: image?.height }
-  }))
-  const concurrency = getThumbnailConcurrencyForBatch(sizes)
-  const selected = candidates.slice(0, concurrency)
+  const selected = candidates.slice(0, MAX_THUMBNAIL_BACKFILL_CONCURRENT)
   for (const id of selected) thumbnailBackfillIds.delete(id)
   return selected
 }
@@ -343,19 +343,6 @@ function getOrderedThumbnailBackfillIds() {
     else background.push(id)
   }
   return [...visible, ...background]
-}
-
-function getThumbnailConcurrencyForBatch(sizes: Array<{ width?: number; height?: number }>) {
-  let maxMegapixels = 0
-  for (const { width, height } of sizes) {
-    if (!width || !height) return 1
-    maxMegapixels = Math.max(maxMegapixels, (width * height) / 1_000_000)
-  }
-  const megapixels = maxMegapixels
-  if (megapixels >= 8) return 1
-  if (megapixels >= 4) return 2
-  if (megapixels >= 2) return 3
-  return 4
 }
 
 function startThumbnailBackfill(id: string) {
@@ -553,6 +540,28 @@ function mergeImportedAgentConversations(current: AgentConversation[], imported:
   return merged
 }
 
+function sortAgentConversationsByRecency(conversations: AgentConversation[]) {
+  return [...conversations].sort((a, b) => {
+    if (a.updatedAt !== b.updatedAt) return b.updatedAt - a.updatedAt
+    if (a.createdAt !== b.createdAt) return b.createdAt - a.createdAt
+    return b.id.localeCompare(a.id)
+  })
+}
+
+function mergeAgentConversationHistories(serverConversations: AgentConversation[], localConversations: AgentConversation[]) {
+  const merged = new Map<string, AgentConversation>()
+  for (const conversation of normalizeAgentConversations(serverConversations)) {
+    merged.set(conversation.id, conversation)
+  }
+  for (const conversation of normalizeAgentConversations(localConversations)) {
+    const existing = merged.get(conversation.id)
+    if (!existing || conversation.updatedAt > existing.updatedAt) {
+      merged.set(conversation.id, conversation)
+    }
+  }
+  return sortAgentConversationsByRecency([...merged.values()])
+}
+
 function createAgentConversation(now = Date.now()): AgentConversation {
   return {
     id: genId(),
@@ -575,6 +584,19 @@ function createAgentConversationTitle(prompt: string, fallbackTitle: string) {
 
 function isEmptyAgentConversation(conversation: AgentConversation) {
   return conversation.rounds.length === 0 && conversation.messages.length === 0 && !conversation.activeRoundId
+}
+
+function persistAgentConversation(conversation: AgentConversation) {
+  void putAgentConversation(conversation)
+}
+
+function persistAgentConversationById(id: string) {
+  const conversation = useStore.getState().agentConversations.find((item) => item.id === id)
+  if (conversation) persistAgentConversation(conversation)
+}
+
+function persistAgentConversations(conversations: AgentConversation[]) {
+  for (const conversation of conversations) persistAgentConversation(conversation)
 }
 
 function getLatestAgentConversation(conversations: AgentConversation[]) {
@@ -602,7 +624,6 @@ export function getPersistedState(state: AppState) {
     galleryInputDraft: settings.persistInputOnRestart && galleryInputDraft
       ? { ...galleryInputDraft, inputImages: galleryInputDraft.inputImages.map((img) => ({ id: img.id, dataUrl: '' })) }
       : null,
-    agentConversations: state.agentConversations,
     activeAgentConversationId: state.activeAgentConversationId,
     agentInputDrafts: getPersistableAgentInputDrafts(state),
     agentSidebarCollapsed: state.agentSidebarCollapsed,
@@ -841,6 +862,16 @@ function isImageReferencedByState(state: AppState, imageId: string) {
   )
 }
 
+function addAmazonPlannerSessionReferencedImageIds(target: Set<string>, sessions: AmazonPlannerSession[]) {
+  for (const session of sessions) {
+    for (const id of collectAmazonPlannerSessionImageIds(session)) target.add(id)
+  }
+}
+
+async function addStoredAmazonPlannerSessionReferencedImageIds(target: Set<string>) {
+  addAmazonPlannerSessionReferencedImageIds(target, await getAllAmazonPlannerSessions())
+}
+
 export async function deleteImageIfUnreferenced(imageId: string) {
   imageCache.delete(imageId)
   thumbnailCache.delete(imageId)
@@ -848,6 +879,9 @@ export async function deleteImageIfUnreferenced(imageId: string) {
   thumbnailBackfillRunningIds.delete(imageId)
   thumbnailSubscribers.delete(imageId)
   if (isImageReferencedByState(useStore.getState(), imageId)) return
+  const plannerImageIds = new Set<string>()
+  await addStoredAmazonPlannerSessionReferencedImageIds(plannerImageIds)
+  if (plannerImageIds.has(imageId)) return
   try {
     await deleteImage(imageId)
   } catch {
@@ -1230,6 +1264,7 @@ export const useStore = create<AppState>()(
               ...restoreAgentInputDraftState(agentInputDrafts, latestConversation.id),
             }
           })
+          persistAgentConversationById(latestConversation.id)
           return latestConversation.id
         }
 
@@ -1248,6 +1283,7 @@ export const useStore = create<AppState>()(
             ...restoreAgentInputDraftState(agentInputDrafts, conversation.id),
           }
         })
+        persistAgentConversation(conversation)
         return conversation.id
       },
       setActiveAgentConversationId: (id) => set((state) => {
@@ -1269,23 +1305,32 @@ export const useStore = create<AppState>()(
           ...restoreAgentInputDraftState(agentInputDrafts, id),
         }
       }),
-      setActiveAgentRoundId: (conversationId, roundId) => set((state) => ({
-        agentConversations: state.agentConversations.map((conversation) =>
-          conversation.id === conversationId ? { ...conversation, activeRoundId: roundId, updatedAt: Date.now() } : conversation,
-        ),
-      })),
-      renameAgentConversation: (id, title) => set((state) => ({ agentConversations: state.agentConversations.map((c) => (c.id === id ? { ...c, title, updatedAt: Date.now() } : c)) })),
-      deleteAgentConversation: (id) => set((state) => {
-        const agentInputDrafts = { ...state.agentInputDrafts }
-        delete agentInputDrafts[id]
-        const activeDeleted = state.activeAgentConversationId === id
-        return {
-          agentConversations: state.agentConversations.filter((c) => c.id !== id),
-          activeAgentConversationId: activeDeleted ? null : state.activeAgentConversationId,
-          agentInputDrafts,
-          ...(activeDeleted ? clearInputDraftState() : {}),
-        }
-      }),
+      setActiveAgentRoundId: (conversationId, roundId) => {
+        set((state) => ({
+          agentConversations: state.agentConversations.map((conversation) =>
+            conversation.id === conversationId ? { ...conversation, activeRoundId: roundId, updatedAt: Date.now() } : conversation,
+          ),
+        }))
+        persistAgentConversationById(conversationId)
+      },
+      renameAgentConversation: (id, title) => {
+        set((state) => ({ agentConversations: state.agentConversations.map((c) => (c.id === id ? { ...c, title, updatedAt: Date.now() } : c)) }))
+        persistAgentConversationById(id)
+      },
+      deleteAgentConversation: (id) => {
+        set((state) => {
+          const agentInputDrafts = { ...state.agentInputDrafts }
+          delete agentInputDrafts[id]
+          const activeDeleted = state.activeAgentConversationId === id
+          return {
+            agentConversations: state.agentConversations.filter((c) => c.id !== id),
+            activeAgentConversationId: activeDeleted ? null : state.activeAgentConversationId,
+            agentInputDrafts,
+            ...(activeDeleted ? clearInputDraftState() : {}),
+          }
+        })
+        void dbDeleteAgentConversation(id)
+      },
       setAgentSidebarCollapsed: (agentSidebarCollapsed) => set({ agentSidebarCollapsed }),
       setAgentAssetTab: (agentAssetTab) => set({ agentAssetTab }),
       setAgentAssetPanelCollapsed: (agentAssetPanelCollapsed) => set({ agentAssetPanelCollapsed }),
@@ -1592,12 +1637,52 @@ export function getTaskApiProfile(settings: AppSettings, task: TaskRecord): ApiP
   if (!task.apiProfileId) return null
 
   const byId = normalized.profiles.find((profile) => profile.id === task.apiProfileId)
-  if (byId && (!provider || byId.provider === provider)) return byId
+  if (byId && (!provider || byId.provider === provider)) return applyTaskApiProfileSnapshot(byId, task)
+  if (task.apiProfileId === DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID) {
+    const defaultOpenAIProfile = normalized.profiles.find((profile) => profile.id === DEFAULT_OPENAI_PROFILE_ID)
+    if (defaultOpenAIProfile && (!provider || defaultOpenAIProfile.provider === provider)) {
+      return applyTaskApiProfileSnapshot({
+        ...defaultOpenAIProfile,
+        id: DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID,
+      }, task)
+    }
+  }
   return null
+}
+
+function applyTaskApiProfileSnapshot(profile: ApiProfile, task: TaskRecord): ApiProfile {
+  return {
+    ...profile,
+    provider: task.apiProvider ?? profile.provider,
+    name: task.apiProfileName || profile.name,
+    model: task.apiModel || profile.model,
+    apiMode: task.apiMode === 'images' || task.apiMode === 'responses' || task.apiMode === 'chat' ? task.apiMode : profile.apiMode,
+  }
+}
+
+function useImagesApiForDefaultOpenAIInputImages(profile: ApiProfile, hasInputImages: boolean): ApiProfile {
+  if (
+    hasInputImages &&
+    profile.provider === 'openai' &&
+    profile.id === DEFAULT_OPENAI_PROFILE_ID &&
+    profile.apiMode === 'responses' &&
+    profile.model === DEFAULT_RESPONSES_MODEL
+  ) {
+    return {
+      ...profile,
+      id: DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID,
+      model: DEFAULT_IMAGES_MODEL,
+      apiMode: 'images',
+    }
+  }
+  return profile
 }
 
 function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile): AppSettings {
   const normalized = normalizeSettings(settings)
+  const profiles = normalized.profiles.some((item) => item.id === profile.id)
+    ? normalized.profiles.map((item) => item.id === profile.id ? profile : item)
+    : [profile, ...normalized.profiles]
   return normalizeSettings({
     ...normalized,
     baseUrl: profile.baseUrl,
@@ -1607,7 +1692,7 @@ function createSettingsForApiProfile(settings: AppSettings, profile: ApiProfile)
     apiMode: profile.apiMode,
     codexCli: profile.codexCli,
     apiProxy: profile.apiProxy,
-    profiles: normalized.profiles.map((item) => item.id === profile.id ? profile : item),
+    profiles,
     activeProfileId: profile.id,
   })
 }
@@ -1831,15 +1916,29 @@ async function recoverFalTask(taskId: string) {
   }
 }
 
-/** 初始化：从 IndexedDB 加载任务，按需恢复输入图片，并清理孤立图片 */
+/** 初始化：从服务端加载任务和 Agent 对话，按需恢复中断任务。 */
 export async function initStore() {
   const stateVersion = userScopedStateVersion
   const storedTasks = await getAllTasks()
+  const storedAgentConversations = await getAllAgentConversations()
   if (stateVersion !== userScopedStateVersion) return
   const { tasks, interruptedTasks } = markInterruptedOpenAIRunningTasks(storedTasks)
   await Promise.all(interruptedTasks.map((task) => putTask(task)))
   if (stateVersion !== userScopedStateVersion) return
+  const localAgentConversations = useStore.getState().agentConversations
+  const agentConversations = mergeAgentConversationHistories(storedAgentConversations, localAgentConversations)
+  await Promise.all(agentConversations.map((conversation) => putAgentConversation(conversation)))
+  if (stateVersion !== userScopedStateVersion) return
+  const activeAgentConversationId = useStore.getState().activeAgentConversationId
+  const nextActiveAgentConversationId = activeAgentConversationId && agentConversations.some((conversation) => conversation.id === activeAgentConversationId)
+    ? activeAgentConversationId
+    : agentConversations[0]?.id ?? null
   useStore.getState().setTasks(tasks)
+  useStore.setState((state) => ({
+    agentConversations,
+    activeAgentConversationId: nextActiveAgentConversationId,
+    agentInputDrafts: cleanStaleAgentInputDrafts(state.agentInputDrafts, nextActiveAgentConversationId),
+  }))
   showSupportPromptForExistingLocalData(tasks)
   for (const task of tasks) {
     if (
@@ -1863,7 +1962,7 @@ export async function initStore() {
   const state = useStore.getState()
   const persistedInputImages = state.inputImages
   const galleryInputDraft = state.galleryInputDraft
-  const agentConversations = state.agentConversations
+  const stateAgentConversations = state.agentConversations
   const agentInputDrafts = state.agentInputDrafts
   for (const img of persistedInputImages) referencedIds.add(img.id)
   if (galleryInputDraft) {
@@ -1872,7 +1971,7 @@ export async function initStore() {
   for (const draft of Object.values(agentInputDrafts)) {
     for (const img of draft.inputImages) referencedIds.add(img.id)
   }
-  for (const conversation of agentConversations) {
+  for (const conversation of stateAgentConversations) {
     for (const round of conversation.rounds) {
       for (const id of round.inputImageIds) referencedIds.add(id)
     }
@@ -1880,22 +1979,20 @@ export async function initStore() {
   for (const t of tasks) {
     addTaskReferencedImageIds(referencedIds, t)
   }
+  addAmazonPlannerSessionReferencedImageIds(referencedIds, await getAllAmazonPlannerSessions())
+  if (stateVersion !== userScopedStateVersion) return
 
   // 只枚举 key 清理孤立图片，避免启动时把所有 4K 原图读进内存。
   const imageIds = await getAllImageIds()
   if (stateVersion !== userScopedStateVersion) return
-  const referencedImageIds: string[] = []
   for (const imgId of imageIds) {
     if (stateVersion !== userScopedStateVersion) return
-    if (referencedIds.has(imgId)) {
-      referencedImageIds.push(imgId)
-    } else {
+    if (!referencedIds.has(imgId)) {
       await deleteImage(imgId)
       if (stateVersion !== userScopedStateVersion) return
     }
   }
   if (stateVersion !== userScopedStateVersion) return
-  scheduleThumbnailBackfill(referencedImageIds)
 
   const restoredInputImages: InputImage[] = []
   for (const img of persistedInputImages) {
@@ -2014,7 +2111,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     return false
   }
 
-  let activeProfile = requestedProfile ?? getActiveApiProfile(settings)
+  let activeProfile = requestedProfile ?? getImageGenerationProfile(settings) ?? getActiveApiProfile(settings)
   let requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
   if (!requestedProfile && normalizedSettings.reuseTaskApiProfileTemporarily && (reusedTaskApiProfileId || reusedTaskApiProfileMissing)) {
     const reusedProfile = getReusedTaskApiProfile(normalizedSettings, reusedTaskApiProfileId)
@@ -2039,10 +2136,18 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     }
   }
 
-  if (activeProfile.apiMode !== 'images') {
+  if (!requestedProfile && activeProfile.apiMode === 'chat') {
+    const imageProfile = getImageGenerationProfile(settings)
+    if (imageProfile) {
+      activeProfile = imageProfile
+      requestSettings = createSettingsForApiProfile(normalizedSettings, imageProfile)
+    }
+  }
+
+  if (activeProfile.apiMode === 'chat') {
     setConfirmDialog({
       title: '当前配置不能生图',
-      message: `当前配置「${activeProfile.name}」使用 ${getApiModeApiName(activeProfile.apiMode)}，普通生图只支持 Images API。生成图片前，请切换到 Images API 生图配置。`,
+      message: `当前配置「${activeProfile.name}」使用 ${getApiModeApiName(activeProfile.apiMode)}，没有找到可自动使用的生图配置。生成图片前，请添加或完善 Images API 生图配置。`,
       confirmText: '去切换配置',
       cancelText: '取消',
       action: () => {
@@ -2116,6 +2221,9 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     await storeImage(img.dataUrl)
   }
 
+  activeProfile = useImagesApiForDefaultOpenAIInputImages(activeProfile, orderedInputImages.length > 0 || Boolean(maskImageId))
+  requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
+
   const normalizedParams = normalizeParamsForSettings(params, requestSettings, { hasInputImages: orderedInputImages.length > 0 })
   const normalizedParamPatch = getChangedParams(params, normalizedParams)
   if (Object.keys(normalizedParamPatch).length) {
@@ -2176,6 +2284,7 @@ function updateAgentConversation(conversationId: string, updater: (conversation:
       conversation.id === conversationId ? updater(conversation) : conversation,
     ),
   }))
+  persistAgentConversationById(conversationId)
 }
 
 function getAgentRoundControllerKey(conversationId: string, roundId: string) {
@@ -2424,6 +2533,7 @@ async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
   addAgentReferencedImageIds(stillUsed)
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
+  await addStoredAmazonPlannerSessionReferencedImageIds(stillUsed)
 
   for (const imgId of candidates) {
     if (stillUsed.has(imgId)) continue
@@ -2653,6 +2763,7 @@ async function scrubAgentOutputPayloadsForDeletedTasks(deletedTasks: TaskRecord[
   const conversations = scrubAgentConversationsForDeletedTasks(useStore.getState().agentConversations, deletedTasks)
   const scrubbedTasks = remainingTasks.map((task) => scrubTaskRawResponsePayloadForDeletedTasks(task, conversations, deletedTasks))
   useStore.setState({ agentConversations: conversations })
+  persistAgentConversations(conversations)
 
   for (const task of scrubbedTasks) {
     const previous = remainingTasks.find((item) => item.id === task.id)
@@ -2788,10 +2899,12 @@ export async function submitAgentMessage() {
   const state = useStore.getState()
   const { settings, prompt, inputImages, maskDraft, params, showToast } = state
   const normalizedSettings = normalizeSettings(settings)
-  const activeProfile = getActiveApiProfile(normalizedSettings)
+  const activeProfile = getAgentResponsesProfile(settings)
 
-  if (activeProfile.provider !== 'openai' || activeProfile.apiMode !== 'responses') {
+  if (!activeProfile) {
+    showToast('Agent 需要可用的 Responses API 配置', 'error')
     state.setAppMode('agent')
+    state.setShowSettings(true, 'api')
     return
   }
 
@@ -2938,10 +3051,12 @@ export async function regenerateAgentAssistantMessage(conversationId: string, ro
   const state = useStore.getState()
   const { settings, params, showToast } = state
   const normalizedSettings = normalizeSettings(settings)
-  const activeProfile = getActiveApiProfile(normalizedSettings)
+  const activeProfile = getAgentResponsesProfile(settings)
 
-  if (activeProfile.provider !== 'openai' || activeProfile.apiMode !== 'responses') {
+  if (!activeProfile) {
+    showToast('Agent 需要可用的 Responses API 配置', 'error')
     state.setAppMode('agent')
+    state.setShowSettings(true, 'api')
     return
   }
 
@@ -3857,11 +3972,15 @@ export function updateTaskInStore(taskId: string, patch: Partial<TaskRecord>) {
 /** 重试失败的任务：创建新任务并执行 */
 export async function retryTask(task: TaskRecord) {
   const { settings, setConfirmDialog } = useStore.getState()
-  const activeProfile = getActiveApiProfile(settings)
-  if (activeProfile.apiMode !== 'images') {
+  const normalizedSettings = normalizeSettings(settings)
+  let activeProfile = getTaskApiProfile(normalizedSettings, task)
+  if (!activeProfile || activeProfile.apiMode === 'chat') {
+    activeProfile = getImageGenerationProfile(settings)
+  }
+  if (!activeProfile) {
     setConfirmDialog({
       title: '当前配置不能生图',
-      message: `当前配置「${activeProfile.name}」使用 ${getApiModeApiName(activeProfile.apiMode)}，普通生图只支持 Images API。重试图片前，请切换到 Images API 生图配置。`,
+      message: '没有找到可自动使用的生图配置。重试图片前，请添加或完善 Images API 生图配置。',
       confirmText: '去切换配置',
       cancelText: '取消',
       action: () => {
@@ -3870,7 +3989,9 @@ export async function retryTask(task: TaskRecord) {
     })
     return
   }
-  const normalizedParams = normalizeParamsForSettings(task.params, settings, { hasInputImages: task.inputImageIds.length > 0 })
+  activeProfile = useImagesApiForDefaultOpenAIInputImages(activeProfile, task.inputImageIds.length > 0 || Boolean(task.maskImageId))
+  const requestSettings = createSettingsForApiProfile(normalizedSettings, activeProfile)
+  const normalizedParams = normalizeParamsForSettings(task.params, requestSettings, { hasInputImages: task.inputImageIds.length > 0 })
   const taskId = genId()
   const newTask: TaskRecord = {
     id: taskId,
@@ -4029,6 +4150,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
   addAgentReferencedImageIds(stillUsed)
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
+  await addStoredAmazonPlannerSessionReferencedImageIds(stillUsed)
 
   // 删除孤立图片
   for (const imgId of deletedImageIds) {
@@ -4073,6 +4195,7 @@ export async function removeTask(task: TaskRecord) {
   addAgentReferencedImageIds(stillUsed)
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
+  await addStoredAmazonPlannerSessionReferencedImageIds(stillUsed)
 
   // 删除孤立图片
   for (const imgId of taskImageIds) {
@@ -4090,6 +4213,7 @@ export async function removeTask(task: TaskRecord) {
 export interface ClearOptions {
   clearConfig?: boolean
   clearTasks?: boolean
+  clearPlannerSessions?: boolean
 }
 
 /** 清空数据 */
@@ -4098,7 +4222,10 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
 
   if (options.clearTasks) {
     await dbClearTasks()
-    await dbClearAmazonPlannerSessions()
+    await dbClearAgentConversations()
+    if (options.clearPlannerSessions !== false) {
+      await dbClearAmazonPlannerSessions()
+    }
     await clearImages()
     imageCache.clear()
     thumbnailCache.clear()
@@ -4403,6 +4530,7 @@ export async function importData(file: File, options: ImportOptions = { importCo
           activeAgentConversationId,
         }
       })
+      await Promise.all(useStore.getState().agentConversations.map((conversation) => putAgentConversation(conversation)))
       skipSupportPromptForImportedData(tasks)
       scheduleThumbnailBackfill(importedImageIds)
     }

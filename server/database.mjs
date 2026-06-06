@@ -34,6 +34,7 @@ function parseUser(row) {
     passwordHash: row.password_hash,
     role: row.role,
     status: row.status,
+    tokenLimit: row.token_limit ?? null,
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at ?? undefined,
   }
@@ -70,7 +71,42 @@ function parseUsageSummary(row) {
     promptTokens: Number(row.prompt_tokens ?? 0),
     completionTokens: Number(row.completion_tokens ?? 0),
     totalTokens: Number(row.total_tokens ?? 0),
+    tokenLimit: row.token_limit ?? null,
     lastUsedAt: row.last_used_at ?? undefined,
+  }
+}
+
+function parseApiProxyLog(row) {
+  if (!row) return undefined
+  return {
+    id: row.id,
+    userId: row.user_id,
+    endpoint: row.endpoint ?? '',
+    status: row.status,
+    upstreamStatus: row.upstream_status ?? null,
+    upstreamRequestId: row.upstream_request_id ?? '',
+    contentType: row.content_type ?? '',
+    errorType: row.error_type ?? '',
+    errorCode: row.error_code ?? '',
+    errorMessage: row.error_message ?? '',
+    generatedImages: row.generated_images,
+    promptTokens: row.prompt_tokens,
+    completionTokens: row.completion_tokens,
+    totalTokens: row.total_tokens,
+    durationMs: row.duration_ms,
+    createdAt: row.created_at,
+  }
+}
+
+function parseAdminTask(row) {
+  return {
+    owner: row.owner,
+    userId: row.user_id ?? row.owner,
+    email: row.email ?? '',
+    phone: row.phone ?? '',
+    role: row.role ?? '',
+    status: row.user_status ?? '',
+    task: JSON.parse(row.record_json),
   }
 }
 
@@ -98,6 +134,7 @@ function createOwnedTables(db) {
       password_hash text not null,
       role text not null,
       status text not null,
+      token_limit integer,
       created_at integer not null,
       last_login_at integer
     );
@@ -107,6 +144,14 @@ function createOwnedTables(db) {
       id text not null,
       record_json text not null,
       created_at integer,
+      primary key (owner, id)
+    );
+
+    create table if not exists agent_conversations (
+      owner text not null,
+      id text not null,
+      record_json text not null,
+      updated_at integer,
       primary key (owner, id)
     );
 
@@ -148,16 +193,45 @@ function createOwnedTables(db) {
       total_tokens integer not null default 0,
       created_at integer not null
     );
+
+    create table if not exists api_proxy_logs (
+      id text primary key,
+      user_id text not null,
+      endpoint text not null,
+      status text not null,
+      upstream_status integer,
+      upstream_request_id text,
+      content_type text,
+      error_type text,
+      error_code text,
+      error_message text,
+      generated_images integer not null default 0,
+      prompt_tokens integer not null default 0,
+      completion_tokens integer not null default 0,
+      total_tokens integer not null default 0,
+      duration_ms integer not null default 0,
+      created_at integer not null
+    );
   `)
+}
+
+function migrateUserSchema(db) {
+  const columns = getTableInfo(db, 'users')
+  if (!columns.some((column) => column.name === 'token_limit')) {
+    db.exec('alter table users add column token_limit integer')
+  }
 }
 
 function createOwnedIndexes(db) {
   db.exec(`
     create index if not exists users_role_status_idx on users (role, status);
     create index if not exists tasks_owner_created_idx on tasks (owner, created_at desc, id desc);
+    create index if not exists agent_conversations_owner_updated_idx on agent_conversations (owner, updated_at desc, id desc);
     create index if not exists images_owner_created_idx on images (owner, created_at desc, id desc);
     create index if not exists amazon_planner_sessions_owner_updated_idx on amazon_planner_sessions (owner, updated_at desc, id desc);
     create index if not exists usage_events_user_created_idx on usage_events (user_id, created_at desc, id desc);
+    create index if not exists api_proxy_logs_user_created_idx on api_proxy_logs (user_id, created_at desc, id desc);
+    create index if not exists api_proxy_logs_created_idx on api_proxy_logs (created_at desc, id desc);
   `)
 }
 
@@ -174,6 +248,8 @@ function migrateOwnedTable(db, tableName, legacyOwner) {
   createOwnedTables(db)
   if (tableName === 'tasks') {
     db.prepare(`insert or replace into tasks (owner, id, record_json, created_at) select ${ownerExpr}, id, record_json, created_at from ${legacyTable}`).run(legacyOwner)
+  } else if (tableName === 'agent_conversations') {
+    db.prepare(`insert or replace into agent_conversations (owner, id, record_json, updated_at) select ${ownerExpr}, id, record_json, updated_at from ${legacyTable}`).run(legacyOwner)
   } else if (tableName === 'images') {
     db.prepare(`insert or replace into images (owner, id, data_url, metadata_json, created_at) select ${ownerExpr}, id, data_url, metadata_json, created_at from ${legacyTable}`).run(legacyOwner)
   } else if (tableName === 'thumbnails') {
@@ -186,7 +262,8 @@ function migrateOwnedTable(db, tableName, legacyOwner) {
 
 function migrateOwnedSchema(db, legacyOwner) {
   createOwnedTables(db)
-  for (const tableName of ['tasks', 'images', 'thumbnails', 'amazon_planner_sessions']) {
+  migrateUserSchema(db)
+  for (const tableName of ['tasks', 'agent_conversations', 'images', 'thumbnails', 'amazon_planner_sessions']) {
     migrateOwnedTable(db, tableName, legacyOwner)
   }
   createOwnedIndexes(db)
@@ -205,6 +282,10 @@ export function createStorage(sqlitePath, options = {}) {
     putTask: db.prepare('insert into tasks (owner, id, record_json, created_at) values (?, ?, ?, ?) on conflict(owner, id) do update set record_json = excluded.record_json, created_at = excluded.created_at'),
     deleteTask: db.prepare('delete from tasks where owner = ? and id = ?'),
     clearTasks: db.prepare('delete from tasks where owner = ?'),
+    getAllAgentConversations: db.prepare('select record_json from agent_conversations where owner = ? order by updated_at desc, id desc'),
+    putAgentConversation: db.prepare('insert into agent_conversations (owner, id, record_json, updated_at) values (?, ?, ?, ?) on conflict(owner, id) do update set record_json = excluded.record_json, updated_at = excluded.updated_at'),
+    deleteAgentConversation: db.prepare('delete from agent_conversations where owner = ? and id = ?'),
+    clearAgentConversations: db.prepare('delete from agent_conversations where owner = ?'),
     getImage: db.prepare('select id, data_url, metadata_json from images where owner = ? and id = ?'),
     getAllImages: db.prepare('select id, data_url, metadata_json from images where owner = ? order by created_at desc, id desc'),
     getAllImageIds: db.prepare('select id from images where owner = ? order by created_at desc, id desc'),
@@ -219,13 +300,29 @@ export function createStorage(sqlitePath, options = {}) {
     putAmazonPlannerSession: db.prepare('insert into amazon_planner_sessions (owner, id, record_json, updated_at) values (?, ?, ?, ?) on conflict(owner, id) do update set record_json = excluded.record_json, updated_at = excluded.updated_at'),
     deleteAmazonPlannerSession: db.prepare('delete from amazon_planner_sessions where owner = ? and id = ?'),
     clearAmazonPlannerSessions: db.prepare('delete from amazon_planner_sessions where owner = ?'),
-    createUser: db.prepare('insert into users (id, email, phone, password_hash, role, status, created_at, last_login_at) values (?, ?, ?, ?, ?, ?, ?, null)'),
-    getUserById: db.prepare('select id, email, phone, password_hash, role, status, created_at, last_login_at from users where id = ?'),
-    findUserByIdentifier: db.prepare('select id, email, phone, password_hash, role, status, created_at, last_login_at from users where email = ? or phone = ?'),
+    createUser: db.prepare('insert into users (id, email, phone, password_hash, role, status, token_limit, created_at, last_login_at) values (?, ?, ?, ?, ?, ?, ?, ?, null)'),
+    getUserById: db.prepare('select id, email, phone, password_hash, role, status, token_limit, created_at, last_login_at from users where id = ?'),
+    findUserByIdentifier: db.prepare('select id, email, phone, password_hash, role, status, token_limit, created_at, last_login_at from users where email = ? or phone = ?'),
     setUserStatus: db.prepare('update users set status = ? where id = ?'),
     setUserPasswordHash: db.prepare('update users set password_hash = ? where id = ?'),
+    setUserTokenLimit: db.prepare('update users set token_limit = ? where id = ?'),
     touchUserLogin: db.prepare('update users set last_login_at = ? where id = ?'),
-    listUsers: db.prepare('select id, email, phone, password_hash, role, status, created_at, last_login_at from users order by created_at desc, id desc'),
+    listUsers: db.prepare('select id, email, phone, password_hash, role, status, token_limit, created_at, last_login_at from users order by created_at desc, id desc'),
+    getAllUserTasks: db.prepare(`
+      select
+        tasks.owner,
+        users.id as user_id,
+        users.email,
+        users.phone,
+        users.role,
+        users.status as user_status,
+        tasks.record_json,
+        tasks.created_at
+      from tasks
+      left join users on users.id = tasks.owner
+      order by tasks.created_at desc, tasks.id desc
+      limit ?
+    `),
     recordUsageEvent: db.prepare('insert into usage_events (id, user_id, event_type, status, endpoint, model, generated_images, prompt_tokens, completion_tokens, total_tokens, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
     getUsageSummary: db.prepare(`
       select
@@ -234,6 +331,7 @@ export function createStorage(sqlitePath, options = {}) {
         users.phone,
         users.role,
         users.status as user_status,
+        users.token_limit,
         count(usage_events.id) as calls,
         sum(case when usage_events.status = 'ok' then 1 else 0 end) as successes,
         sum(case when usage_events.status <> 'ok' then 1 else 0 end) as failures,
@@ -248,6 +346,8 @@ export function createStorage(sqlitePath, options = {}) {
       group by users.id
     `),
     getUsageEvents: db.prepare('select id, user_id, event_type, status, endpoint, model, generated_images, prompt_tokens, completion_tokens, total_tokens, created_at from usage_events where user_id = ? order by created_at desc, id desc limit ?'),
+    recordApiProxyLog: db.prepare('insert into api_proxy_logs (id, user_id, endpoint, status, upstream_status, upstream_request_id, content_type, error_type, error_code, error_message, generated_images, prompt_tokens, completion_tokens, total_tokens, duration_ms, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+    getApiProxyLogs: db.prepare('select id, user_id, endpoint, status, upstream_status, upstream_request_id, content_type, error_type, error_code, error_message, generated_images, prompt_tokens, completion_tokens, total_tokens, duration_ms, created_at from api_proxy_logs where user_id = ? order by created_at desc, id desc limit ?'),
     getAllUsageSummaries: db.prepare(`
       select
         users.id as user_id,
@@ -255,6 +355,7 @@ export function createStorage(sqlitePath, options = {}) {
         users.phone,
         users.role,
         users.status as user_status,
+        users.token_limit,
         count(usage_events.id) as calls,
         sum(case when usage_events.status = 'ok' then 1 else 0 end) as successes,
         sum(case when usage_events.status <> 'ok' then 1 else 0 end) as failures,
@@ -269,6 +370,7 @@ export function createStorage(sqlitePath, options = {}) {
       order by calls desc, users.created_at desc, users.id desc
     `),
     getAllUsageEvents: db.prepare('select id, user_id, event_type, status, endpoint, model, generated_images, prompt_tokens, completion_tokens, total_tokens, created_at from usage_events order by created_at desc, id desc limit ?'),
+    getAllApiProxyLogs: db.prepare('select id, user_id, endpoint, status, upstream_status, upstream_request_id, content_type, error_type, error_code, error_message, generated_images, prompt_tokens, completion_tokens, total_tokens, duration_ms, created_at from api_proxy_logs order by created_at desc, id desc limit ?'),
   }
 
   return {
@@ -281,6 +383,7 @@ export function createStorage(sqlitePath, options = {}) {
         user.passwordHash,
         user.role,
         user.status,
+        user.tokenLimit ?? null,
         user.createdAt,
       )
       return parseUser(statements.getUserById.get(id))
@@ -298,11 +401,17 @@ export function createStorage(sqlitePath, options = {}) {
     setUserPasswordHash(id, passwordHash) {
       statements.setUserPasswordHash.run(passwordHash, id)
     },
+    setUserTokenLimit(id, tokenLimit) {
+      statements.setUserTokenLimit.run(tokenLimit == null ? null : Number(tokenLimit), id)
+    },
     touchUserLogin(id, lastLoginAt) {
       statements.touchUserLogin.run(lastLoginAt, id)
     },
     listUsers() {
       return statements.listUsers.all().map(parseUser)
+    },
+    getAllUserTasks(limit = 100) {
+      return statements.getAllUserTasks.all(limit).map(parseAdminTask)
     },
     ensureAdminUser(user) {
       const identifier = user.email || user.phone
@@ -331,17 +440,45 @@ export function createStorage(sqlitePath, options = {}) {
       )
       return id
     },
+    recordApiProxyLog(log) {
+      const id = log.id ?? randomUUID()
+      statements.recordApiProxyLog.run(
+        id,
+        log.userId,
+        log.endpoint ?? '',
+        log.status,
+        log.upstreamStatus ?? null,
+        log.upstreamRequestId ?? '',
+        log.contentType ?? '',
+        log.errorType ?? '',
+        log.errorCode ?? '',
+        log.errorMessage ?? '',
+        log.generatedImages ?? 0,
+        log.promptTokens ?? 0,
+        log.completionTokens ?? 0,
+        log.totalTokens ?? 0,
+        log.durationMs ?? 0,
+        log.createdAt,
+      )
+      return id
+    },
     getUsageSummary(userId) {
       return parseUsageSummary(statements.getUsageSummary.get(userId))
     },
     getUsageEvents(userId, limit = 50) {
       return statements.getUsageEvents.all(userId, limit).map(parseUsageEvent)
     },
+    getApiProxyLogs(userId, limit = 50) {
+      return statements.getApiProxyLogs.all(userId, limit).map(parseApiProxyLog)
+    },
     getAllUsageSummaries() {
       return statements.getAllUsageSummaries.all().map(parseUsageSummary)
     },
     getAllUsageEvents(limit = 100) {
       return statements.getAllUsageEvents.all(limit).map(parseUsageEvent)
+    },
+    getAllApiProxyLogs(limit = 100) {
+      return statements.getAllApiProxyLogs.all(limit).map(parseApiProxyLog)
     },
     getAllTasks(owner) {
       return statements.getAllTasks.all(normalizeOwner(owner)).map(parseJsonRecord)
@@ -355,6 +492,19 @@ export function createStorage(sqlitePath, options = {}) {
     },
     clearTasks(owner) {
       statements.clearTasks.run(normalizeOwner(owner))
+    },
+    getAllAgentConversations(owner) {
+      return statements.getAllAgentConversations.all(normalizeOwner(owner)).map(parseJsonRecord)
+    },
+    putAgentConversation(owner, conversation) {
+      statements.putAgentConversation.run(normalizeOwner(owner), conversation.id, JSON.stringify(conversation), conversation.updatedAt ?? null)
+      return conversation.id
+    },
+    deleteAgentConversation(owner, id) {
+      statements.deleteAgentConversation.run(normalizeOwner(owner), id)
+    },
+    clearAgentConversations(owner) {
+      statements.clearAgentConversations.run(normalizeOwner(owner))
     },
     getImage(owner, id) {
       return parseImage(statements.getImage.get(normalizeOwner(owner), id))

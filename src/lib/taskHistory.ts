@@ -127,6 +127,8 @@ export function getWorkflowLabel(workflow: TaskWorkflow) {
       return 'Listing 图'
     case 'amazon-aplus':
       return 'A+ 图'
+    case 'amazon-dsp':
+      return 'DSP 图'
     case 'agent':
       return 'Agent'
     case 'gallery':

@@ -4,6 +4,7 @@ import {
   UNCATEGORIZED_PRODUCT_FILTER,
   getTaskHistoryCategory,
   getTaskProductFilterOptions,
+  getWorkflowLabel,
   matchesTaskHistoryFilters,
 } from './taskHistory'
 
@@ -60,6 +61,26 @@ describe('task history categories', () => {
       aPlusType: 'standard',
       aspect: 'landscape',
     })
+  })
+
+  it('uses explicit DSP metadata and workflow label', () => {
+    const category = getTaskHistoryCategory(task({
+      prompt: 'Create Amazon DSP advertising creative.',
+      params: { ...DEFAULT_PARAMS, size: '2448x2040' },
+      category: {
+        productTitle: 'LED Desk Lamp',
+        workflow: 'amazon-dsp',
+        amazonSlot: 'DSP-CUSTOM-300x250',
+      },
+    }))
+
+    expect(category).toMatchObject({
+      productTitle: 'LED Desk Lamp',
+      workflow: 'amazon-dsp',
+      amazonSlot: 'DSP-CUSTOM-300x250',
+      aspect: 'landscape',
+    })
+    expect(getWorkflowLabel('amazon-dsp')).toBe('DSP 图')
   })
 
   it('infers product and workflow from legacy prompts', () => {
@@ -122,6 +143,22 @@ describe('task history categories', () => {
       filterWorkflow: 'amazon-listing',
       filterAspect: 'landscape',
     })).toBe(false)
+
+    expect(matchesTaskHistoryFilters(task({
+      prompt: 'Create Amazon DSP advertising creative.',
+      category: {
+        productTitle: 'LED Desk Lamp',
+        workflow: 'amazon-dsp',
+        amazonSlot: 'DSP-REC-600x600',
+      },
+    }), {
+      searchQuery: 'DSP',
+      filterStatus: 'all',
+      filterFavorite: false,
+      filterProductTitle: 'LED Desk Lamp',
+      filterWorkflow: 'amazon-dsp',
+      filterAspect: 'all',
+    })).toBe(true)
   })
 
   it('sorts product filter options by most recent task', () => {

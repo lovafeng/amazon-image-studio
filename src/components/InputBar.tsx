@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, updateTaskInStore, removeMultipleTasks, getCachedImage, ensureImageCached, getActiveAgentRounds } from '../store'
+import { useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, updateTaskInStore, removeMultipleTasks, ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail, getActiveAgentRounds } from '../store'
 import { DEFAULT_PARAMS } from '../types'
 import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -363,7 +363,7 @@ function agentImageMentionMatches(query: string, label: string) {
 }
 
 function AtImageOptionThumb({ option }: { option: AtImageOption }) {
-  const [src, setSrc] = useState(option.type === 'input' ? option.dataUrl : getCachedImage(option.imageId) || '')
+  const [src, setSrc] = useState(option.type === 'input' ? option.dataUrl : '')
 
   useEffect(() => {
     if (option.type === 'input') {
@@ -372,12 +372,16 @@ function AtImageOptionThumb({ option }: { option: AtImageOption }) {
     }
 
     let cancelled = false
-    setSrc(getCachedImage(option.imageId) || '')
-    ensureImageCached(option.imageId).then((url) => {
-      if (!cancelled && url) setSrc(url)
+    setSrc('')
+    const unsubscribe = subscribeImageThumbnail(option.imageId, (thumbnail) => {
+      if (!cancelled) setSrc(thumbnail.dataUrl)
+    })
+    ensureImageThumbnailCached(option.imageId).then((thumbnail) => {
+      if (!cancelled && thumbnail?.dataUrl) setSrc(thumbnail.dataUrl)
     })
     return () => {
       cancelled = true
+      unsubscribe()
     }
   }, [option])
 
@@ -1997,7 +2001,7 @@ export default function InputBar() {
         />
       )}
 
-      <div data-input-bar className="home-input-dock pointer-events-none fixed bottom-4 left-1/2 z-30 w-full max-w-4xl -translate-x-1/2 px-3 transition-all duration-300 sm:bottom-6 sm:px-4 lg:bottom-6 lg:left-auto lg:top-20 lg:flex lg:max-w-none lg:translate-x-0 lg:flex-col lg:px-0">
+      <div data-input-bar data-onboarding-target="input-dock" className="home-input-dock pointer-events-none fixed bottom-4 left-1/2 z-30 w-full max-w-4xl -translate-x-1/2 px-3 transition-all duration-300 sm:bottom-6 sm:px-4 lg:bottom-6 lg:left-auto lg:top-20 lg:flex lg:max-w-none lg:translate-x-0 lg:flex-col lg:px-0">
         {selectedTaskIds.length > 0 && (
           <div className="mb-3 flex justify-center lg:justify-end">
             <div className="bg-white/90 dark:bg-gray-800/90 backdrop-blur shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-lg rounded-full flex items-center p-1 border border-gray-200/50 dark:border-white/10 pointer-events-auto">

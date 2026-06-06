@@ -8,6 +8,7 @@ describe('UsagePanel', () => {
 
     expect(html).toContain('我的统计')
     expect(html).toContain('调用次数')
+    expect(html).toContain('Token 上限')
     expect(html).toContain('最近调用')
   })
 })

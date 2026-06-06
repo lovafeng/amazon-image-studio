@@ -1,4 +1,5 @@
 import type { AuthUser } from './auth'
+import type { TaskRecord } from '../types'
 
 export interface UsageSummary {
   userId: string
@@ -13,6 +14,7 @@ export interface UsageSummary {
   promptTokens: number
   completionTokens: number
   totalTokens: number
+  tokenLimit?: number | null
   lastUsedAt?: number
 }
 
@@ -32,6 +34,16 @@ export interface UsageEvent {
 
 export type AdminUser = AuthUser & {
   usage?: UsageSummary
+}
+
+export interface AdminTask {
+  owner: string
+  userId: string
+  email?: string
+  phone?: string
+  role?: string
+  status?: string
+  task: TaskRecord
 }
 
 export interface AdminSummary {
@@ -75,6 +87,13 @@ export async function getAdminUsage(): Promise<UsagePayload> {
   }))
 }
 
+export async function getAdminTasks(): Promise<AdminTask[]> {
+  const body = await readJsonResponse<{ items: AdminTask[] }>(await fetch('/api/admin/tasks', {
+    credentials: 'same-origin',
+  }))
+  return body.items
+}
+
 export async function getMyUsage(): Promise<UsagePayload> {
   return readJsonResponse(await fetch('/api/usage/me', {
     credentials: 'same-origin',
@@ -96,5 +115,14 @@ export async function resetUserPassword(id: string, password: string): Promise<v
     credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ password }),
+  }))
+}
+
+export async function setUserTokenLimit(id: string, tokenLimit: number | null): Promise<void> {
+  await readJsonResponse(await fetch(`/api/admin/users/${encodeURIComponent(id)}/token-limit`, {
+    method: 'PATCH',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ tokenLimit }),
   }))
 }

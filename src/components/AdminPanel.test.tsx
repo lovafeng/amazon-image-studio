@@ -9,5 +9,7 @@ describe('AdminPanel', () => {
     expect(html).toContain('管理总览')
     expect(html).toContain('用户管理')
     expect(html).toContain('使用统计')
+    expect(html).toContain('分析任务')
+    expect(html).toContain('Token 上限')
   })
 })

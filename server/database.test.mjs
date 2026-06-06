@@ -62,6 +62,26 @@ describe('sqlite storage', () => {
     })
   })
 
+  it('stores and updates a user token limit', () => {
+    const user = storage.createUser({
+      email: 'limited@example.com',
+      phone: '',
+      passwordHash: 'hash',
+      role: 'user',
+      status: 'active',
+      tokenLimit: 100,
+      createdAt: 1,
+    })
+
+    expect(storage.getUserById(user.id)).toMatchObject({ tokenLimit: 100 })
+
+    storage.setUserTokenLimit(user.id, 42)
+    expect(storage.getUserById(user.id)).toMatchObject({ tokenLimit: 42 })
+
+    storage.setUserTokenLimit(user.id, null)
+    expect(storage.getUserById(user.id)).toMatchObject({ tokenLimit: null })
+  })
+
   it('ensures a configured admin user exists', () => {
     const admin = storage.ensureAdminUser({
       email: 'admin@example.com',
@@ -137,6 +157,49 @@ describe('sqlite storage', () => {
     })
   })
 
+  it('records API proxy logs for support diagnostics', () => {
+    const user = storage.createUser({
+      email: 'user@example.com',
+      phone: '',
+      passwordHash: 'hash',
+      role: 'user',
+      status: 'active',
+      createdAt: 1,
+    })
+
+    storage.recordApiProxyLog({
+      userId: user.id,
+      endpoint: '/api-proxy/v1/images/generations',
+      status: 'error',
+      upstreamStatus: 400,
+      upstreamRequestId: 'req_123',
+      contentType: 'application/json',
+      errorType: 'image_generation_user_error',
+      errorCode: 'moderation_blocked',
+      errorMessage: 'blocked',
+      generatedImages: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      durationMs: 1234,
+      createdAt: 20,
+    })
+
+    expect(storage.getApiProxyLogs(user.id)).toEqual([
+      expect.objectContaining({
+        userId: user.id,
+        endpoint: '/api-proxy/v1/images/generations',
+        status: 'error',
+        upstreamStatus: 400,
+        upstreamRequestId: 'req_123',
+        errorCode: 'moderation_blocked',
+        errorMessage: 'blocked',
+        durationMs: 1234,
+        createdAt: 20,
+      }),
+    ])
+  })
+
   it('stores, lists, updates, deletes, and clears tasks', () => {
     const task = {
       id: 'task-a',
@@ -163,6 +226,32 @@ describe('sqlite storage', () => {
     expect(storage.getAllTasks('admin')).toEqual([])
   })
 
+  it('stores, lists, updates, deletes, and clears agent conversations', () => {
+    const conversation = {
+      id: 'conversation-a',
+      title: '新对话',
+      activeRoundId: null,
+      createdAt: 10,
+      updatedAt: 20,
+      rounds: [],
+      messages: [],
+    }
+
+    storage.putAgentConversation('admin', conversation)
+    expect(storage.getAllAgentConversations('admin')).toEqual([conversation])
+
+    const updated = { ...conversation, title: '更新后的对话', updatedAt: 30 }
+    storage.putAgentConversation('admin', updated)
+    expect(storage.getAllAgentConversations('admin')).toEqual([updated])
+
+    storage.deleteAgentConversation('admin', 'conversation-a')
+    expect(storage.getAllAgentConversations('admin')).toEqual([])
+
+    storage.putAgentConversation('admin', conversation)
+    storage.clearAgentConversations('admin')
+    expect(storage.getAllAgentConversations('admin')).toEqual([])
+  })
+
   it('isolates tasks with the same id by owner', () => {
     const adminTask = {
       id: 'task-a',
@@ -180,6 +269,80 @@ describe('sqlite storage', () => {
 
     expect(storage.getAllTasks('admin')).toEqual([adminTask])
     expect(storage.getAllTasks('operator')).toEqual([operatorTask])
+  })
+
+  it('isolates agent conversations with the same id by owner', () => {
+    const adminConversation = {
+      id: 'conversation-a',
+      title: 'admin conversation',
+      activeRoundId: null,
+      createdAt: 10,
+      updatedAt: 20,
+      rounds: [],
+      messages: [],
+    }
+    const operatorConversation = { ...adminConversation, title: 'operator conversation' }
+
+    storage.putAgentConversation('admin', adminConversation)
+    storage.putAgentConversation('operator', operatorConversation)
+
+    expect(storage.getAllAgentConversations('admin')).toEqual([adminConversation])
+    expect(storage.getAllAgentConversations('operator')).toEqual([operatorConversation])
+  })
+
+  it('lists tasks across all users for admin audit', () => {
+    const admin = storage.createUser({
+      email: 'admin@example.com',
+      phone: '',
+      passwordHash: 'hash',
+      role: 'admin',
+      status: 'active',
+      createdAt: 1,
+    })
+    const user = storage.createUser({
+      email: 'user@example.com',
+      phone: '',
+      passwordHash: 'hash',
+      role: 'user',
+      status: 'active',
+      createdAt: 2,
+    })
+    const adminTask = {
+      id: 'task-admin',
+      prompt: 'admin prompt',
+      createdAt: 10,
+      inputImageIds: [],
+      outputImages: [],
+      status: 'done',
+      error: null,
+    }
+    const userTask = {
+      id: 'task-user',
+      prompt: 'user prompt',
+      createdAt: 20,
+      inputImageIds: [],
+      outputImages: [],
+      status: 'running',
+      error: null,
+    }
+
+    storage.putTask(admin.id, adminTask)
+    storage.putTask(user.id, userTask)
+
+    expect(storage.getAllUserTasks()).toEqual([
+      expect.objectContaining({
+        owner: user.id,
+        userId: user.id,
+        email: 'user@example.com',
+        task: userTask,
+      }),
+      expect.objectContaining({
+        owner: admin.id,
+        userId: admin.id,
+        email: 'admin@example.com',
+        task: adminTask,
+      }),
+    ])
   })
 
   it('stores images and clears matching thumbnails with image deletion', () => {

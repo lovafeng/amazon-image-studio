@@ -19,9 +19,31 @@ import {
 } from './imageApiShared'
 
 const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
+const INTERRUPTED_IMAGE_API_RETRY_LIMIT = 2
 
 function getStreamPartialImages(profile: ApiProfile): number {
   return profile.streamPartialImages ?? DEFAULT_STREAM_PARTIAL_IMAGES
+}
+
+function shouldStreamImageRequest(profile: ApiProfile): boolean {
+  return profile.streamImages === true
+}
+
+function isInterruptedImageApiError(err: unknown): boolean {
+  if (typeof DOMException !== 'undefined' && err instanceof DOMException && err.name === 'AbortError') return true
+  const message = err instanceof Error ? err.message : String(err)
+  return /abort|network|failed to fetch|fetch failed|load failed|timeout|连接|断开|中断/i.test(message)
+}
+
+async function callWithInterruptedImageApiRetry(operation: () => Promise<CallApiResult>): Promise<CallApiResult> {
+  for (let retryCount = 0; retryCount <= INTERRUPTED_IMAGE_API_RETRY_LIMIT; retryCount += 1) {
+    try {
+      return await operation()
+    } catch (err) {
+      if (retryCount >= INTERRUPTED_IMAGE_API_RETRY_LIMIT || !isInterruptedImageApiError(err)) throw err
+    }
+  }
+  return operation()
 }
 
 function appendQuery(path: string, query?: Record<string, string>): string {
@@ -180,6 +202,7 @@ function createResponsesImageTool(
   params: TaskParams,
   isEdit: boolean,
   profile: ApiProfile,
+  streamImages: boolean,
   maskDataUrl?: string,
 ): Record<string, unknown> {
   const tool: Record<string, unknown> = {
@@ -190,7 +213,7 @@ function createResponsesImageTool(
     moderation: params.moderation,
   }
 
-  if (profile.streamImages) {
+  if (streamImages) {
     tool.partial_images = getStreamPartialImages(profile)
   }
 
@@ -448,11 +471,12 @@ export async function callOpenAICompatibleImageApi(opts: CallApiOptions, profile
 
 async function callImagesApi(opts: CallApiOptions, profile: ApiProfile, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
   const n = opts.params.n > 0 ? opts.params.n : 1
-  if ((profile.codexCli || (profile.streamImages && n > 1)) && n > 1) {
+  const streamImages = shouldStreamImageRequest(profile)
+  if ((profile.codexCli || (streamImages && n > 1)) && n > 1) {
     return callImagesApiConcurrent(opts, profile, n, customProvider)
   }
 
-  return callImagesApiSingle(opts, profile, customProvider)
+  return callWithInterruptedImageApiRetry(() => callImagesApiSingle(opts, profile, customProvider))
 }
 
 async function callImagesApiConcurrent(opts: CallApiOptions, profile: ApiProfile, n: number, customProvider?: CustomProviderDefinition | null): Promise<CallApiResult> {
@@ -465,12 +489,12 @@ async function callImagesApiConcurrent(opts: CallApiOptions, profile: ApiProfile
     },
   }
   const results = await Promise.allSettled(
-    Array.from({ length: n }).map((_, requestIndex) => callImagesApiSingle({
+    Array.from({ length: n }).map((_, requestIndex) => callWithInterruptedImageApiRetry(() => callImagesApiSingle({
       ...singleOpts,
       onPartialImage: opts.onPartialImage
         ? (partial) => opts.onPartialImage?.({ ...partial, requestIndex })
         : undefined,
-    }, profile, customProvider)),
+    }, profile, customProvider))),
   )
 
   const successfulResults = results
@@ -508,6 +532,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
+  const streamImages = shouldStreamImageRequest(profile)
   const requestHeaders = createRequestHeaders(profile)
   const paths = createOpenAICompatiblePaths(customProvider)
 
@@ -538,7 +563,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
       if (profile.responseFormatB64Json) {
         formData.append('response_format', 'b64_json')
       }
-      if (profile.streamImages) {
+      if (streamImages) {
         formData.append('stream', 'true')
         formData.append('partial_images', String(getStreamPartialImages(profile)))
       }
@@ -600,7 +625,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
       if (profile.responseFormatB64Json) {
         body.response_format = 'b64_json'
       }
-      if (profile.streamImages) {
+      if (streamImages) {
         body.stream = true
         body.partial_images = getStreamPartialImages(profile)
       }
@@ -621,7 +646,7 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
       throw new Error(await getApiErrorMessage(response))
     }
 
-    if (profile.streamImages && isEventStreamResponse(response)) {
+    if (streamImages && isEventStreamResponse(response)) {
       return parseImagesApiStreamResponse(response, mime, opts.onPartialImage)
     }
 
@@ -929,15 +954,15 @@ async function callCustomHttpImageApi(opts: CallApiOptions, profile: ApiProfile,
 async function callResponsesImageApi(opts: CallApiOptions, profile: ApiProfile): Promise<CallApiResult> {
   const n = opts.params.n > 0 ? opts.params.n : 1
   if (n === 1) {
-    return callResponsesImageApiSingle(opts, profile)
+    return callWithInterruptedImageApiRetry(() => callResponsesImageApiSingle(opts, profile))
   }
 
-  const promises = Array.from({ length: n }).map((_, requestIndex) => callResponsesImageApiSingle({
+  const promises = Array.from({ length: n }).map((_, requestIndex) => callWithInterruptedImageApiRetry(() => callResponsesImageApiSingle({
     ...opts,
     onPartialImage: opts.onPartialImage
       ? (partial) => opts.onPartialImage?.({ ...partial, requestIndex })
       : undefined,
-  }, profile))
+  }, profile)))
   const results = await Promise.allSettled(promises)
   
   const successfulResults = results
@@ -971,6 +996,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
   const mime = MIME_MAP[params.output_format] || 'image/png'
   const proxyConfig = readClientDevProxyConfig()
   const useApiProxy = shouldUseApiProxy(profile.apiProxy, proxyConfig)
+  const streamImages = shouldStreamImageRequest(profile)
   const requestHeaders = createRequestHeaders(profile)
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), profile.timeout * 1000)
@@ -988,10 +1014,10 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
     const body: Record<string, unknown> = {
       model: profile.model,
       input: createResponsesInput(prompt, inputImageDataUrls),
-      tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, profile, opts.maskDataUrl)],
+      tools: [createResponsesImageTool(params, inputImageDataUrls.length > 0, profile, streamImages, opts.maskDataUrl)],
       tool_choice: 'required',
     }
-    if (profile.streamImages) {
+    if (streamImages) {
       body.stream = true
     }
 
@@ -1010,7 +1036,7 @@ async function callResponsesImageApiSingle(opts: CallApiOptions, profile: ApiPro
       throw new Error(await getApiErrorMessage(response))
     }
 
-    if (profile.streamImages && isEventStreamResponse(response)) {
+    if (streamImages && isEventStreamResponse(response)) {
       return parseResponsesApiStreamResponse(response, mime, opts.onPartialImage)
     }
 

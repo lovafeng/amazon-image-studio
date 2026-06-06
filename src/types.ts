@@ -2,7 +2,7 @@
 
 export type ApiMode = 'images' | 'responses' | 'chat'
 export type AppMode = 'gallery' | 'agent'
-export type TaskWorkflow = 'amazon-listing' | 'amazon-aplus' | 'gallery' | 'agent' | 'unknown'
+export type TaskWorkflow = 'amazon-listing' | 'amazon-aplus' | 'amazon-dsp' | 'gallery' | 'agent' | 'unknown'
 export type TaskAspect = 'square' | 'landscape' | 'portrait'
 export type HistoryWorkflowFilter = 'all' | TaskWorkflow
 export type HistoryAspectFilter = 'all' | TaskAspect
@@ -275,6 +275,20 @@ export interface AmazonPlannerSessionAPlusPlan {
   negativePrompt: string
 }
 
+export interface AmazonPlannerSessionDspPlan {
+  slot: string
+  label: string
+  group: string
+  assetType: string
+  uploadSize: string
+  generationSize: string
+  fileLimit: string
+  ctaPolicy: string
+  planMarkdown: string
+  prompt: string
+  negativePrompt: string
+}
+
 export interface AmazonPlannerSessionStyleImage {
   candidateIndex: number
   imageId: string
@@ -294,7 +308,7 @@ export interface AmazonPlannerSelectedStyleReference {
 export interface AmazonPlannerSession {
   id: string
   title: string
-  mode: 'listing' | 'aplus'
+  mode: 'listing' | 'aplus' | 'dsp'
   aPlusType: 'standard' | 'standard-large' | 'premium'
   resolution: '2k' | '4k'
   listingText: string
@@ -303,6 +317,7 @@ export interface AmazonPlannerSession {
   seriesStyleGuides: {
     listing: string
     aplus: string
+    dsp: string
   }
   styleCandidates: AmazonPlannerSessionStyleCandidate[]
   styleImages: AmazonPlannerSessionStyleImage[]
@@ -311,8 +326,11 @@ export interface AmazonPlannerSession {
   styleDensityMode?: AmazonStyleDensityMode
   imagePlans: AmazonPlannerSessionImagePlan[]
   aPlusPlans: AmazonPlannerSessionAPlusPlan[]
+  dspPlans: AmazonPlannerSessionDspPlan[]
   selectedPlanIndex: number | null
   selectedAPlusPlanIndex: number | null
+  selectedDspPlanIndex: number | null
+  actionProgress?: Record<string, 'filled' | 'submitted'>
   createdAt: number
   updatedAt: number
 }

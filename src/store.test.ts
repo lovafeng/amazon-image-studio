@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
+import storeSource from './store.ts?raw'
 import { DEFAULT_PARAMS } from './types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_IMAGES_MODEL, DEFAULT_OPENAI_PROFILE_ID, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
 import type { AgentConversation, AmazonPlannerSession, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 vi.mock('./lib/db', () => {
   const tasks = new Map<string, TaskRecord>()
+  const agentConversations = new Map<string, AgentConversation>()
   const amazonPlannerSessions = new Map<string, AmazonPlannerSession>()
   const images = new Map<string, StoredImage>()
   const thumbnails = new Map<string, StoredImageThumbnail>()
@@ -23,6 +25,17 @@ vi.mock('./lib/db', () => {
     },
     clearTasks: async () => {
       tasks.clear()
+    },
+    getAllAgentConversations: async () => [...agentConversations.values()],
+    putAgentConversation: async (conversation: AgentConversation) => {
+      agentConversations.set(conversation.id, conversation)
+      return conversation.id
+    },
+    deleteAgentConversation: async (id: string) => {
+      agentConversations.delete(id)
+    },
+    clearAgentConversations: async () => {
+      agentConversations.clear()
     },
     getAllAmazonPlannerSessions: async () => [...amazonPlannerSessions.values()],
     putAmazonPlannerSession: async (session: AmazonPlannerSession) => {
@@ -92,9 +105,9 @@ vi.mock('./lib/agentApi', () => ({
     }
   }),
 }))
-import { clearAmazonPlannerSessions, clearImages, getAllAmazonPlannerSessions, putAmazonPlannerSession, putImage } from './lib/db'
+import { clearAgentConversations, clearAmazonPlannerSessions, clearImages, clearTasks, getAllAgentConversations, getAllAmazonPlannerSessions, getImage, putAgentConversation, putAmazonPlannerSession, putImage } from './lib/db'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { cleanStaleAgentInputDrafts, clearData, editOutputs, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
+import { cleanStaleAgentInputDrafts, clearData, editOutputs, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -106,6 +119,26 @@ describe('error toast messages', () => {
 
   it('uses a generic message for long raw errors without a title', () => {
     expect(getErrorToastMessage(`invalid request ${'x'.repeat(90)}`)).toBe('操作失败，请查看详情')
+  })
+})
+
+describe('thumbnail backfill', () => {
+  it('does not request full images while selecting a backfill batch', () => {
+    const backfillBatchBlock = storeSource.slice(
+      storeSource.indexOf('async function getNextThumbnailBackfillBatch()'),
+      storeSource.indexOf('function getOrderedThumbnailBackfillIds()'),
+    )
+
+    expect(backfillBatchBlock).not.toContain('getImage(id)')
+  })
+
+  it('does not start a full history thumbnail sweep during account initialization', () => {
+    const initStoreBlock = storeSource.slice(
+      storeSource.indexOf('export async function initStore()'),
+      storeSource.indexOf('/** 提交新任务 */'),
+    )
+
+    expect(initStoreBlock).not.toContain('scheduleThumbnailBackfill(referencedImageIds)')
   })
 })
 
@@ -165,6 +198,7 @@ function amazonPlannerSession(overrides: Partial<AmazonPlannerSession> = {}): Am
     seriesStyleGuides: {
       listing: 'Warm studio style.',
       aplus: '',
+      dsp: '',
     },
     styleCandidates: [
       {
@@ -187,8 +221,10 @@ function amazonPlannerSession(overrides: Partial<AmazonPlannerSession> = {}): Am
       },
     ],
     aPlusPlans: [],
+    dspPlans: [],
     selectedPlanIndex: 0,
     selectedAPlusPlanIndex: null,
+    selectedDspPlanIndex: null,
     createdAt: 1,
     updatedAt: 2,
     ...overrides,
@@ -270,16 +306,13 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.showToast).toHaveBeenCalledWith('任务已提交', 'success')
   })
 
-  it.each([
-    { apiMode: 'chat' as const, model: 'deepseek-v4-flash', label: 'Chat Completions' },
-    { apiMode: 'responses' as const, model: DEFAULT_RESPONSES_MODEL, label: 'Responses API' },
-  ])('blocks gallery submit with a switch-config dialog when the active profile is $label', async ({ apiMode, model, label }) => {
+  it('blocks gallery submit with a switch-config dialog when the active profile is Chat Completions', async () => {
     const plannerProfile = createDefaultOpenAIProfile({
-      id: `planner-profile-${apiMode}`,
+      id: 'planner-profile-chat',
       name: 'AI策划',
       apiKey: 'planner-key',
-      apiMode,
-      model,
+      apiMode: 'chat',
+      model: 'deepseek-v4-flash',
     })
     useStore.setState({
       settings: normalizeSettings({
@@ -297,11 +330,80 @@ describe('mask draft lifecycle in store actions', () => {
       title: '当前配置不能生图',
       confirmText: '去切换配置',
       cancelText: '取消',
-      message: expect.stringContaining(label),
+      message: expect.stringContaining('Chat Completions'),
     }))
     expect(state.setConfirmDialog).toHaveBeenCalledWith(expect.objectContaining({
-      message: expect.stringContaining('普通生图只支持 Images API'),
+      message: expect.stringContaining('没有找到可自动使用的生图配置'),
     }))
+  })
+
+  it('submits a gallery task when the active profile uses Responses API image generation', async () => {
+    const responseProfile = createDefaultOpenAIProfile({
+      id: 'responses-image-profile',
+      name: '生图',
+      apiKey: 'image-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        profiles: [responseProfile],
+        activeProfileId: responseProfile.id,
+      }),
+    })
+
+    const submitted = await submitTask()
+
+    const task = useStore.getState().tasks[0]
+    expect(submitted).toBe(true)
+    expect(task).toMatchObject({
+      apiProfileId: 'responses-image-profile',
+      apiProfileName: '生图',
+      apiMode: 'responses',
+      apiModel: DEFAULT_RESPONSES_MODEL,
+    })
+  })
+
+  it('uses Images API for default Responses image profile when reference images are present', async () => {
+    const responseProfile = createDefaultOpenAIProfile({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      name: '生图',
+      apiKey: 'image-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+    })
+    const plannerProfile = createDefaultOpenAIProfile({
+      id: 'planner-profile',
+      name: 'AI策划',
+      apiKey: 'planner-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+    })
+    useStore.setState({
+      inputImages: [imageA],
+      settings: normalizeSettings({
+        profiles: [responseProfile, plannerProfile],
+        activeProfileId: responseProfile.id,
+        amazonPlannerProfileId: plannerProfile.id,
+      }),
+    })
+
+    const submitted = await submitTask()
+
+    const task = useStore.getState().tasks[0]
+    expect(submitted).toBe(true)
+    expect(task).toMatchObject({
+      apiProfileId: `${DEFAULT_OPENAI_PROFILE_ID}-input-images`,
+      apiProfileName: '生图',
+      apiMode: 'images',
+      apiModel: DEFAULT_IMAGES_MODEL,
+      inputImageIds: expect.arrayContaining([imageA.id]),
+    })
+    expect(getTaskApiProfile(useStore.getState().settings, task)).toMatchObject({
+      id: `${DEFAULT_OPENAI_PROFILE_ID}-input-images`,
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
+    })
   })
 
   it('submits with an explicit image profile when the active profile is AI planning', async () => {
@@ -339,9 +441,16 @@ describe('mask draft lifecycle in store actions', () => {
     })
   })
 
-  it('blocks retry with a switch-config dialog when the active profile is Responses API', async () => {
-    const responseProfile = createDefaultOpenAIProfile({
-      id: 'responses-profile',
+  it('auto-selects the image profile when submitting with an active AI planning profile', async () => {
+    const imageProfile = createDefaultOpenAIProfile({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      name: '生图',
+      apiKey: 'image-key',
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
+    })
+    const plannerProfile = createDefaultOpenAIProfile({
+      id: 'planner-profile',
       name: 'AI策划',
       apiKey: 'planner-key',
       apiMode: 'responses',
@@ -349,19 +458,103 @@ describe('mask draft lifecycle in store actions', () => {
     })
     useStore.setState({
       settings: normalizeSettings({
-        profiles: [responseProfile],
-        activeProfileId: responseProfile.id,
+        profiles: [imageProfile, plannerProfile],
+        activeProfileId: plannerProfile.id,
+        amazonPlannerProfileId: plannerProfile.id,
       }),
     })
 
-    await retryTask(task())
+    const submitted = await submitTask()
+
+    const task = useStore.getState().tasks[0]
+    expect(submitted).toBe(true)
+    expect(task).toMatchObject({
+      apiProfileId: DEFAULT_OPENAI_PROFILE_ID,
+      apiProfileName: '生图',
+      apiMode: 'images',
+      apiModel: DEFAULT_IMAGES_MODEL,
+    })
+  })
+
+  it('auto-selects the original image profile when retrying with an active AI planning profile', async () => {
+    const imageProfile = createDefaultOpenAIProfile({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      name: '生图',
+      apiKey: 'image-key',
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
+    })
+    const plannerProfile = createDefaultOpenAIProfile({
+      id: 'planner-profile',
+      name: 'AI策划',
+      apiKey: 'planner-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        profiles: [imageProfile, plannerProfile],
+        activeProfileId: plannerProfile.id,
+        amazonPlannerProfileId: plannerProfile.id,
+      }),
+    })
+
+    await retryTask(task({
+      apiProvider: 'openai',
+      apiProfileId: DEFAULT_OPENAI_PROFILE_ID,
+      apiProfileName: '生图',
+      apiMode: 'images',
+      apiModel: DEFAULT_IMAGES_MODEL,
+    }))
 
     const state = useStore.getState()
-    expect(state.tasks).toHaveLength(0)
-    expect(state.setConfirmDialog).toHaveBeenCalledWith(expect.objectContaining({
-      title: '当前配置不能生图',
-      message: expect.stringContaining('Responses API'),
-    }))
+    expect(state.tasks).toHaveLength(1)
+    expect(state.tasks[0]).toMatchObject({
+      apiProfileId: DEFAULT_OPENAI_PROFILE_ID,
+      apiProfileName: '生图',
+      apiMode: 'images',
+      apiModel: DEFAULT_IMAGES_MODEL,
+    })
+    expect(state.setConfirmDialog).not.toHaveBeenCalled()
+  })
+
+  it('auto-selects the Responses profile when submitting an Agent message with an active image profile', async () => {
+    const imageProfile = createDefaultOpenAIProfile({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      name: '生图',
+      apiKey: 'image-key',
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
+    })
+    const plannerProfile = createDefaultOpenAIProfile({
+      id: 'planner-profile',
+      name: 'AI策划',
+      apiKey: 'planner-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+    })
+    vi.mocked(callAgentResponsesApi).mockClear()
+    useStore.setState({
+      appMode: 'agent',
+      prompt: '继续生成',
+      settings: normalizeSettings({
+        profiles: [imageProfile, plannerProfile],
+        activeProfileId: imageProfile.id,
+        amazonPlannerProfileId: plannerProfile.id,
+      }),
+      agentConversations: [agentConversation()],
+      activeAgentConversationId: 'conversation-a',
+    })
+
+    await submitAgentMessage()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(callAgentResponsesApi).toHaveBeenCalled()
+    expect(vi.mocked(callAgentResponsesApi).mock.calls[0][0].profile).toMatchObject({
+      id: 'planner-profile',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+    })
   })
 
   it('returns false when submit is blocked before creating a task', async () => {
@@ -600,6 +793,56 @@ describe('mask draft lifecycle in store actions', () => {
     })
   })
 
+  it('preserves reused DSP category on the next submit', async () => {
+    const styleImage = { id: 'style-image-a', dataUrl: 'data:image/png;base64,dsp-style' }
+    await clearImages()
+    await putImage(styleImage)
+
+    await reuseConfig(task({
+      prompt: 'original dsp prompt',
+      category: {
+        productTitle: 'TrailBrew French Press',
+        workflow: 'amazon-dsp',
+        amazonSlot: 'DSP-CUSTOM-300x250',
+        styleReferenceImageId: 'style-image-a',
+      },
+    }))
+
+    useStore.getState().setPrompt('revised dsp prompt')
+    await submitTask()
+
+    expect(useStore.getState().tasks[0]?.category).toMatchObject({
+      productTitle: 'TrailBrew French Press',
+      workflow: 'amazon-dsp',
+      amazonSlot: 'DSP-CUSTOM-300x250',
+      styleReferenceImageId: 'style-image-a',
+    })
+  })
+
+  it('preserves edit-output DSP category on the next submit', async () => {
+    const outputImage = { id: 'dsp-output-image', dataUrl: 'data:image/png;base64,dsp-output' }
+    await clearImages()
+    await putImage(outputImage)
+
+    await editOutputs(task({
+      outputImages: [outputImage.id],
+      category: {
+        productTitle: 'TrailBrew French Press',
+        workflow: 'amazon-dsp',
+        amazonSlot: 'DSP-CUSTOM-300x250',
+      },
+    }))
+
+    useStore.getState().setPrompt('edit this dsp image')
+    await submitTask()
+
+    expect(useStore.getState().tasks[0]?.category).toMatchObject({
+      productTitle: 'TrailBrew French Press',
+      workflow: 'amazon-dsp',
+      amazonSlot: 'DSP-CUSTOM-300x250',
+    })
+  })
+
   it('replacing a stale Amazon pending category with a normal reused task submits as gallery', async () => {
     useStore.setState({
       pendingTaskCategory: {
@@ -710,7 +953,8 @@ describe('input persistence setting', () => {
 })
 
 describe('agent conversation creation', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await clearAgentConversations()
     useStore.setState({
       agentConversations: [],
       activeAgentConversationId: null,
@@ -780,6 +1024,60 @@ describe('agent conversation creation', () => {
     expect(state.agentConversations[state.agentConversations.length - 1]).toMatchObject({ id, createdAt: 3_000, updatedAt: 3_000, messages: [], rounds: [] })
     expect(state.activeAgentConversationId).toBe(id)
     now.mockRestore()
+  })
+
+  it('stores a newly created conversation on the server', async () => {
+    const id = useStore.getState().createAgentConversation()
+
+    await expect(getAllAgentConversations()).resolves.toEqual([
+      expect.objectContaining({ id }),
+    ])
+  })
+})
+
+describe('agent conversation server initialization', () => {
+  beforeEach(async () => {
+    await clearTasks()
+    await clearAgentConversations()
+    useStore.setState({
+      tasks: [],
+      agentConversations: [],
+      activeAgentConversationId: null,
+      agentInputDrafts: {},
+    })
+  })
+
+  it('merges local persisted conversations into server history on init', async () => {
+    const serverConversation = agentConversation({
+      id: 'server-conversation',
+      title: '服务器对话',
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    const localConversation = agentConversation({
+      id: 'local-conversation',
+      title: '旧本地对话',
+      createdAt: 2,
+      updatedAt: 2,
+    })
+    await putAgentConversation(serverConversation)
+    useStore.setState({
+      agentConversations: [localConversation],
+      activeAgentConversationId: localConversation.id,
+    })
+
+    await initStore()
+
+    const state = useStore.getState()
+    expect(state.agentConversations.map((conversation) => conversation.id).sort()).toEqual([
+      'local-conversation',
+      'server-conversation',
+    ])
+    expect(state.activeAgentConversationId).toBe(localConversation.id)
+    await expect(getAllAgentConversations()).resolves.toEqual(expect.arrayContaining([
+      localConversation,
+      serverConversation,
+    ]))
   })
 })
 
@@ -960,6 +1258,68 @@ describe('data export and clearing', () => {
     await clearData({ clearConfig: false, clearTasks: true })
 
     expect(await getAllAmazonPlannerSessions()).toEqual([])
+  })
+
+  it('can skip Amazon planner sessions when clearing task data', async () => {
+    const session = amazonPlannerSession()
+    await putAmazonPlannerSession(session)
+
+    await clearData({ clearConfig: false, clearTasks: true, clearPlannerSessions: false })
+
+    expect(await getAllAmazonPlannerSessions()).toEqual([session])
+  })
+
+  it('keeps planner session reference and style images when deleting a generated task', async () => {
+    const session = amazonPlannerSession({
+      id: 'planner-session-with-images',
+      referenceImageIds: ['planner-reference-image'],
+      styleImages: [{ candidateIndex: 0, imageId: 'planner-style-image' }],
+    })
+    const deletedTask = task({
+      id: 'deleted-task',
+      inputImageIds: ['planner-reference-image'],
+      outputImages: ['planner-style-image'],
+    })
+    await putAmazonPlannerSession(session)
+    await putImage({ id: 'planner-reference-image', dataUrl: 'data:image/png;base64,cmVm', source: 'upload' })
+    await putImage({ id: 'planner-style-image', dataUrl: 'data:image/png;base64,c3R5bGU=', source: 'generated' })
+    useStore.setState({ tasks: [deletedTask], inputImages: [], galleryInputDraft: null, showToast: vi.fn() })
+
+    await removeTask(deletedTask)
+
+    expect(await getImage('planner-reference-image')).toBeDefined()
+    expect(await getImage('planner-style-image')).toBeDefined()
+  })
+
+  it('keeps planner session images when deleting tasks in batch', async () => {
+    const session = amazonPlannerSession({
+      id: 'planner-session-with-batch-images',
+      referenceImageIds: ['batch-reference-image'],
+      styleImages: [{ candidateIndex: 0, imageId: 'batch-style-image' }],
+    })
+    const firstTask = task({
+      id: 'batch-deleted-task-a',
+      inputImageIds: ['batch-reference-image'],
+    })
+    const secondTask = task({
+      id: 'batch-deleted-task-b',
+      outputImages: ['batch-style-image'],
+    })
+    await putAmazonPlannerSession(session)
+    await putImage({ id: 'batch-reference-image', dataUrl: 'data:image/png;base64,cmVmMg==', source: 'upload' })
+    await putImage({ id: 'batch-style-image', dataUrl: 'data:image/png;base64,c3R5bGUy', source: 'generated' })
+    useStore.setState({
+      tasks: [firstTask, secondTask],
+      inputImages: [],
+      galleryInputDraft: null,
+      selectedTaskIds: ['batch-deleted-task-a', 'batch-deleted-task-b'],
+      showToast: vi.fn(),
+    })
+
+    await removeMultipleTasks(['batch-deleted-task-a', 'batch-deleted-task-b'])
+
+    expect(await getImage('batch-reference-image')).toBeDefined()
+    expect(await getImage('batch-style-image')).toBeDefined()
   })
 })
 

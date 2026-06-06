@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { initStore, prepareStoreForAuthenticatedUser, resetUserScopedLocalState } from './store'
 import { useStore } from './store'
-import { getCurrentSession, login, logout, register, type AuthSession, type RegisterInput } from './lib/auth'
+import { getCurrentSession, login, logout, register, type AuthSession, type AuthUser, type RegisterInput } from './lib/auth'
+import { markNewUserOnboardingComplete, shouldShowNewUserOnboardingAfterRegister } from './lib/onboarding'
 import { buildSettingsFromUrlParams, clearUrlSettingParams, hasUrlSettingParams } from './lib/urlSettings'
 import { useDockerApiUrlMigrationNotice } from './hooks/useDockerApiUrlMigrationNotice'
 import Header from './components/Header'
 import LoginPage from './components/LoginPage'
 import AdminPanel from './components/AdminPanel'
 import UsagePanel from './components/UsagePanel'
+import NewUserOnboardingModal from './components/NewUserOnboardingModal'
 import AmazonPlanner from './components/AmazonPlanner'
 import SearchBar from './components/SearchBar'
 import TaskGrid from './components/TaskGrid'
@@ -21,11 +23,16 @@ import MaskEditorModal from './components/MaskEditorModal'
 import ImageContextMenu from './components/ImageContextMenu'
 import { useGlobalClickSuppression } from './lib/clickSuppression'
 
+export function canUseAmazonPlanner(user?: AuthUser) {
+  return Boolean(user)
+}
+
 export default function App() {
   const setSettings = useStore((s) => s.setSettings)
   const [authSession, setAuthSession] = useState<AuthSession | null>(null)
   const [accountDataReady, setAccountDataReady] = useState(false)
   const [view, setView] = useState<'workspace' | 'admin' | 'usage'>('workspace')
+  const [showNewUserOnboarding, setShowNewUserOnboarding] = useState(false)
   const initializedUserIdRef = useRef<string | null>(null)
   useDockerApiUrlMigrationNotice()
   useGlobalClickSuppression()
@@ -103,6 +110,7 @@ export default function App() {
       await loadAccountData(session.user.id)
     }
     setView('workspace')
+    setShowNewUserOnboarding(false)
     setAuthSession(session)
     return session
   }
@@ -111,10 +119,16 @@ export default function App() {
     const session = await register(input)
     if (session.authenticated && session.user) {
       await loadAccountData(session.user.id)
+      setShowNewUserOnboarding(shouldShowNewUserOnboardingAfterRegister(session.user.id))
     }
     setView('workspace')
     setAuthSession(session)
     return session
+  }
+
+  const completeNewUserOnboarding = (userId: string) => {
+    markNewUserOnboardingComplete(userId)
+    setShowNewUserOnboarding(false)
   }
 
   const handleLogout = () => {
@@ -122,6 +136,7 @@ export default function App() {
       resetUserScopedLocalState()
       initializedUserIdRef.current = null
       setAccountDataReady(false)
+      setShowNewUserOnboarding(false)
       setView('workspace')
       setAuthSession({ authenticated: false })
     })
@@ -158,7 +173,7 @@ export default function App() {
         <>
           <main data-home-main data-drag-select-surface className="home-main-with-dock pb-48 lg:pb-10">
             <div className="safe-area-x max-w-7xl mx-auto lg:!px-6">
-              <AmazonPlanner />
+              {canUseAmazonPlanner(authSession.user) && <AmazonPlanner />}
               <SearchBar />
               <TaskGrid />
             </div>
@@ -166,11 +181,17 @@ export default function App() {
           <InputBar />
           <DetailModal />
           <Lightbox />
-          <SettingsModal />
+          <SettingsModal clearPlannerSessions={canUseAmazonPlanner(authSession.user)} />
           <ConfirmDialog />
           <Toast />
           <MaskEditorModal />
           <ImageContextMenu />
+          {showNewUserOnboarding && authSession.user && (
+            <NewUserOnboardingModal
+              canUseAmazonPlanner={canUseAmazonPlanner(authSession.user)}
+              onComplete={() => completeNewUserOnboarding(authSession.user!.id)}
+            />
+          )}
         </>
       )}
     </>

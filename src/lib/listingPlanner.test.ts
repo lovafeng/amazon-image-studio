@@ -3,6 +3,7 @@ import { DEFAULT_CHAT_MODEL, DEFAULT_RESPONSES_MODEL, createDefaultOpenAIProfile
 import { DEFAULT_AMAZON_PROMPT_DRAFT } from './amazonPrompt'
 import {
   buildAmazonAPlusPlanPrompt,
+  buildAmazonDspPlanPrompt,
   buildAmazonPlanPrompt,
   buildAmazonStyleCandidatePrompt,
   formatAPlusModuleText,
@@ -10,7 +11,12 @@ import {
   getAPlusModuleDisplayName,
   getAPlusModuleEnglishName,
   getAPlusModuleSpecs,
+  getDspAssetDisplayName,
+  getDspAssetGenerationSize,
+  getDspAssetUploadSize,
+  getDspImageAssetSpecs,
   isAmazonListingMainSlot,
+  withDspGenerationSizes,
 } from './listingPlanner'
 import { callAmazonPlannerApi } from './listingPlannerApi'
 
@@ -150,6 +156,78 @@ describe('A+ module helpers', () => {
   })
 })
 
+describe('DSP asset helpers', () => {
+  it('exposes the fixed DSP image specs and CTA rules', () => {
+    const specs = getDspImageAssetSpecs()
+
+    expect(specs).toHaveLength(11)
+    expect(specs.map((spec) => spec.slot)).toContain('DSP-CUSTOM-300x250')
+    expect(specs.map((spec) => spec.slot)).toContain('DSP-CUSTOM-970x250')
+    expect(specs.map((spec) => spec.slot)).toContain('DSP-REC-600x600')
+
+    const banner970 = specs.find((spec) => spec.slot === 'DSP-CUSTOM-970x250')
+    expect(banner970).toMatchObject({
+      group: 'custom-image',
+      uploadWidth: 970,
+      uploadHeight: 250,
+      fileLimit: '200KB',
+      ctaPolicy: 'required',
+    })
+    expect(banner970?.rules.join('\n')).toContain('970x250')
+    expect(banner970?.rules.join('\n')).toContain('underlined text')
+
+    const semiAuto = specs.find((spec) => spec.slot === 'DSP-REC-600x600')
+    expect(semiAuto).toMatchObject({
+      group: 'semi-auto-rec',
+      uploadWidth: 600,
+      uploadHeight: 600,
+      fileLimit: '5MB',
+      ctaPolicy: 'forbidden',
+    })
+    expect(semiAuto?.rules.join('\n')).toContain('Do not include a CTA')
+  })
+
+  it('formats DSP upload and generation sizes', () => {
+    const spec = getDspImageAssetSpecs().find((item) => item.slot === 'DSP-CUSTOM-300x250')!
+
+    expect(getDspAssetDisplayName(spec)).toBe('Custom Image 300x250')
+    expect(getDspAssetUploadSize(spec)).toBe('300x250')
+    expect(getDspAssetGenerationSize(spec, '2K')).toMatch(/^\d+x\d+$/)
+
+    const plan = withDspGenerationSizes([{
+      slot: spec.slot,
+      label: spec.label,
+      group: spec.group,
+      assetType: spec.assetType,
+      uploadSize: getDspAssetUploadSize(spec),
+      generationSize: '',
+      fileLimit: spec.fileLimit,
+      ctaPolicy: spec.ctaPolicy,
+      planMarkdown: '中文 DSP 策划。',
+      prompt: 'Create a DSP banner.',
+      negativePrompt: 'Amazon UI, Click Here',
+    }], '2K')[0]
+
+    expect(plan.generationSize).toBe(getDspAssetGenerationSize(spec, '2K'))
+  })
+
+  it('builds DSP prompts with compliance rules and style reference guard', () => {
+    const prompt = buildAmazonDspPlanPrompt({
+      prompt: 'Create a polished DSP custom banner with product, logo, and Learn more CTA.',
+      negativePrompt: 'Amazon UI, Click Here, pure white background',
+      seriesStyleGuide: 'Use crisp retail typography and high-contrast product lighting.',
+      styleReferenceAttached: true,
+      styleDensityMode: 'minimal',
+    })
+
+    expect(prompt).toContain('Create a polished DSP custom banner')
+    expect(prompt).toContain('Series style guide:')
+    expect(prompt).toContain('Negative prompt:')
+    expect(prompt).toContain('refined minimal Amazon layout')
+    expect(prompt).toContain('The last input image is a hidden style reference')
+  })
+})
+
 function createStyleCandidates() {
   return [1, 2, 3].map((index) => ({
     label: `风格 ${index}`,
@@ -227,6 +305,36 @@ function createAPlusPayload(prefix: 'A+S' | 'A+L' | 'A+P', title = 'AI planned A
     seriesStyleGuide: 'Use a cohesive A+ visual style across the module set.',
     styleCandidates: createStyleCandidates(),
     aPlusPlans: createAPlusPlans(prefix, brand),
+  }
+}
+
+function createDspPlans() {
+  return getDspImageAssetSpecs().map((spec) => ({
+    slot: spec.slot,
+    label: `${spec.displayLabel} 方案`,
+    group: spec.group,
+    assetType: spec.assetType,
+    planMarkdown: `## ${spec.displayLabel}\n\n中文 DSP 策划说明。`,
+    prompt: `Create DSP asset ${spec.slot} with compliant branding and product evidence.`,
+    negativePrompt: `negative ${spec.slot}, Amazon UI, Click Here`,
+  }))
+}
+
+function createDspPayload(title = 'AI planned DSP tumbler') {
+  return {
+    product: {
+      title,
+      category: 'Kitchen / Drinkware',
+      brand: 'ExampleBrand',
+      color: 'matte black',
+      material: 'stainless steel',
+      audience: 'commuters',
+      packageIncludes: '1 tumbler, 1 straw',
+    },
+    sellingPoints: ['Cold for 24 hours'],
+    seriesStyleGuide: 'Use a cohesive DSP retail ad style across the asset set.',
+    styleCandidates: createStyleCandidates(),
+    dspPlans: createDspPlans(),
   }
 }
 
@@ -332,6 +440,7 @@ describe('callAmazonPlannerApi', () => {
     expect(url).toBe('https://api.deepseek.com/chat/completions')
     const body = JSON.parse(String(init?.body))
     expect(body.messages[0].content).toContain('Return a valid JSON object only')
+    expect(body.messages[0].content).toContain('product { title, category, brand, color, material, audience, packageIncludes }')
     expect(body.messages[0].content).toContain('styleCandidates array of exactly 3')
     expect(body.messages[0].content).toContain('Amazon Listing reference material for the planner')
     expect(body.messages[0].content).toContain('visual style reference board')
@@ -343,6 +452,29 @@ describe('callAmazonPlannerApi', () => {
     expect(body.response_format).toEqual({ type: 'json_object' })
     expect(result.parsed.title).toBe('DeepSeek planned tumbler')
     expect(result.plans).toHaveLength(7)
+  })
+
+  it('fails fast when Listing output repeats a slot and misses a required slot', async () => {
+    const payload = createApiPayload()
+    const missingSlot = payload.imagePlans[1].slot
+    payload.imagePlans[1] = { ...payload.imagePlans[1], slot: payload.imagePlans[0].slot }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(payload),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+    })).rejects.toThrow(`AI 策划结果缺少 ${missingSlot} 的图片方案`)
   })
 
   it('parses Standard A+ output and fills fixed module sizes without deciding content locally', async () => {
@@ -415,6 +547,31 @@ describe('callAmazonPlannerApi', () => {
     })
   })
 
+  it('fails fast when A+ output repeats a slot and misses a required slot', async () => {
+    const payload = createAPlusPayload('A+S')
+    const missingSlot = payload.aPlusPlans[1].slot
+    payload.aPlusPlans[1] = { ...payload.aPlusPlans[1], slot: payload.aPlusPlans[0].slot }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(payload),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+      mode: 'aplus',
+      aPlusType: 'standard',
+    })).rejects.toThrow(`AI A+ 策划结果缺少 ${missingSlot} 的模块方案`)
+  })
+
   it('does not include empty A+ brand output in parsed inferred fields', async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
       output_text: JSON.stringify(createAPlusPayload('A+S', 'Standard A+ tumbler')),
@@ -441,5 +598,143 @@ describe('callAmazonPlannerApi', () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
     expect(body.instructions).toContain('Known brand/model: ExistingBrand')
     expect(result.parsed.inferred).not.toHaveProperty('brand')
+  })
+
+  it('uses DSP planning schema and fills fixed upload metadata', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(createDspPayload()),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: { ...DEFAULT_AMAZON_PROMPT_DRAFT, brand: 'ExampleBrand' },
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+      mode: 'dsp',
+      aPlusGenerationTier: '2K',
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.text.format.name).toBe('amazon_dsp_image_plan')
+    expect(body.text.format.schema.required).toContain('dspPlans')
+    expect(body.text.format.schema.properties.dspPlans.minItems).toBe(getDspImageAssetSpecs().length)
+    expect(body.instructions).toContain('Amazon DSP advertising image-planning agent')
+    expect(body.instructions).toContain('Shop now')
+    expect(body.instructions).toContain('Click Here')
+    expect(body.instructions).toContain('970x250')
+    expect(body.instructions).toContain('Do not mimic Amazon website content')
+    expect(body.instructions).toContain('concise Simplified Chinese')
+    expect(body.instructions).toContain('2-4 bullets')
+    expect(body.instructions).not.toContain('detailed agent-style plan similar to a ChatGPT web response')
+    expect(body.input[0].content[0].text).toContain('produce the Amazon DSP advertising asset plan')
+
+    expect(result.mode).toBe('dsp')
+    expect(result.dspPlans).toHaveLength(getDspImageAssetSpecs().length)
+    expect(result.dspPlans[0]).toMatchObject({
+      slot: 'DSP-CUSTOM-300x250',
+      group: 'custom-image',
+      assetType: 'image',
+      uploadSize: '300x250',
+      fileLimit: '50KB',
+      ctaPolicy: 'required',
+      planMarkdown: expect.stringContaining('DSP 策划说明'),
+    })
+    expect(result.dspPlans.find((plan) => plan.slot === 'DSP-REC-600x600')).toMatchObject({
+      uploadSize: '600x600',
+      fileLimit: '5MB',
+      ctaPolicy: 'forbidden',
+    })
+  })
+
+  it('includes brand in the DSP Chat Completions schema guide', async () => {
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: JSON.stringify(createDspPayload('Chat planned DSP tumbler')),
+          },
+          finish_reason: 'stop',
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'chat-key',
+        apiMode: 'chat',
+        model: DEFAULT_CHAT_MODEL,
+      }),
+      mode: 'dsp',
+    })
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.messages[0].content).toContain('product { title, category, brand, color, material, audience, packageIncludes }')
+    expect(body.messages[0].content).toContain('dspPlans must contain exactly')
+    expect(result.mode).toBe('dsp')
+    expect(result.dspPlans).toHaveLength(getDspImageAssetSpecs().length)
+  })
+
+  it('fails fast when DSP output repeats a slot and misses a required slot', async () => {
+    const payload = createDspPayload()
+    const missingSlot = payload.dspPlans[1].slot
+    payload.dspPlans[1] = { ...payload.dspPlans[1], slot: payload.dspPlans[0].slot }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(payload),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+      mode: 'dsp',
+    })).rejects.toThrow(`AI DSP 策划结果缺少 ${missingSlot} 的素材方案`)
+  })
+
+  it('fails fast when DSP output is missing a prompt', async () => {
+    const payload = createDspPayload()
+    payload.dspPlans[0] = { ...payload.dspPlans[0], prompt: '' }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(payload),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+      mode: 'dsp',
+    })).rejects.toThrow('AI DSP 策划结果缺少 DSP-CUSTOM-300x250 的提示词')
   })
 })

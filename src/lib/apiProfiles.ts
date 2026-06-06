@@ -25,6 +25,9 @@ const DEFAULT_PROFILE_API_KEY = DEFAULT_SERVER_API_KEY_AVAILABLE ? DEFAULT_SERVE
 export const DEFAULT_IMAGES_MODEL = 'gpt-image-2'
 export const DEFAULT_RESPONSES_MODEL = 'gpt-5.5'
 export const DEFAULT_CHAT_MODEL = 'gpt-5.5'
+const DEFAULT_IMAGE_PROFILE_USES_RESPONSES = DEFAULT_OPENAI_API_PROXY && DEFAULT_SERVER_API_KEY_AVAILABLE
+const DEFAULT_IMAGE_PROFILE_MODEL = DEFAULT_IMAGE_PROFILE_USES_RESPONSES ? DEFAULT_RESPONSES_MODEL : DEFAULT_IMAGES_MODEL
+const DEFAULT_IMAGE_PROFILE_API_MODE = DEFAULT_IMAGE_PROFILE_USES_RESPONSES ? 'responses' : 'images'
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
@@ -304,8 +307,8 @@ export function createDefaultImageProfile(overrides: Partial<ApiProfile> = {}): 
     id: DEFAULT_OPENAI_PROFILE_ID,
     name: '生图',
     apiKey: DEFAULT_PROFILE_API_KEY,
-    model: DEFAULT_IMAGES_MODEL,
-    apiMode: 'images',
+    model: DEFAULT_IMAGE_PROFILE_MODEL,
+    apiMode: DEFAULT_IMAGE_PROFILE_API_MODE,
     apiProxy: DEFAULT_OPENAI_API_PROXY,
     ...overrides,
   })
@@ -447,23 +450,30 @@ function isBuiltInDefaultOpenAIProfile(profile: Pick<ApiProfile, 'id' | 'provide
 }
 
 function applyRuntimeDefaultsToDefaultProfile(profile: ApiProfile): ApiProfile {
-  if (!isBuiltInDefaultOpenAIProfile(profile)) return profile
+  const migratedProfile = isLegacyDefaultImageProfile(profile)
+    ? { ...profile, model: DEFAULT_RESPONSES_MODEL, apiMode: 'responses' as const }
+    : profile
+
+  if (!isBuiltInDefaultOpenAIProfile(migratedProfile)) return migratedProfile
 
   return {
-    ...profile,
+    ...migratedProfile,
     baseUrl: DEFAULT_SERVER_API_KEY_AVAILABLE
       ? DEFAULT_BASE_URL
-      : !profile.baseUrl.trim() || profile.baseUrl === OPENAI_DEFAULT_BASE_URL ? DEFAULT_BASE_URL : profile.baseUrl,
-    apiKey: DEFAULT_SERVER_API_KEY_AVAILABLE ? DEFAULT_PROFILE_API_KEY : profile.apiKey.trim() ? profile.apiKey : DEFAULT_PROFILE_API_KEY,
-    apiProxy: DEFAULT_OPENAI_API_PROXY || profile.apiProxy,
+      : !migratedProfile.baseUrl.trim() || migratedProfile.baseUrl === OPENAI_DEFAULT_BASE_URL ? DEFAULT_BASE_URL : migratedProfile.baseUrl,
+    apiKey: DEFAULT_SERVER_API_KEY_AVAILABLE ? DEFAULT_PROFILE_API_KEY : migratedProfile.apiKey.trim() ? migratedProfile.apiKey : DEFAULT_PROFILE_API_KEY,
+    apiProxy: DEFAULT_OPENAI_API_PROXY || migratedProfile.apiProxy,
   }
 }
 
 function resolveAmazonPlannerProfileId(profiles: ApiProfile[], value: unknown): string {
   const requestedId = typeof value === 'string' ? value : ''
   const requestedProfile = requestedId ? profiles.find((profile) => profile.id === requestedId) : undefined
-  if (requestedProfile && isAmazonPlannerProfile(requestedProfile)) return requestedProfile.id
-  return profiles.find(isAmazonPlannerProfile)?.id ?? ''
+  if (requestedProfile && requestedProfile.id !== DEFAULT_OPENAI_PROFILE_ID && isAmazonPlannerProfile(requestedProfile)) return requestedProfile.id
+  return profiles.find((profile) => profile.id === DEFAULT_AMAZON_PLANNER_PROFILE_ID && isAmazonPlannerProfile(profile))?.id ??
+    profiles.find((profile) => profile.id !== DEFAULT_OPENAI_PROFILE_ID && isAmazonPlannerProfile(profile))?.id ??
+    profiles.find(isAmazonPlannerProfile)?.id ??
+    ''
 }
 
 function createDefaultProfilePair(overrides: Partial<ApiProfile> = {}): ApiProfile[] {
@@ -496,8 +506,6 @@ function splitSingleDefaultOpenAIProfile(profile: ApiProfile): ApiProfile[] | nu
       createDefaultImageProfile({
         ...shared,
         codexCli: false,
-        model: DEFAULT_IMAGES_MODEL,
-        apiMode: 'images',
       }),
       createDefaultAmazonPlannerProfile({
         ...shared,
@@ -510,8 +518,8 @@ function splitSingleDefaultOpenAIProfile(profile: ApiProfile): ApiProfile[] | nu
   return [
     createDefaultImageProfile({
       ...shared,
-      model: profile.model.trim() || DEFAULT_IMAGES_MODEL,
-      apiMode: 'images',
+      model: profile.model === DEFAULT_IMAGES_MODEL ? DEFAULT_IMAGE_PROFILE_MODEL : profile.model.trim() || DEFAULT_IMAGE_PROFILE_MODEL,
+      apiMode: profile.apiMode === 'images' && profile.model !== DEFAULT_IMAGES_MODEL ? 'images' : DEFAULT_IMAGE_PROFILE_API_MODE,
     }),
     createDefaultAmazonPlannerProfile(shared),
   ]
@@ -747,11 +755,39 @@ export function getAmazonPlannerProfile(settings: Partial<AppSettings> | unknown
   return normalized.profiles.find((profile) => profile.id === normalized.amazonPlannerProfileId && isAmazonPlannerProfile(profile)) ?? null
 }
 
+export function isImageGenerationProfile(profile: Pick<ApiProfile, 'apiMode'>): boolean {
+  return profile.apiMode !== 'chat'
+}
+
 export function getDefaultImageProfile(settings: Partial<AppSettings> | unknown): ApiProfile | null {
   const normalized = normalizeSettings(settings)
-  return normalized.profiles.find((profile) => profile.id === DEFAULT_OPENAI_PROFILE_ID && profile.apiMode === 'images') ??
+  return normalized.profiles.find((profile) => profile.id === DEFAULT_OPENAI_PROFILE_ID && (profile.apiMode === 'images' || profile.apiMode === 'responses')) ??
     normalized.profiles.find((profile) => profile.apiMode === 'images') ??
     null
+}
+
+export function getImageGenerationProfile(settings: Partial<AppSettings> | unknown): ApiProfile | null {
+  const normalized = normalizeSettings(settings)
+  const activeProfile = getActiveApiProfile(settings)
+  if (activeProfile && isImageGenerationProfile(activeProfile) && activeProfile.id !== normalized.amazonPlannerProfileId) {
+    return activeProfile
+  }
+
+  const defaultImageProfile = getDefaultImageProfile(normalized)
+  if (defaultImageProfile) return defaultImageProfile
+
+  return normalized.profiles.find((profile) => isImageGenerationProfile(profile) && profile.id !== normalized.amazonPlannerProfileId) ?? null
+}
+
+export function getAgentResponsesProfile(settings: Partial<AppSettings> | unknown): ApiProfile | null {
+  const normalized = normalizeSettings(settings)
+  const activeProfile = getActiveApiProfile(settings)
+  if (activeProfile?.provider === 'openai' && activeProfile.apiMode === 'responses') return activeProfile
+
+  const plannerProfile = getAmazonPlannerProfile(normalized)
+  if (plannerProfile?.apiMode === 'responses') return plannerProfile
+
+  return normalized.profiles.find((profile) => profile.provider === 'openai' && profile.apiMode === 'responses') ?? null
 }
 
 export function validateApiProfile(profile: ApiProfile): string | null {
@@ -768,11 +804,24 @@ function isDefaultOpenAIProfile(profile: ApiProfile): boolean {
     profile.provider === 'openai' &&
     profile.baseUrl === DEFAULT_BASE_URL &&
     profile.apiKey === DEFAULT_PROFILE_API_KEY &&
+    profile.model === DEFAULT_IMAGE_PROFILE_MODEL &&
+    profile.timeout === DEFAULT_API_TIMEOUT &&
+    profile.apiMode === DEFAULT_IMAGE_PROFILE_API_MODE &&
+    profile.codexCli === false &&
+    profile.apiProxy === DEFAULT_OPENAI_API_PROXY &&
+    profile.streamImages === false &&
+    profile.streamPartialImages === DEFAULT_STREAM_PARTIAL_IMAGES
+}
+
+function isLegacyDefaultImageProfile(profile: ApiProfile): boolean {
+  return DEFAULT_IMAGE_PROFILE_USES_RESPONSES &&
+    profile.id === DEFAULT_OPENAI_PROFILE_ID &&
+    profile.name === '生图' &&
+    profile.provider === 'openai' &&
     profile.model === DEFAULT_IMAGES_MODEL &&
     profile.timeout === DEFAULT_API_TIMEOUT &&
     profile.apiMode === 'images' &&
     profile.codexCli === false &&
-    profile.apiProxy === DEFAULT_OPENAI_API_PROXY &&
     profile.streamImages === false &&
     profile.streamPartialImages === DEFAULT_STREAM_PARTIAL_IMAGES
 }
@@ -941,9 +990,9 @@ export function mergeImportedSettings(currentSettings: Partial<AppSettings> | un
 export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   baseUrl: DEFAULT_BASE_URL,
   apiKey: DEFAULT_PROFILE_API_KEY,
-  model: DEFAULT_IMAGES_MODEL,
+  model: DEFAULT_IMAGE_PROFILE_MODEL,
   timeout: DEFAULT_API_TIMEOUT,
-  apiMode: 'images',
+  apiMode: DEFAULT_IMAGE_PROFILE_API_MODE,
   codexCli: false,
   apiProxy: DEFAULT_OPENAI_API_PROXY,
   streamImages: false,

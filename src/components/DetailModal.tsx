@@ -941,6 +941,7 @@ export default function DetailModal() {
                   >
                     <option value="amazon-listing">Listing 图</option>
                     <option value="amazon-aplus">A+ 图</option>
+                    <option value="amazon-dsp">DSP 图</option>
                     <option value="gallery">普通生图</option>
                     <option value="agent">Agent</option>
                     <option value="unknown">未知来源</option>

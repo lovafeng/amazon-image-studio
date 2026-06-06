@@ -1,17 +1,20 @@
 import { useEffect, useState } from 'react'
 import {
   getAdminSummary,
+  getAdminTasks,
   getAdminUsage,
   getAdminUsers,
   resetUserPassword,
+  setUserTokenLimit,
   setUserStatus,
   type AdminSummary,
+  type AdminTask,
   type AdminUser,
   type UsageEvent,
   type UsageSummary,
 } from '../lib/admin'
 
-type AdminTab = 'summary' | 'users' | 'usage'
+type AdminTab = 'summary' | 'users' | 'usage' | 'tasks'
 
 function formatNumber(value?: number) {
   return Number(value ?? 0).toLocaleString()
@@ -21,8 +24,23 @@ function formatDate(value?: number) {
   return value ? new Date(value).toLocaleString() : '暂无'
 }
 
+function formatTokenLimit(value?: number | null) {
+  return value == null ? '不限' : formatNumber(value)
+}
+
 function userLabel(user: Pick<AdminUser, 'email' | 'phone' | 'id'>) {
   return user.email || user.phone || user.id
+}
+
+function adminTaskUserLabel(task: AdminTask) {
+  return task.email || task.phone || task.userId
+}
+
+function taskStatusLabel(status?: string) {
+  if (status === 'done') return '完成'
+  if (status === 'running') return '进行中'
+  if (status === 'error') return '失败'
+  return status || '未知'
 }
 
 export default function AdminPanel() {
@@ -31,18 +49,22 @@ export default function AdminPanel() {
   const [users, setUsers] = useState<AdminUser[]>([])
   const [usageSummaries, setUsageSummaries] = useState<UsageSummary[]>([])
   const [events, setEvents] = useState<UsageEvent[]>([])
+  const [tasks, setTasks] = useState<AdminTask[]>([])
   const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>({})
+  const [tokenLimitDrafts, setTokenLimitDrafts] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   const load = () => {
     setLoading(true)
-    Promise.all([getAdminSummary(), getAdminUsers(), getAdminUsage()])
-      .then(([nextSummary, nextUsers, usage]) => {
+    setError('')
+    Promise.all([getAdminSummary(), getAdminUsers(), getAdminUsage(), getAdminTasks()])
+      .then(([nextSummary, nextUsers, usage, nextTasks]) => {
         setSummary(nextSummary)
         setUsers(nextUsers)
         setUsageSummaries(usage.summaries ?? [])
         setEvents(usage.events)
+        setTasks(nextTasks)
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false))
@@ -63,6 +85,14 @@ export default function AdminPanel() {
     })
   }
 
+  const saveTokenLimit = (user: AdminUser) => {
+    const draft = tokenLimitDrafts[user.id] ?? ''
+    void setUserTokenLimit(user.id, draft.trim() ? Number(draft) : null).then(() => {
+      setTokenLimitDrafts((current) => ({ ...current, [user.id]: '' }))
+      load()
+    })
+  }
+
   return (
     <main className="safe-area-x mx-auto max-w-7xl pb-12 pt-6 lg:!px-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
@@ -75,6 +105,7 @@ export default function AdminPanel() {
             ['summary', '管理总览'],
             ['users', '用户管理'],
             ['usage', '使用统计'],
+            ['tasks', '分析任务'],
           ].map(([value, label]) => (
             <button
               key={value}
@@ -101,6 +132,7 @@ export default function AdminPanel() {
             ['失败次数', summary?.failures],
             ['生成图片', summary?.generatedImages],
             ['Token', summary?.totalTokens],
+            ['Token 上限', users.filter((user) => user.tokenLimit != null).length],
           ].map(([label, value]) => (
             <article key={label} className="rounded-lg border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-900">
               <span className="text-xs text-gray-500 dark:text-gray-400">{label}</span>
@@ -117,7 +149,7 @@ export default function AdminPanel() {
           </div>
           <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
             {users.map((user) => (
-              <div key={user.id} className="grid gap-3 px-4 py-4 text-sm md:grid-cols-[1.4fr_1fr_1fr_1.4fr]">
+            <div key={user.id} className="grid gap-3 px-4 py-4 text-sm md:grid-cols-[1.3fr_1fr_1fr_1.9fr]">
                 <div>
                   <strong className="block text-gray-900 dark:text-gray-100">{userLabel(user)}</strong>
                   <span className="text-gray-500 dark:text-gray-400">{user.role} · {user.status}</span>
@@ -125,6 +157,7 @@ export default function AdminPanel() {
                 <div className="text-gray-600 dark:text-gray-300">
                   <div>调用 {formatNumber(user.usage?.calls)}</div>
                   <div>图片 {formatNumber(user.usage?.generatedImages)}</div>
+                  <div>Token {formatNumber(user.usage?.totalTokens)} / {formatTokenLimit(user.tokenLimit)}</div>
                 </div>
                 <div className="text-gray-600 dark:text-gray-300">
                   <div>注册 {formatDate(user.createdAt)}</div>
@@ -143,6 +176,20 @@ export default function AdminPanel() {
                   />
                   <button type="button" onClick={() => resetPassword(user)} className="rounded-md bg-gray-900 px-3 py-2 text-sm text-white hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-950">
                     重置密码
+                  </button>
+                  <label className="flex items-center gap-2 text-gray-600 dark:text-gray-300">
+                    <span className="whitespace-nowrap text-xs">Token 上限</span>
+                    <input
+                      value={tokenLimitDrafts[user.id] ?? ''}
+                      onChange={(event) => setTokenLimitDrafts((current) => ({ ...current, [user.id]: event.target.value }))}
+                      type="number"
+                      min="0"
+                      placeholder={formatTokenLimit(user.tokenLimit)}
+                      className="h-9 w-28 rounded-md border border-gray-300 bg-white px-2 text-sm dark:border-gray-700 dark:bg-gray-950"
+                    />
+                  </label>
+                  <button type="button" onClick={() => saveTokenLimit(user)} className="rounded-md border border-gray-300 px-3 py-2 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-white/10">
+                    保存上限
                   </button>
                 </div>
               </div>
@@ -181,6 +228,38 @@ export default function AdminPanel() {
                 </div>
               ))}
             </div>
+          </div>
+        </section>
+      )}
+
+      {tab === 'tasks' && (
+        <section className="rounded-lg border border-gray-200 bg-white dark:border-white/[0.08] dark:bg-gray-900">
+          <div className="border-b border-gray-200 px-4 py-3 dark:border-white/[0.08]">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">分析任务</h2>
+          </div>
+          {!loading && tasks.length === 0 && <p className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400">暂无分析任务</p>}
+          <div className="divide-y divide-gray-100 dark:divide-white/[0.06]">
+            {tasks.map((item) => (
+              <div key={`${item.owner}:${item.task.id}`} className="grid gap-3 px-4 py-4 text-sm md:grid-cols-[1.1fr_0.8fr_0.8fr_2fr_0.7fr]">
+                <div>
+                  <strong className="block text-gray-900 dark:text-gray-100">{adminTaskUserLabel(item)}</strong>
+                  <span className="text-gray-500 dark:text-gray-400">{item.role || 'user'} · {item.status || 'active'}</span>
+                </div>
+                <div className="text-gray-600 dark:text-gray-300">
+                  <strong className="block text-gray-900 dark:text-gray-100">{taskStatusLabel(item.task.status)}</strong>
+                  <span>{formatDate(item.task.createdAt)}</span>
+                </div>
+                <div className="text-gray-600 dark:text-gray-300">
+                  <div>{item.task.apiProvider || 'openai'}</div>
+                  <div className="truncate">{item.task.apiModel || item.task.apiProfileName || '默认模型'}</div>
+                </div>
+                <p className="line-clamp-2 text-gray-700 dark:text-gray-200">{item.task.prompt || '无提示词'}</p>
+                <div className="text-gray-600 dark:text-gray-300">
+                  <div>{formatNumber(item.task.outputImages?.length)} 张图</div>
+                  <div>{item.task.elapsed == null ? '耗时暂无' : `${formatNumber(Math.round(item.task.elapsed / 1000))} 秒`}</div>
+                </div>
+              </div>
+            ))}
           </div>
         </section>
       )}

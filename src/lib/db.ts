@@ -1,4 +1,4 @@
-import type { AmazonPlannerSession, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
+import type { AgentConversation, AmazonPlannerSession, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
 
 const DB_NAME = 'amazon-image-studio'
 const DB_VERSION = 3
@@ -6,11 +6,13 @@ const STORE_TASKS = 'tasks'
 const STORE_IMAGES = 'images'
 const STORE_THUMBNAILS = 'thumbnails'
 const STORE_AMAZON_PLANNER_SESSIONS = 'amazonPlannerSessions'
+const LEGACY_IDB_SERVER_MIGRATION_KEY = 'amazon-image-studio:indexeddb-server-migration-v1'
 const THUMBNAIL_MAX_SIZE = 720
 const THUMBNAIL_QUALITY = 0.9
 const THUMBNAIL_VERSION = 2
 
 export const CURRENT_THUMBNAIL_VERSION = THUMBNAIL_VERSION
+let legacyIndexedDbMigrationPromise: Promise<void> | null = null
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
@@ -35,10 +37,89 @@ async function apiDelete(path: string): Promise<undefined> {
   return undefined
 }
 
+function openLegacyDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION)
+    req.onupgradeneeded = (e) => {
+      const db = (e.target as IDBOpenDBRequest).result
+      if (!db.objectStoreNames.contains(STORE_TASKS)) {
+        db.createObjectStore(STORE_TASKS, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(STORE_IMAGES)) {
+        db.createObjectStore(STORE_IMAGES, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(STORE_THUMBNAILS)) {
+        db.createObjectStore(STORE_THUMBNAILS, { keyPath: 'id' })
+      }
+      if (!db.objectStoreNames.contains(STORE_AMAZON_PLANNER_SESSIONS)) {
+        db.createObjectStore(STORE_AMAZON_PLANNER_SESSIONS, { keyPath: 'id' })
+      }
+    }
+    req.onsuccess = () => resolve(req.result)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+function legacyDbTransaction<T>(
+  storeName: string,
+  mode: IDBTransactionMode,
+  fn: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  return openLegacyDB().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, mode)
+        const store = tx.objectStore(storeName)
+        const req = fn(store)
+        req.onsuccess = () => resolve(req.result)
+        req.onerror = () => reject(req.error)
+      }),
+  )
+}
+
+function getAllLegacyRecords<T>(storeName: string): Promise<T[]> {
+  return legacyDbTransaction(storeName, 'readonly', (store) => store.getAll() as IDBRequest<T[]>)
+}
+
+async function runLegacyIndexedDbMigration(): Promise<void> {
+  if (localStorage.getItem(LEGACY_IDB_SERVER_MIGRATION_KEY) === 'true') return
+
+  const tasks = await getAllLegacyRecords<TaskRecord>(STORE_TASKS)
+  const images = await getAllLegacyRecords<StoredImage>(STORE_IMAGES)
+  const thumbnails = await getAllLegacyRecords<StoredImageThumbnail>(STORE_THUMBNAILS)
+  const plannerSessions = await getAllLegacyRecords<AmazonPlannerSession>(STORE_AMAZON_PLANNER_SESSIONS)
+
+  for (const task of tasks) {
+    await apiPut<{ id: string }>(`/tasks/${encodeURIComponent(task.id)}`, task)
+  }
+  for (const image of images) {
+    await apiPut<{ id: string }>(`/images/${encodeURIComponent(image.id)}`, image)
+  }
+  for (const thumbnail of thumbnails) {
+    await apiPut<{ id: string }>(`/thumbnails/${encodeURIComponent(thumbnail.id)}`, thumbnail)
+  }
+  for (const session of plannerSessions) {
+    await apiPut<{ id: string }>(`/amazon-planner-sessions/${encodeURIComponent(session.id)}`, session)
+  }
+
+  localStorage.setItem(LEGACY_IDB_SERVER_MIGRATION_KEY, 'true')
+}
+
+function migrateLegacyIndexedDBToServer(): Promise<void> {
+  if (typeof indexedDB === 'undefined' || typeof localStorage === 'undefined') return Promise.resolve()
+  legacyIndexedDbMigrationPromise ??= runLegacyIndexedDbMigration()
+  return legacyIndexedDbMigrationPromise
+}
+
+async function migratedApiJson<T>(path: string): Promise<T> {
+  await migrateLegacyIndexedDBToServer()
+  return apiJson(path)
+}
+
 // ===== Tasks =====
 
 export function getAllTasks(): Promise<TaskRecord[]> {
-  return apiJson('/tasks')
+  return migratedApiJson('/tasks')
 }
 
 export function putTask(task: TaskRecord): Promise<IDBValidKey> {
@@ -53,10 +134,28 @@ export function clearTasks(): Promise<undefined> {
   return apiDelete('/tasks')
 }
 
+// ===== Agent conversations =====
+
+export function getAllAgentConversations(): Promise<AgentConversation[]> {
+  return apiJson('/agent-conversations')
+}
+
+export function putAgentConversation(conversation: AgentConversation): Promise<IDBValidKey> {
+  return apiPut<{ id: string }>(`/agent-conversations/${encodeURIComponent(conversation.id)}`, conversation).then((result) => result.id)
+}
+
+export function deleteAgentConversation(id: string): Promise<undefined> {
+  return apiDelete(`/agent-conversations/${encodeURIComponent(id)}`)
+}
+
+export function clearAgentConversations(): Promise<undefined> {
+  return apiDelete('/agent-conversations')
+}
+
 // ===== Amazon planner sessions =====
 
 export function getAllAmazonPlannerSessions(): Promise<AmazonPlannerSession[]> {
-  return apiJson('/amazon-planner-sessions')
+  return migratedApiJson('/amazon-planner-sessions')
 }
 
 export function putAmazonPlannerSession(session: AmazonPlannerSession): Promise<IDBValidKey> {
@@ -74,11 +173,11 @@ export function clearAmazonPlannerSessions(): Promise<undefined> {
 // ===== Images =====
 
 export function getImage(id: string): Promise<StoredImage | undefined> {
-  return apiJson<StoredImage | null>(`/images/${encodeURIComponent(id)}`).then((image) => image ?? undefined)
+  return migratedApiJson<StoredImage | null>(`/images/${encodeURIComponent(id)}`).then((image) => image ?? undefined)
 }
 
 export function getStoredImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
-  return apiJson<StoredImageThumbnail | null>(`/thumbnails/${encodeURIComponent(id)}`).then((thumbnail) => thumbnail ?? undefined)
+  return migratedApiJson<StoredImageThumbnail | null>(`/thumbnails/${encodeURIComponent(id)}`).then((thumbnail) => thumbnail ?? undefined)
 }
 
 export async function getStoredFreshImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
@@ -93,10 +192,6 @@ export function putImageThumbnail(thumbnail: StoredImageThumbnail): Promise<IDBV
 export async function getImageThumbnail(id: string): Promise<StoredImageThumbnail | undefined> {
   const existingThumbnail = await getStoredImageThumbnail(id)
   if (existingThumbnail?.thumbnailVersion === THUMBNAIL_VERSION) {
-    const image = await getImage(id)
-    if (image && (!image.width || !image.height) && existingThumbnail.width && existingThumbnail.height) {
-      await putImage({ ...image, width: existingThumbnail.width, height: existingThumbnail.height })
-    }
     return existingThumbnail
   }
 
@@ -135,11 +230,11 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
 }
 
 export function getAllImages(): Promise<StoredImage[]> {
-  return apiJson('/images')
+  return migratedApiJson('/images')
 }
 
 export function getAllImageIds(): Promise<string[]> {
-  return apiJson('/images/ids')
+  return migratedApiJson('/images/ids')
 }
 
 export function putImage(image: StoredImage): Promise<IDBValidKey> {

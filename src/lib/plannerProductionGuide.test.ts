@@ -10,7 +10,7 @@ function task(status: TaskRecord['status'], batchId = 'batch-1'): TaskRecord {
   return {
     id: `${status}-${batchId}`,
     prompt: 'prompt',
-    params: { size: '1024x1024', quality: 'auto', output_format: 'png', output_compression: 100, n: 1 },
+    params: { size: '1024x1024', quality: 'auto', output_format: 'png', output_compression: 100, moderation: 'auto', n: 1 },
     apiProvider: 'openai',
     apiMode: 'images',
     inputImageIds: [],

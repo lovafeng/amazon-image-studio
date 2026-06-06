@@ -216,6 +216,9 @@ export interface TaskRecord {
     amazonSlot?: string
     aPlusType?: 'standard' | 'standard-large' | 'premium'
     styleReferenceImageId?: string
+    plannerSessionId?: string
+    plannerBatchId?: string
+    styleReferenceLabel?: string
   }
 }
 
@@ -278,6 +281,15 @@ export interface AmazonPlannerSessionStyleImage {
 }
 
 export type AmazonStyleDensityMode = 'rich' | 'minimal'
+
+export interface AmazonPlannerSelectedStyleReference {
+  imageId: string
+  label: string
+  description?: string
+  source: 'current-candidate' | 'planner-history' | 'gallery'
+  candidateIndex?: number
+  plannerSessionId?: string
+}
 
 export interface AmazonPlannerSession {
   id: string

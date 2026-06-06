@@ -28,7 +28,7 @@ import {
 } from '../lib/listingPlanner'
 import { callAmazonPlannerApi, type PlannerApiResult } from '../lib/listingPlannerApi'
 import { getBatchSubmitStatusText, getPlannerActionGuidance, getSubmitButtonLabel } from '../lib/amazonPlannerAction'
-import { deriveProductionGuideState, getProductionEstimate, type ProductionStageId } from '../lib/plannerProductionGuide'
+import { deriveProductionGuideState, getProductionEstimate, summarizePlannerBatchTasks, type ProductionStageId } from '../lib/plannerProductionGuide'
 import { buildStyleReferenceLibrary, type StyleReferenceLibraryItem } from '../lib/styleReferenceLibrary'
 import { callImageApi } from '../lib/api'
 import { deleteAmazonPlannerSession, getAllAmazonPlannerSessions, putAmazonPlannerSession, storeImage } from '../lib/db'
@@ -99,6 +99,10 @@ const PLANNER_HISTORY_LIMIT = 30
 
 function createPlannerSessionId() {
   return `amazon-planner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function createPlannerBatchId() {
+  return `amazon-planner-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
 function normalizeHistoryTitle(value: string) {
@@ -315,9 +319,11 @@ export default function AmazonPlanner() {
   const inputImages = useStore((s) => s.inputImages)
   const settings = useStore((s) => s.settings)
   const tasks = useStore((s) => s.tasks)
+  const galleryStyleReferenceRequest = useStore((s) => s.galleryStyleReferenceRequest)
   const setPrompt = useStore((s) => s.setPrompt)
   const setParams = useStore((s) => s.setParams)
   const setPendingTaskCategory = useStore((s) => s.setPendingTaskCategory)
+  const setGalleryStyleReferenceRequest = useStore((s) => s.setGalleryStyleReferenceRequest)
   const setShowSettings = useStore((s) => s.setShowSettings)
   const removeInputImage = useStore((s) => s.removeInputImage)
   const clearInputImages = useStore((s) => s.clearInputImages)
@@ -365,6 +371,7 @@ export default function AmazonPlanner() {
   const [actionProgress, setActionProgress] = useState<PlannerActionProgressMap>({})
   const [isBatchSubmitting, setIsBatchSubmitting] = useState(false)
   const [batchSubmittedCount, setBatchSubmittedCount] = useState(0)
+  const [activePlannerBatchId, setActivePlannerBatchId] = useState<string | null>(null)
   const resolutionTier = resolution === '4k' ? '4K' : '2K'
   const aPlusSpecs = useMemo(() => getAPlusModuleSpecs(aPlusType), [aPlusType])
   const aPlusPlansWithSizes = useMemo(() => withAPlusGenerationSizes(aPlusPlans, resolutionTier), [aPlusPlans, resolutionTier])
@@ -499,6 +506,8 @@ export default function AmazonPlanner() {
   const submittedVisiblePlanCount = (plannerMode === 'aplus' ? aPlusPlansWithSizes : imagePlans).filter((plan, index) =>
     actionProgress[getPlannerActionKey(plannerMode, index, plan.slot)] === 'submitted',
   ).length
+  const activePlannerBatchSummary = summarizePlannerBatchTasks(tasks, activePlannerBatchId)
+  const hasActivePlannerBatchSummary = activePlannerBatchSummary.total > 0
   const batchSubmitStatusText = getBatchSubmitStatusText({
     isBatchSubmitting,
     batchSubmittedCount,
@@ -686,6 +695,22 @@ export default function AmazonPlanner() {
     }
   }, [styleReferenceImageSrcById, styleReferenceLibraryItems])
 
+  useEffect(() => {
+    if (!galleryStyleReferenceRequest) return
+    setSelectedStyleIndex(null)
+    setSelectedStyleReference({
+      imageId: galleryStyleReferenceRequest.imageId,
+      label: galleryStyleReferenceRequest.label,
+      source: 'gallery',
+    })
+    setGalleryStyleReferenceRequest(null)
+    document.querySelector<HTMLElement>('[data-amazon-style-board]')?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    })
+    showToast('已将图库图片用作当前风格', 'success')
+  }, [galleryStyleReferenceRequest, setGalleryStyleReferenceRequest, showToast])
+
   const upsertPlannerSessionList = (session: AmazonPlannerSession) => {
     setPlannerSessions((current) => sortPlannerSessions([
       session,
@@ -771,7 +796,7 @@ export default function AmazonPlanner() {
     })
   }
 
-  const buildBatchGenerateJobs = (): BatchGenerateJob[] => {
+  const buildBatchGenerateJobs = (plannerBatchId?: string): BatchGenerateJob[] => {
     if (plannerMode === 'aplus') {
       return aPlusPlansWithSizes.map((plan, index) => {
         const prompt = buildAmazonAPlusPlanPrompt({
@@ -790,6 +815,8 @@ export default function AmazonPlanner() {
             workflow: 'amazon-aplus',
             amazonSlot: plan.slot,
             aPlusType,
+            plannerSessionId: currentPlannerSessionId ?? undefined,
+            ...(plannerBatchId ? { plannerBatchId } : {}),
             ...selectedStyleReferenceCategory,
           },
         }
@@ -813,6 +840,8 @@ export default function AmazonPlanner() {
           productTitle: draft.productTitle.trim(),
           workflow: 'amazon-listing',
           amazonSlot: plan.slot,
+          plannerSessionId: currentPlannerSessionId ?? undefined,
+          ...(plannerBatchId ? { plannerBatchId } : {}),
           ...(requiresStyle ? selectedStyleReferenceCategory : {}),
         },
       }
@@ -846,6 +875,7 @@ export default function AmazonPlanner() {
         productTitle: draft.productTitle.trim(),
         workflow: plannerMode === 'aplus' ? 'amazon-aplus' : 'amazon-listing',
         amazonSlot: plannerMode === 'aplus' ? selectedAPlusPlan?.slot : selectedPlan?.slot,
+        plannerSessionId: currentPlannerSessionId ?? undefined,
         ...(plannerMode === 'aplus' ? { aPlusType } : {}),
         ...(usesStyleReferenceForActivePlan ? selectedStyleReferenceCategory : {}),
       },
@@ -906,13 +936,15 @@ export default function AmazonPlanner() {
     const imageProfile = getImageProfileForSubmit()
     if (!imageProfile) return
 
-    const jobs = buildBatchGenerateJobs()
+    const plannerBatchId = createPlannerBatchId()
+    const jobs = buildBatchGenerateJobs(plannerBatchId)
     if (!jobs.length) {
       showToast('当前没有可提交的图片方案', 'error')
       return
     }
 
     const batchInputImages = useStore.getState().inputImages
+    setActivePlannerBatchId(plannerBatchId)
     setIsBatchSubmitting(true)
     setBatchSubmittedCount(0)
     for (const job of jobs) {
@@ -2289,6 +2321,11 @@ export default function AmazonPlanner() {
                   <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                     <div className={`rounded-lg border px-3 py-2 text-xs leading-relaxed ${batchStyleReferenceLimitExceeded ? 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-400/20 dark:bg-amber-400/10 dark:text-amber-200' : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-300'}`}>
                       {batchSubmitStatusText}
+                      {hasActivePlannerBatchSummary && (
+                        <span className="mt-1 block font-medium">
+                          生成进度：运行中 {activePlannerBatchSummary.running} / 已完成 {activePlannerBatchSummary.done} / 失败 {activePlannerBatchSummary.error}
+                        </span>
+                      )}
                       {batchStyleReferenceLimitExceeded && (
                         <span className="mt-1 block">当前参考图加隐藏风格板共 {batchEffectiveReferenceCount} 张，超过上限 {API_MAX_IMAGES} 张。</span>
                       )}

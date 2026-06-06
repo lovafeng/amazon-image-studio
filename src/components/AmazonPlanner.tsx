@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
-import { addImageFromFile, addImageFromUrl, ensureImageCached, submitTask, useStore } from '../store'
+import { addImageFromFile, addImageFromUrl, ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail, submitTask, useStore } from '../store'
 import { getAmazonPlannerProfile, getDefaultImageProfile, normalizeSettings, validateApiProfile } from '../lib/apiProfiles'
 import {
   DEFAULT_AMAZON_PROMPT_DRAFT,
@@ -29,6 +29,7 @@ import {
 import { callAmazonPlannerApi, type PlannerApiResult } from '../lib/listingPlannerApi'
 import { getBatchSubmitStatusText, getPlannerActionGuidance, getSubmitButtonLabel } from '../lib/amazonPlannerAction'
 import { deriveProductionGuideState, getProductionEstimate, type ProductionStageId } from '../lib/plannerProductionGuide'
+import { buildStyleReferenceLibrary, type StyleReferenceLibraryItem } from '../lib/styleReferenceLibrary'
 import { callImageApi } from '../lib/api'
 import { deleteAmazonPlannerSession, getAllAmazonPlannerSessions, putAmazonPlannerSession, storeImage } from '../lib/db'
 import { normalizeParamsForSettings } from '../lib/paramCompatibility'
@@ -45,9 +46,10 @@ import {
   type AmazonDomImportResult,
 } from '../lib/amazonDomImport'
 import { DEFAULT_PARAMS } from '../types'
-import type { AmazonPlannerSession, TaskRecord } from '../types'
+import type { AmazonPlannerSelectedStyleReference, AmazonPlannerSession, TaskRecord } from '../types'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, DownloadIcon, EyeIcon, HistoryIcon, ImportIcon, PhotoIcon, PlusIcon, TrashIcon } from './icons'
 import PlannerProductionGuide from './PlannerProductionGuide'
+import StyleReferenceLibrary from './StyleReferenceLibrary'
 
 const FIELD_CLASS = 'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-100 dark:placeholder:text-gray-500'
 const LABEL_CLASS = 'mb-1.5 block text-xs font-medium text-gray-500 dark:text-gray-400'
@@ -345,6 +347,8 @@ export default function AmazonPlanner() {
   const [styleCandidates, setStyleCandidates] = useState<AmazonStyleCandidate[]>([])
   const [styleImages, setStyleImages] = useState<StyleImageState[]>([])
   const [selectedStyleIndex, setSelectedStyleIndex] = useState<number | null>(null)
+  const [selectedStyleReference, setSelectedStyleReference] = useState<AmazonPlannerSelectedStyleReference | null>(null)
+  const [cachedStyleReferenceImageSrcById, setCachedStyleReferenceImageSrcById] = useState<Record<string, string>>({})
   const [styleDensityMode, setStyleDensityMode] = useState<AmazonStyleDensityMode>('rich')
   const [stylePreview, setStylePreview] = useState<StylePreviewState | null>(null)
   const [isGeneratingStyleImages, setIsGeneratingStyleImages] = useState(false)
@@ -370,12 +374,36 @@ export default function AmazonPlanner() {
   const selectedStyleImage = selectedStyleIndex == null ? null : styleImages.find((image) => image.candidateIndex === selectedStyleIndex && image.status === 'done') ?? null
   const selectedStyleCandidate = selectedStyleIndex == null ? null : styleCandidates[selectedStyleIndex] ?? null
   const styleLightboxImageIds = useMemo(() => styleImages.flatMap((image) => image.status === 'done' && image.imageId ? [image.imageId] : []), [styleImages])
+  const styleReferenceLibraryItems = useMemo(() => buildStyleReferenceLibrary({
+    sessions: plannerSessions,
+    currentMode: plannerMode,
+    productTitle: draft.productTitle || listingText,
+  }), [draft.productTitle, listingText, plannerMode, plannerSessions])
+  const currentStyleImageSrcById = useMemo(() => Object.fromEntries(
+    styleImages.flatMap((image) => image.status === 'done' && image.imageId && image.dataUrl ? [[image.imageId, image.dataUrl]] : []),
+  ), [styleImages])
+  const styleReferenceImageSrcById = useMemo(() => ({
+    ...cachedStyleReferenceImageSrcById,
+    ...currentStyleImageSrcById,
+  }), [cachedStyleReferenceImageSrcById, currentStyleImageSrcById])
+  const styleReferenceLightboxImageIds = useMemo(() => Array.from(new Set([
+    ...styleLightboxImageIds,
+    ...styleReferenceLibraryItems.map((item) => item.imageId),
+  ])), [styleLightboxImageIds, styleReferenceLibraryItems])
+  const selectedStyleReferenceImageId = selectedStyleReference?.imageId ?? selectedStyleImage?.imageId
+  const selectedStyleReferenceLabel = selectedStyleReference?.label ?? selectedStyleCandidate?.label
+  const selectedStyleReferenceCategory = selectedStyleReferenceImageId
+    ? {
+        styleReferenceImageId: selectedStyleReferenceImageId,
+        ...(selectedStyleReferenceLabel ? { styleReferenceLabel: selectedStyleReferenceLabel } : {}),
+      }
+    : {}
   const activeSeriesStyleGuide = plannerMode === 'aplus' ? seriesStyleGuides.aplus : seriesStyleGuides.listing
   const isMainListingPlan = plannerMode === 'listing' && isAmazonListingMainSlot(selectedPlan?.slot)
   const styleReferenceRequired = !isMainListingPlan
-  const hasStyleReference = Boolean(selectedStyleImage?.imageId)
+  const hasStyleReference = Boolean(selectedStyleReferenceImageId)
   const usesStyleReferenceForActivePlan = styleReferenceRequired && hasStyleReference
-  const effectiveReferenceCount = inputImages.length + (usesStyleReferenceForActivePlan && selectedStyleImage?.imageId && !inputImages.some((image) => image.id === selectedStyleImage.imageId) ? 1 : 0)
+  const effectiveReferenceCount = inputImages.length + (usesStyleReferenceForActivePlan && selectedStyleReferenceImageId && !inputImages.some((image) => image.id === selectedStyleReferenceImageId) ? 1 : 0)
   const styleReferenceLimitExceeded = usesStyleReferenceForActivePlan && effectiveReferenceCount > API_MAX_IMAGES
   const activePrompt = plannerMode === 'aplus'
     ? selectedAPlusPlan ? buildAmazonAPlusPlanPrompt({ ...selectedAPlusPlan, seriesStyleGuide: activeSeriesStyleGuide, styleReferenceAttached: usesStyleReferenceForActivePlan, styleDensityMode }) : ''
@@ -466,7 +494,7 @@ export default function AmazonPlanner() {
   const seriesStyleReferenceNeeded = plannerMode === 'aplus'
     ? hasPlanOptions
     : imagePlans.some((plan) => !isAmazonListingMainSlot(plan.slot))
-  const batchEffectiveReferenceCount = inputImages.length + (seriesStyleReferenceNeeded && hasStyleReference && selectedStyleImage?.imageId && !inputImages.some((image) => image.id === selectedStyleImage.imageId) ? 1 : 0)
+  const batchEffectiveReferenceCount = inputImages.length + (seriesStyleReferenceNeeded && hasStyleReference && selectedStyleReferenceImageId && !inputImages.some((image) => image.id === selectedStyleReferenceImageId) ? 1 : 0)
   const batchStyleReferenceLimitExceeded = seriesStyleReferenceNeeded && hasStyleReference && batchEffectiveReferenceCount > API_MAX_IMAGES
   const submittedVisiblePlanCount = (plannerMode === 'aplus' ? aPlusPlansWithSizes : imagePlans).filter((plan, index) =>
     actionProgress[getPlannerActionKey(plannerMode, index, plan.slot)] === 'submitted',
@@ -633,6 +661,31 @@ export default function AmazonPlanner() {
     setReferencePayloadNotice('')
   }, [inputImages])
 
+  useEffect(() => {
+    const missingItems = styleReferenceLibraryItems.filter((item) => !styleReferenceImageSrcById[item.imageId])
+    if (missingItems.length === 0) return
+
+    let cancelled = false
+    const applyThumbnail = (imageId: string, dataUrl: string) => {
+      if (cancelled) return
+      setCachedStyleReferenceImageSrcById((current) => ({ ...current, [imageId]: dataUrl }))
+    }
+
+    const unsubscribers = missingItems.map((item) => (
+      subscribeImageThumbnail(item.imageId, (thumbnail) => applyThumbnail(item.imageId, thumbnail.dataUrl))
+    ))
+    for (const item of missingItems) {
+      void ensureImageThumbnailCached(item.imageId).then((thumbnail) => {
+        if (thumbnail?.dataUrl) applyThumbnail(item.imageId, thumbnail.dataUrl)
+      })
+    }
+
+    return () => {
+      cancelled = true
+      for (const unsubscribe of unsubscribers) unsubscribe()
+    }
+  }, [styleReferenceImageSrcById, styleReferenceLibraryItems])
+
   const upsertPlannerSessionList = (session: AmazonPlannerSession) => {
     setPlannerSessions((current) => sortPlannerSessions([
       session,
@@ -645,6 +698,8 @@ export default function AmazonPlanner() {
     const existing = !overrides.id && currentPlannerSessionId ? plannerSessions.find((session) => session.id === currentPlannerSessionId) : null
     const snapshotDraft = overrides.draft ? fromSessionDraft(overrides.draft) : draft
     const snapshotListingText = overrides.listingText ?? listingText
+    const hasSelectedStyleIndexOverride = Object.prototype.hasOwnProperty.call(overrides, 'selectedStyleIndex')
+    const hasSelectedStyleReferenceOverride = Object.prototype.hasOwnProperty.call(overrides, 'selectedStyleReference')
     return {
       id: overrides.id ?? currentPlannerSessionId ?? createPlannerSessionId(),
       title: overrides.title ?? getPlannerSessionTitle(snapshotDraft, snapshotListingText),
@@ -657,7 +712,8 @@ export default function AmazonPlanner() {
       seriesStyleGuides: overrides.seriesStyleGuides ?? seriesStyleGuides,
       styleCandidates: overrides.styleCandidates ?? styleCandidates,
       styleImages: overrides.styleImages ?? getSessionStyleImages(styleImages),
-      selectedStyleIndex: overrides.selectedStyleIndex ?? selectedStyleIndex,
+      selectedStyleIndex: hasSelectedStyleIndexOverride ? overrides.selectedStyleIndex ?? null : selectedStyleIndex,
+      selectedStyleReference: hasSelectedStyleReferenceOverride ? overrides.selectedStyleReference ?? null : selectedStyleReference,
       styleDensityMode: overrides.styleDensityMode ?? styleDensityMode,
       imagePlans: overrides.imagePlans ?? imagePlans,
       aPlusPlans: overrides.aPlusPlans ?? aPlusPlansWithSizes,
@@ -734,7 +790,7 @@ export default function AmazonPlanner() {
             workflow: 'amazon-aplus',
             amazonSlot: plan.slot,
             aPlusType,
-            ...(selectedStyleImage?.imageId ? { styleReferenceImageId: selectedStyleImage.imageId } : {}),
+            ...selectedStyleReferenceCategory,
           },
         }
       })
@@ -757,7 +813,7 @@ export default function AmazonPlanner() {
           productTitle: draft.productTitle.trim(),
           workflow: 'amazon-listing',
           amazonSlot: plan.slot,
-          ...(requiresStyle && selectedStyleImage?.imageId ? { styleReferenceImageId: selectedStyleImage.imageId } : {}),
+          ...(requiresStyle ? selectedStyleReferenceCategory : {}),
         },
       }
     })
@@ -773,7 +829,7 @@ export default function AmazonPlanner() {
       return false
     }
     const shouldRequireStyle = options.requireStyle && styleReferenceRequired
-    if (shouldRequireStyle && !selectedStyleImage?.imageId) {
+    if (shouldRequireStyle && !selectedStyleReferenceImageId) {
       showToast('请先生成并选择一张风格参考板', 'error')
       return false
     }
@@ -791,7 +847,7 @@ export default function AmazonPlanner() {
         workflow: plannerMode === 'aplus' ? 'amazon-aplus' : 'amazon-listing',
         amazonSlot: plannerMode === 'aplus' ? selectedAPlusPlan?.slot : selectedPlan?.slot,
         ...(plannerMode === 'aplus' ? { aPlusType } : {}),
-        ...(usesStyleReferenceForActivePlan && selectedStyleImage?.imageId ? { styleReferenceImageId: selectedStyleImage.imageId } : {}),
+        ...(usesStyleReferenceForActivePlan ? selectedStyleReferenceCategory : {}),
       },
     })
     setParams({
@@ -838,7 +894,7 @@ export default function AmazonPlanner() {
       showToast('请先完成 AI 策划', 'error')
       return
     }
-    if (seriesStyleReferenceNeeded && !selectedStyleImage?.imageId) {
+    if (seriesStyleReferenceNeeded && !selectedStyleReferenceImageId) {
       showToast('请先生成并选择一张风格参考板', 'error')
       return
     }
@@ -955,6 +1011,7 @@ export default function AmazonPlanner() {
     setIsGeneratingStyleImages(true)
     setStyleError('')
     setSelectedStyleIndex(null)
+    setSelectedStyleReference(null)
     setStylePreview(null)
     setStyleImages(styleCandidates.map((_, index) => ({ candidateIndex: index, status: 'running' })))
 
@@ -1014,6 +1071,7 @@ export default function AmazonPlanner() {
     updateCurrentPlannerSession({
       styleImages: getSessionStyleImages(nextStyleImages),
       selectedStyleIndex: null,
+      selectedStyleReference: null,
     })
     if (failed.length === styleCandidates.length) {
       const message = failed[0]?.error || '风格板生成失败'
@@ -1063,6 +1121,7 @@ export default function AmazonPlanner() {
     setStyleCandidates(result.styleCandidates)
     setStyleImages([])
     setSelectedStyleIndex(null)
+    setSelectedStyleReference(null)
     setStylePreview(null)
     setStyleError('')
     setPlannerError('')
@@ -1075,6 +1134,7 @@ export default function AmazonPlanner() {
       styleCandidates: result.styleCandidates,
       styleImages: [],
       selectedStyleIndex: null,
+      selectedStyleReference: null,
       styleDensityMode,
       imagePlans: nextImagePlans,
       aPlusPlans: nextAPlusPlans,
@@ -1227,12 +1287,53 @@ export default function AmazonPlanner() {
     showToast('AI 策划已停止', 'info')
   }
 
+  const createSelectedStyleReference = (
+    imageState: StyleImageState,
+    candidate: AmazonStyleCandidate | undefined,
+    index: number,
+  ): AmazonPlannerSelectedStyleReference => ({
+    imageId: imageState.imageId!,
+    label: candidate?.label ?? `风格 ${index + 1}`,
+    description: candidate?.description,
+    source: 'current-candidate',
+    candidateIndex: index,
+    plannerSessionId: currentPlannerSessionId ?? undefined,
+  })
+
+  const selectStyleReferenceFromLibrary = (item: StyleReferenceLibraryItem) => {
+    const matchingCurrentImage = item.candidateIndex == null ? null : styleImages.find((image) => (
+      image.candidateIndex === item.candidateIndex &&
+      image.status === 'done' &&
+      image.imageId === item.imageId
+    ))
+    const nextSelectedStyleIndex = matchingCurrentImage ? item.candidateIndex! : null
+    const nextReference: AmazonPlannerSelectedStyleReference = {
+      imageId: item.imageId,
+      label: item.label,
+      description: item.description,
+      source: item.source,
+      candidateIndex: item.candidateIndex,
+      plannerSessionId: item.plannerSessionId,
+    }
+
+    setSelectedStyleIndex(nextSelectedStyleIndex)
+    setSelectedStyleReference(nextReference)
+    updateCurrentPlannerSession({
+      selectedStyleIndex: nextSelectedStyleIndex,
+      selectedStyleReference: nextReference,
+      styleImages: getSessionStyleImages(styleImages),
+    })
+  }
+
   const selectStyleCandidate = (index: number) => {
     const imageState = styleImages.find((image) => image.candidateIndex === index && image.status === 'done' && image.imageId)
     if (!imageState) return
+    const nextReference = createSelectedStyleReference(imageState, styleCandidates[index], index)
     setSelectedStyleIndex(index)
+    setSelectedStyleReference(nextReference)
     updateCurrentPlannerSession({
       selectedStyleIndex: index,
+      selectedStyleReference: nextReference,
       styleImages: getSessionStyleImages(styleImages),
     })
   }
@@ -1257,7 +1358,7 @@ export default function AmazonPlanner() {
   }
 
   const openStylePreview = (imageId: string) => {
-    setLightboxImageId(imageId, styleLightboxImageIds.length ? styleLightboxImageIds : [imageId])
+    setLightboxImageId(imageId, styleReferenceLightboxImageIds.length ? styleReferenceLightboxImageIds : [imageId])
   }
 
   const selectPlan = (index: number) => {
@@ -1311,6 +1412,7 @@ export default function AmazonPlanner() {
       setStyleCandidates([])
       setStyleImages([])
       setSelectedStyleIndex(null)
+      setSelectedStyleReference(null)
       setStylePreview(null)
       setStyleError('')
       setActionProgress({})
@@ -1325,6 +1427,7 @@ export default function AmazonPlanner() {
     setStyleCandidates([])
     setStyleImages([])
     setSelectedStyleIndex(null)
+    setSelectedStyleReference(null)
     setStyleDensityMode('rich')
     setStylePreview(null)
     setStyleError('')
@@ -1357,6 +1460,24 @@ export default function AmazonPlanner() {
 
     const selectedStyleRestored = session.selectedStyleIndex != null &&
       restoredStyleImages.some((image) => image.candidateIndex === session.selectedStyleIndex)
+    const restoredStyleReference = session.selectedStyleReference?.imageId
+      ? session.selectedStyleReference
+      : selectedStyleRestored && session.selectedStyleIndex != null
+        ? (() => {
+            const restoredImage = restoredStyleImages.find((image) => image.candidateIndex === session.selectedStyleIndex)
+            const candidate = session.styleCandidates[session.selectedStyleIndex]
+            return restoredImage?.imageId
+              ? {
+                  imageId: restoredImage.imageId,
+                  label: candidate?.label ?? `风格 ${session.selectedStyleIndex + 1}`,
+                  description: candidate?.description,
+                  source: 'current-candidate' as const,
+                  candidateIndex: session.selectedStyleIndex,
+                  plannerSessionId: session.id,
+                }
+              : null
+          })()
+        : null
 
     setPlannerMode(session.mode)
     setAPlusType(session.aPlusType)
@@ -1368,6 +1489,7 @@ export default function AmazonPlanner() {
     setStyleCandidates(session.styleCandidates)
     setStyleImages(restoredStyleImages)
     setSelectedStyleIndex(selectedStyleRestored ? session.selectedStyleIndex : null)
+    setSelectedStyleReference(restoredStyleReference)
     setStyleDensityMode(session.styleDensityMode ?? 'rich')
     setStylePreview(null)
     setImagePlans(session.imagePlans as AmazonImagePlan[])
@@ -2268,8 +2390,8 @@ export default function AmazonPlanner() {
                 <div className={`mt-3 grid gap-2 rounded-xl transition sm:grid-cols-3 ${getGuideFocusClass(guideState.target === 'style-choice')}`}>
                   {styleCandidates.map((candidate, index) => {
                     const imageState = styleImages.find((image) => image.candidateIndex === index)
-                    const isSelected = selectedStyleIndex === index && imageState?.status === 'done'
                     const previewImageId = imageState?.status === 'done' ? imageState.imageId : undefined
+                    const isSelected = Boolean(previewImageId && selectedStyleReferenceImageId === previewImageId)
                     const canSelect = Boolean(previewImageId)
                     const canPreview = Boolean(previewImageId && imageState?.dataUrl)
                     return (
@@ -2322,6 +2444,21 @@ export default function AmazonPlanner() {
                   })}
                 </div>
               )}
+              <StyleReferenceLibrary
+                items={styleReferenceLibraryItems}
+                selectedImageId={selectedStyleReferenceImageId}
+                imageSrcById={styleReferenceImageSrcById}
+                onUseStyle={selectStyleReferenceFromLibrary}
+                onPreview={openStylePreview}
+                onRestoreSession={(plannerSessionId) => {
+                  const session = plannerSessions.find((item) => item.id === plannerSessionId)
+                  if (session) {
+                    void restorePlannerSession(session).catch((err) => {
+                      showToast(`策划历史恢复失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+                    })
+                  }
+                }}
+              />
               {stylePreview && (
                 <div
                   className="pointer-events-none fixed z-50 hidden w-[420px] max-w-[calc(100vw-24px)] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-2xl sm:block dark:border-white/[0.08] dark:bg-gray-950"
@@ -2334,11 +2471,11 @@ export default function AmazonPlanner() {
                   </div>
                 </div>
               )}
-              {selectedStyleCandidate && selectedStyleImage?.imageId && (
+              {selectedStyleReferenceImageId && selectedStyleReferenceLabel && (
                 <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs leading-relaxed text-violet-800 dark:border-violet-300/20 dark:bg-violet-400/10 dark:text-violet-200">
                   {isMainListingPlan
-                    ? `已选择「${selectedStyleCandidate.label}」，但当前 MAIN 主图不会附加这张风格板；切换到附图或 A+ 时才会作为隐藏参考。`
-                    : `已选择「${selectedStyleCandidate.label}」。正式生成时会隐藏附加这张风格参考板作为最后一张参考图，用于统一字体感觉、色板、光影、材质和标注样式，不复制其中占位文字、固定版式或产品摆放。`}
+                    ? `已选择「${selectedStyleReferenceLabel}」，但当前 MAIN 主图不会附加这张风格板；切换到附图或 A+ 时才会作为隐藏参考。`
+                    : `已选择「${selectedStyleReferenceLabel}」。正式生成时会隐藏附加这张风格参考板作为最后一张参考图，用于统一字体感觉、色板、光影、材质和标注样式，不复制其中占位文字、固定版式或产品摆放。`}
                 </div>
               )}
               {styleReferenceLimitExceeded && (

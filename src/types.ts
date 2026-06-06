@@ -307,6 +307,7 @@ export interface AmazonPlannerSession {
   styleCandidates: AmazonPlannerSessionStyleCandidate[]
   styleImages: AmazonPlannerSessionStyleImage[]
   selectedStyleIndex: number | null
+  selectedStyleReference?: AmazonPlannerSelectedStyleReference | null
   styleDensityMode?: AmazonStyleDensityMode
   imagePlans: AmazonPlannerSessionImagePlan[]
   aPlusPlans: AmazonPlannerSessionAPlusPlan[]

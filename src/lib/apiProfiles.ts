@@ -28,6 +28,7 @@ export const DEFAULT_CHAT_MODEL = 'gpt-5.5'
 const DEFAULT_IMAGE_PROFILE_USES_RESPONSES = DEFAULT_OPENAI_API_PROXY && DEFAULT_SERVER_API_KEY_AVAILABLE
 const DEFAULT_IMAGE_PROFILE_MODEL = DEFAULT_IMAGE_PROFILE_USES_RESPONSES ? DEFAULT_RESPONSES_MODEL : DEFAULT_IMAGES_MODEL
 const DEFAULT_IMAGE_PROFILE_API_MODE = DEFAULT_IMAGE_PROFILE_USES_RESPONSES ? 'responses' : 'images'
+const DEFAULT_IMAGE_PROFILE_STREAM_IMAGES = !DEFAULT_IMAGE_PROFILE_USES_RESPONSES
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
@@ -311,6 +312,7 @@ export function createDefaultImageProfile(overrides: Partial<ApiProfile> = {}): 
     model: DEFAULT_IMAGE_PROFILE_MODEL,
     apiMode: DEFAULT_IMAGE_PROFILE_API_MODE,
     apiProxy: DEFAULT_OPENAI_API_PROXY,
+    streamImages: DEFAULT_IMAGE_PROFILE_STREAM_IMAGES,
     ...overrides,
   })
 }
@@ -458,6 +460,8 @@ function applyRuntimeDefaultsToDefaultProfile(profile: ApiProfile): ApiProfile {
   if (!isBuiltInDefaultOpenAIProfile(migratedProfile)) return migratedProfile
 
   const shouldUpgradeStreamDefaults = hasLegacyDefaultStreamSettings(migratedProfile)
+  const shouldUseRuntimeImageStreamDefault =
+    migratedProfile.id === DEFAULT_OPENAI_PROFILE_ID && hasDefaultImageStreamSettings(migratedProfile)
 
   return {
     ...migratedProfile,
@@ -466,8 +470,14 @@ function applyRuntimeDefaultsToDefaultProfile(profile: ApiProfile): ApiProfile {
       : !migratedProfile.baseUrl.trim() || migratedProfile.baseUrl === OPENAI_DEFAULT_BASE_URL ? DEFAULT_BASE_URL : migratedProfile.baseUrl,
     apiKey: DEFAULT_SERVER_API_KEY_AVAILABLE ? DEFAULT_PROFILE_API_KEY : migratedProfile.apiKey.trim() ? migratedProfile.apiKey : DEFAULT_PROFILE_API_KEY,
     apiProxy: DEFAULT_OPENAI_API_PROXY || migratedProfile.apiProxy,
-    streamImages: shouldUpgradeStreamDefaults ? true : migratedProfile.streamImages,
-    streamPartialImages: shouldUpgradeStreamDefaults ? DEFAULT_STREAM_PARTIAL_IMAGES : migratedProfile.streamPartialImages,
+    streamImages: shouldUseRuntimeImageStreamDefault
+      ? DEFAULT_IMAGE_PROFILE_STREAM_IMAGES
+      : shouldUpgradeStreamDefaults
+      ? true
+      : migratedProfile.streamImages,
+    streamPartialImages: shouldUseRuntimeImageStreamDefault || shouldUpgradeStreamDefaults
+      ? DEFAULT_STREAM_PARTIAL_IMAGES
+      : migratedProfile.streamPartialImages,
   }
 }
 
@@ -807,12 +817,20 @@ function hasCurrentDefaultStreamSettings(profile: Pick<ApiProfile, 'streamImages
   return profile.streamImages === true && profile.streamPartialImages === DEFAULT_STREAM_PARTIAL_IMAGES
 }
 
+function hasCurrentDefaultImageStreamSettings(profile: Pick<ApiProfile, 'streamImages' | 'streamPartialImages'>): boolean {
+  return profile.streamImages === DEFAULT_IMAGE_PROFILE_STREAM_IMAGES && profile.streamPartialImages === DEFAULT_STREAM_PARTIAL_IMAGES
+}
+
 function hasLegacyDefaultStreamSettings(profile: Pick<ApiProfile, 'streamImages' | 'streamPartialImages'>): boolean {
   return profile.streamImages === false && profile.streamPartialImages === LEGACY_DEFAULT_STREAM_PARTIAL_IMAGES
 }
 
 function hasDefaultStreamSettings(profile: Pick<ApiProfile, 'streamImages' | 'streamPartialImages'>): boolean {
   return hasCurrentDefaultStreamSettings(profile) || hasLegacyDefaultStreamSettings(profile)
+}
+
+function hasDefaultImageStreamSettings(profile: Pick<ApiProfile, 'streamImages' | 'streamPartialImages'>): boolean {
+  return hasCurrentDefaultImageStreamSettings(profile) || hasDefaultStreamSettings(profile)
 }
 
 function isDefaultOpenAIProfile(profile: ApiProfile): boolean {
@@ -826,7 +844,7 @@ function isDefaultOpenAIProfile(profile: ApiProfile): boolean {
     profile.apiMode === DEFAULT_IMAGE_PROFILE_API_MODE &&
     profile.codexCli === false &&
     profile.apiProxy === DEFAULT_OPENAI_API_PROXY &&
-    hasDefaultStreamSettings(profile)
+    hasDefaultImageStreamSettings(profile)
 }
 
 function isLegacyDefaultImageProfile(profile: ApiProfile): boolean {
@@ -838,7 +856,7 @@ function isLegacyDefaultImageProfile(profile: ApiProfile): boolean {
     profile.timeout === DEFAULT_API_TIMEOUT &&
     profile.apiMode === 'images' &&
     profile.codexCli === false &&
-    hasDefaultStreamSettings(profile)
+    hasDefaultImageStreamSettings(profile)
 }
 
 function isDefaultAmazonPlannerProfile(profile: ApiProfile): boolean {
@@ -1009,7 +1027,7 @@ export const DEFAULT_SETTINGS: AppSettings = normalizeSettings({
   apiMode: DEFAULT_IMAGE_PROFILE_API_MODE,
   codexCli: false,
   apiProxy: DEFAULT_OPENAI_API_PROXY,
-  streamImages: true,
+  streamImages: DEFAULT_IMAGE_PROFILE_STREAM_IMAGES,
   streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
   customProviders: [],
   clearInputAfterSubmit: false,

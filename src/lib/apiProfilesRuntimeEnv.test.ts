@@ -58,6 +58,8 @@ describe('api profile runtime env defaults', () => {
         model: 'gpt-5.5',
         apiMode: 'responses',
         apiProxy: true,
+        streamImages: false,
+        streamPartialImages: 3,
       },
       {
         id: PLANNER_PROFILE.id,
@@ -83,6 +85,8 @@ describe('api profile runtime env defaults', () => {
           baseUrl: 'https://chatgpt.com/backend-api/codex',
           apiKey: 'old-browser-key',
           apiProxy: false,
+          streamImages: true,
+          streamPartialImages: 3,
         },
         {
           ...PLANNER_PROFILE,
@@ -103,6 +107,8 @@ describe('api profile runtime env defaults', () => {
         model: 'gpt-5.5',
         apiMode: 'responses',
         apiProxy: true,
+        streamImages: false,
+        streamPartialImages: 3,
       },
       {
         id: PLANNER_PROFILE.id,

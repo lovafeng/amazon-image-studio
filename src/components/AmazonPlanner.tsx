@@ -35,10 +35,11 @@ import {
   type AmazonStyleDensityMode,
 } from '../lib/listingPlanner'
 import { callAmazonPlannerApi, type PlannerApiResult } from '../lib/listingPlannerApi'
-import { getBatchSubmitStatusText, getPlannerActionGuidance, getSubmitButtonLabel } from '../lib/amazonPlannerAction'
+import { getBatchSubmitStatusText, getPlannerActionGuidance } from '../lib/amazonPlannerAction'
 import { deriveProductionGuideState, getProductionEstimate, summarizePlannerBatchTasks, type ProductionStageId } from '../lib/plannerProductionGuide'
 import { buildStyleReferenceLibrary, type StyleReferenceLibraryItem } from '../lib/styleReferenceLibrary'
 import { callImageApi } from '../lib/api'
+import { AMAZON_DRAFT_QUALITY } from '../lib/amazonGeneration'
 import { deleteAmazonPlannerSession, getAllAmazonPlannerSessions, putAmazonPlannerSession, storeImage } from '../lib/db'
 import { normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { prepareReferenceImagePayload, type PlannerReferenceImagePayload } from '../lib/referenceImagePayload'
@@ -704,7 +705,7 @@ export default function AmazonPlanner() {
     : plannerMode === 'dsp' && selectedDspPlan
       ? selectedDspPlan.generationSize
       : listingTargetSize
-  const generationParamLabel = `${DEFAULT_PARAMS.output_format.toUpperCase()} / ${DEFAULT_PARAMS.quality} / 压缩率${DEFAULT_PARAMS.output_compression}`
+  const generationParamLabel = `${DEFAULT_PARAMS.output_format.toUpperCase()} / 草稿 ${AMAZON_DRAFT_QUALITY} / 压缩率${DEFAULT_PARAMS.output_compression}`
   const visiblePlans = plannerMode === 'aplus' ? aPlusPlansWithSizes : plannerMode === 'dsp' ? dspPlansWithSizes : imagePlans
   const visiblePlanCount = visiblePlans.length
   const visiblePlanIndex = plannerMode === 'aplus' ? selectedAPlusPlanIndex : plannerMode === 'dsp' ? selectedDspPlanIndex : selectedPlanIndex
@@ -756,7 +757,7 @@ export default function AmazonPlanner() {
       status: currentActionFilled ? 'done' : 'current',
     },
     {
-      label: '2 提交生成',
+      label: '2 提交草稿',
       detail: currentActionSubmitted ? '已提交' : currentActionFilled ? '下一步' : '待提交',
       status: currentActionSubmitted ? 'done' : currentActionFilled ? 'current' : 'todo',
     },
@@ -799,12 +800,7 @@ export default function AmazonPlanner() {
     seriesStyleReferenceNeeded,
     hasStyleReference,
   })
-  const submitButtonLabel = getSubmitButtonLabel({
-    currentActionSubmitted,
-    styleReferenceRequired,
-    hasStyleReference,
-    styleReferenceLimitExceeded,
-  })
+  const submitButtonLabel = currentActionSubmitted ? '草稿已提交' : '生成草稿'
   const batchSubmitDisabled = isBatchSubmitting || !hasPlanOptions || isPlanning || isGeneratingStyleImages || (seriesStyleReferenceNeeded && !hasStyleReference) || batchStyleReferenceLimitExceeded
     || visibleUnsubmittedPlanCount === 0
   const guideState: PlannerGuideState = !hasUsablePlannerProfile
@@ -841,8 +837,8 @@ export default function AmazonPlanner() {
                 message: currentActionSubmitted
                   ? canGoNext ? '下一步：点击下一张继续处理' : '当前图片已提交，已是最后一张'
                   : currentActionFilled
-                    ? '下一步：提交生成当前图片'
-                    : `下一步：提交当前 ${actionSlot ?? '当前'} ${actionKindLabel}，或使用“提交未提交项”处理剩余计划`,
+                    ? '下一步：生成当前图片草稿'
+                    : `下一步：提交当前 ${actionSlot ?? '当前'} ${actionKindLabel}草稿，或使用“提交未提交草稿”处理剩余计划`,
               }
   const plannerGuideActive = guideState.target === 'planner-api' || guideState.target === 'planner-input' || guideState.target === 'planner-action'
   const styleGuideActive = guideState.target === 'style' || guideState.target === 'style-choice'
@@ -1150,6 +1146,7 @@ export default function AmazonPlanner() {
             amazonSlot: plan.slot,
             aPlusType,
             plannerSessionId: currentPlannerSessionId ?? undefined,
+            generationStage: 'draft',
             ...(plannerBatchId ? { plannerBatchId } : {}),
             ...selectedStyleReferenceCategory,
           },
@@ -1174,6 +1171,7 @@ export default function AmazonPlanner() {
             workflow: 'amazon-dsp',
             amazonSlot: plan.slot,
             plannerSessionId: currentPlannerSessionId ?? undefined,
+            generationStage: 'draft',
             ...(plannerBatchId ? { plannerBatchId } : {}),
             ...selectedStyleReferenceCategory,
           },
@@ -1199,6 +1197,7 @@ export default function AmazonPlanner() {
           workflow: 'amazon-listing',
           amazonSlot: plan.slot,
           plannerSessionId: currentPlannerSessionId ?? undefined,
+          generationStage: 'draft',
           ...(plannerBatchId ? { plannerBatchId } : {}),
           ...(requiresStyle ? selectedStyleReferenceCategory : {}),
         },
@@ -1238,13 +1237,14 @@ export default function AmazonPlanner() {
         workflow: plannerMode === 'aplus' ? 'amazon-aplus' : plannerMode === 'dsp' ? 'amazon-dsp' : 'amazon-listing',
         amazonSlot: plannerMode === 'aplus' ? selectedAPlusPlan?.slot : plannerMode === 'dsp' ? selectedDspPlan?.slot : selectedPlan?.slot,
         plannerSessionId: currentPlannerSessionId ?? undefined,
+        generationStage: 'draft',
         ...(plannerMode === 'aplus' ? { aPlusType } : {}),
         ...(usesStyleReferenceForActivePlan ? selectedStyleReferenceCategory : {}),
       },
     })
     setParams({
       size: targetSize,
-      quality: DEFAULT_PARAMS.quality,
+      quality: AMAZON_DRAFT_QUALITY,
       output_format: DEFAULT_PARAMS.output_format,
       output_compression: DEFAULT_PARAMS.output_compression,
       n: 1,
@@ -1320,7 +1320,7 @@ export default function AmazonPlanner() {
       })
       setParams({
         size: job.targetSize,
-        quality: DEFAULT_PARAMS.quality,
+        quality: AMAZON_DRAFT_QUALITY,
         output_format: DEFAULT_PARAMS.output_format,
         output_compression: DEFAULT_PARAMS.output_compression,
         n: 1,
@@ -1341,7 +1341,7 @@ export default function AmazonPlanner() {
 
     setInputImages(batchInputImages)
     setIsBatchSubmitting(false)
-    showToast(`已提交 ${jobs.length} 张生图任务`, 'success')
+    showToast(`已提交 ${jobs.length} 张草稿任务`, 'success')
   }
 
   const copyPrompt = async () => {
@@ -1422,7 +1422,7 @@ export default function AmazonPlanner() {
 
     const styleParams = normalizeParamsForSettings({
       size: '1024x1024',
-      quality: DEFAULT_PARAMS.quality,
+      quality: AMAZON_DRAFT_QUALITY,
       output_format: DEFAULT_PARAMS.output_format,
       output_compression: DEFAULT_PARAMS.output_compression,
       moderation: params.moderation,
@@ -2096,6 +2096,7 @@ export default function AmazonPlanner() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">最终清晰度</span>
             <div className="inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
               {(['1k', '2k', '4k'] as const).map((item) => (
                 <button
@@ -2880,7 +2881,7 @@ export default function AmazonPlanner() {
                       className={`inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition ${batchSubmitDisabled ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : 'bg-blue-600 text-white shadow-sm hover:bg-blue-500'}`}
                     >
                       <PhotoIcon className="h-4 w-4" />
-                      {isBatchSubmitting ? '提交中...' : '提交未提交项'}
+                      {isBatchSubmitting ? '提交草稿中...' : '提交未提交草稿'}
                     </button>
                   </div>
 

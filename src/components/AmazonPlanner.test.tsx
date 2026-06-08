@@ -96,7 +96,22 @@ describe('AmazonPlanner', () => {
 
   it('skips already submitted slots when batch submitting planned images', () => {
     expect(amazonPlannerSource).toContain(".filter((job) => actionProgress[job.actionKey] !== 'submitted')")
-    expect(amazonPlannerSource).toContain('showToast(`已提交 ${jobs.length} 张生图任务`,')
+    expect(amazonPlannerSource).toContain('showToast(`已提交 ${jobs.length} 张草稿任务`,')
+  })
+
+  it('submits Amazon Planner drafts at medium quality without changing target sizes', () => {
+    expect(amazonPlannerSource).toContain("generationStage: 'draft'")
+    expect(amazonPlannerSource).toContain('quality: AMAZON_DRAFT_QUALITY')
+    expect(amazonPlannerSource).toContain('targetSize: listingTargetSize')
+    expect(amazonPlannerSource).toContain('targetSize: plan.generationSize')
+    expect(amazonPlannerSource).not.toContain("quality: DEFAULT_PARAMS.quality,\n      output_format: DEFAULT_PARAMS.output_format")
+  })
+
+  it('labels the primary Planner action as draft generation', () => {
+    expect(amazonPlannerSource).toContain('生成草稿')
+    expect(amazonPlannerSource).toContain('草稿已提交')
+    expect(amazonPlannerSource).toContain('最终清晰度')
+    expect(amazonPlannerSource).not.toContain('提交生成')
   })
 
   it('uses 1K as the safe default and waits for each batch task to finish', () => {
@@ -110,7 +125,7 @@ describe('AmazonPlanner', () => {
   it('uses current-next-step copy for the submit console', () => {
     expect(amazonPlannerSource).toContain('当前下一步')
     expect(amazonPlannerSource).toContain("target: hasGeneratedStyleImages ? 'style-choice' : 'style'")
-    expect(amazonPlannerSource).toContain('提交未提交项')
+    expect(amazonPlannerSource).toContain('提交未提交草稿')
     expect(amazonPlannerSource).not.toContain("{isBatchSubmitting ? '一键生图中...' : '一键生图'}")
   })
 

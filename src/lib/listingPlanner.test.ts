@@ -123,7 +123,8 @@ describe('Amazon prompt builders', () => {
     }, 'Use warm off-white backgrounds and charcoal typography.')
 
     expect(prompt).toContain('Create a refined information-design style for the product.')
-    expect(prompt).toContain('1024x1024 visual style reference board')
+    expect(prompt).toContain('visual style reference board')
+    expect(prompt).not.toContain('1024x1024 visual style reference board')
     expect(prompt).toContain('typography samples')
     expect(prompt).toContain('color palette swatches')
     expect(prompt).toContain('lighting/material samples')

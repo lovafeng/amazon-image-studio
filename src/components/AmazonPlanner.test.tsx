@@ -25,6 +25,11 @@ describe('AmazonPlanner', () => {
     expect(amazonPlannerSource).not.toContain('下一步：选择一张风格板作为附图和 A+ 的隐藏参考')
   })
 
+  it('does not present style boards as fixed final-resolution images', () => {
+    expect(amazonPlannerSource).not.toContain('1024x1024 visual style reference board')
+    expect(amazonPlannerSource).toContain('视觉风格选择')
+  })
+
   it('restores planner style boards from compressed thumbnails instead of full images', () => {
     const restoreBlock = amazonPlannerSource.slice(
       amazonPlannerSource.indexOf('const restorePlannerSession = async (session: AmazonPlannerSession) => {'),

@@ -294,6 +294,22 @@ function getStringValue(source: Record<string, unknown>, key: string): string | 
   return typeof value === 'string' && value ? value : undefined
 }
 
+function getPlannerErrorMessage(payload: unknown): string {
+  if (!isRecordValue(payload)) return ''
+
+  const error = payload.error
+  if (typeof error === 'string') return error.trim()
+  if (!isRecordValue(error)) return ''
+
+  const code = getStringValue(error, 'code') ?? getStringValue(error, 'type')
+  const message = getStringValue(error, 'message')
+  if (message?.includes('<html') && message.includes('Enable JavaScript and cookies')) {
+    return `${code ? `${code}；` : ''}上游返回 Cloudflare 验证页，请检查中转站 Codex OAuth/header 配置`
+  }
+  if (message && code) return `${code}: ${message}`
+  return message ?? code ?? ''
+}
+
 function parsePlannerPayload(text: string): PlannerApiPayload {
   const trimmed = text.trim()
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]
@@ -413,6 +429,9 @@ async function readPlannerResponseText(response: Response): Promise<string> {
     const message = err instanceof Error ? err.message : String(err)
     throw new Error(`AI 策划接口返回了无法解析的 JSON：${message}\n\n${truncateForError(rawText)}`)
   }
+
+  const errorMessage = getPlannerErrorMessage(payload)
+  if (errorMessage) throw new Error(`AI 策划接口返回错误：${errorMessage}`)
 
   const text = extractResponseText(payload)
   if (!text) throw new Error('AI 策划接口未返回文本内容')

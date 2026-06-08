@@ -478,6 +478,30 @@ describe('callAmazonPlannerApi', () => {
     })).rejects.toThrow(`AI 策划结果缺少 ${missingSlot} 的图片方案`)
   })
 
+  it('surfaces successful HTTP planner error payloads before reading output text', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      error: {
+        code: 'insufficient_quota',
+        message: '<html><span id="challenge-error-text">Enable JavaScript and cookies to continue</span></html>',
+        type: 'permission_error',
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    await expect(callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: DEFAULT_AMAZON_PROMPT_DRAFT,
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+    })).rejects.toThrow('AI 策划接口返回错误：insufficient_quota；上游返回 Cloudflare 验证页，请检查中转站 Codex OAuth/header 配置')
+  })
+
   it('parses Standard A+ output and fills fixed module sizes without deciding content locally', async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
       output_text: JSON.stringify(createAPlusPayload('A+S', 'Standard A+ tumbler', 'ExampleBrand')),

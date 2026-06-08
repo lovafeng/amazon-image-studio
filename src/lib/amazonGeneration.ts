@@ -3,7 +3,7 @@ import type { TaskRecord, TaskWorkflow } from '../types'
 export type AmazonGenerationStage = 'draft' | 'final'
 export type ReferencePayloadStage = AmazonGenerationStage
 
-export const AMAZON_DRAFT_QUALITY = 'medium' as const
+export const AMAZON_DRAFT_QUALITY = 'low' as const
 export const AMAZON_FINAL_QUALITY = 'high' as const
 
 type TaskCategory = NonNullable<TaskRecord['category']>

@@ -104,7 +104,7 @@ describe('AmazonPlanner', () => {
     expect(amazonPlannerSource).toContain('showToast(`已提交 ${jobs.length} 张草稿任务`,')
   })
 
-  it('submits Amazon Planner drafts at medium quality without changing target sizes', () => {
+  it('submits Amazon Planner drafts at low quality without changing target sizes', () => {
     expect(amazonPlannerSource).toContain("generationStage: 'draft'")
     expect(amazonPlannerSource).toContain('quality: AMAZON_DRAFT_QUALITY')
     expect(amazonPlannerSource).toContain('targetSize: listingTargetSize')

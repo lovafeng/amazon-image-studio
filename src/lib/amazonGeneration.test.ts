@@ -34,7 +34,7 @@ describe('amazonGeneration', () => {
       },
     })
 
-    expect(AMAZON_DRAFT_QUALITY).toBe('medium')
+    expect(AMAZON_DRAFT_QUALITY).toBe('low')
     expect(AMAZON_FINAL_QUALITY).toBe('high')
     expect(getAmazonGenerationStage(draftTask)).toBe('draft')
     expect(getReferencePayloadStageForTask(draftTask)).toBe('draft')

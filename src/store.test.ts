@@ -822,6 +822,45 @@ describe('mask draft lifecycle in store actions', () => {
     }
   })
 
+  it('rejects an Amazon final task when the selected draft output is not from the draft task', async () => {
+    const submitSpy = vi.spyOn(await import('./store'), 'submitTask').mockResolvedValue(true)
+    await putImage({ id: 'reference-a', dataUrl: 'data:image/png;base64,cmVm', source: 'upload' })
+    await putImage({ id: 'draft-output-a', dataUrl: 'data:image/png;base64,ZHJhZnQ=', source: 'generated' })
+    await putImage({ id: 'other-output', dataUrl: 'data:image/png;base64,b3RoZXI=', source: 'generated' })
+    const draftTask = {
+      id: 'draft-task-a',
+      prompt: 'Amazon draft prompt',
+      params: { ...DEFAULT_PARAMS, size: '1024x1024', quality: 'medium' as const },
+      inputImageIds: ['reference-a'],
+      outputImages: ['draft-output-a'],
+      status: 'done' as const,
+      error: null,
+      createdAt: 1,
+      finishedAt: 2,
+      elapsed: 1,
+      category: {
+        workflow: 'amazon-listing' as const,
+        amazonSlot: 'PT01',
+        generationStage: 'draft' as const,
+      },
+    }
+
+    try {
+      const result = await createAmazonFinalImageFromDraft(draftTask, 'other-output')
+
+      expect(result).toBe(false)
+      expect(submitSpy).not.toHaveBeenCalled()
+      expect(useStore.getState().pendingTaskCategory).not.toMatchObject({
+        category: {
+          generationStage: 'final',
+          draftSourceImageId: 'other-output',
+        },
+      })
+    } finally {
+      submitSpy.mockRestore()
+    }
+  })
+
   it('does not append a hidden style reference image for an Amazon MAIN prompt', async () => {
     const styleImage = { id: 'style-reference-image', dataUrl: 'data:image/png;base64,style' }
     await putImage(imageA)

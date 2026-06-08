@@ -4185,6 +4185,11 @@ export async function createAmazonFinalImageFromDraft(task: TaskRecord, selected
     return false
   }
 
+  if (selectedOutputImageId && !task.outputImages.includes(selectedOutputImageId)) {
+    showToast('草稿图不存在，请重新生成草稿', 'error')
+    return false
+  }
+
   const draftImageId = selectedOutputImageId || task.outputImages[0]
   if (!draftImageId) {
     showToast('草稿图不存在，请重新生成草稿', 'error')

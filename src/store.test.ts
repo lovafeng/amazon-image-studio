@@ -114,7 +114,10 @@ vi.mock('./lib/agentApi', () => ({
   }),
 }))
 import { clearAgentConversations, clearAmazonPlannerSessions, clearImages, clearTasks, getAllAgentConversations, getAllAmazonPlannerSessions, getImage, putAgentConversation, putAmazonPlannerSession, putImage } from './lib/db'
+import * as db from './lib/db'
+import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
+import * as canvasImage from './lib/canvasImage'
 import { cleanStaleAgentInputDrafts, clearData, createAmazonFinalImageFromDraft, editOutputs, ensureImageUrlCached, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
@@ -310,6 +313,7 @@ describe('mask draft lifecycle in store actions', () => {
       showToast: vi.fn(),
       setConfirmDialog: vi.fn(),
     })
+    vi.mocked(callImageApi).mockClear()
   })
 
   it('replaces the current draft with one output image when quick editing output', async () => {
@@ -737,21 +741,22 @@ describe('mask draft lifecycle in store actions', () => {
     })
   })
 
-  it('uses draft reference compression for Amazon draft task submissions', async () => {
+  it('skips missing input image and mask reads for Amazon draft task submissions', async () => {
     const referencePayload = await import('./lib/referenceImagePayload')
-    const prepareSpy = vi.spyOn(referencePayload, 'prepareReferenceImageAndMaskPayload').mockResolvedValue({
-      dataUrls: ['data:image/webp;base64,compressed'],
-      originalBytes: 1,
-      payloadBytes: 1,
-      compressedCount: 1,
-      pass: 'primary',
-      notice: '',
-    })
-
-    await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,YQ==', source: 'upload' })
+    const prepareSpy = vi.spyOn(referencePayload, 'prepareReferenceImageAndMaskPayload')
+    const maskSpy = vi.spyOn(canvasImage, 'validateMaskMatchesImage').mockResolvedValue('partial')
+    const storeSpy = vi.spyOn(db, 'storeImage')
+      .mockResolvedValueOnce('missing-mask-image')
+      .mockResolvedValueOnce('stored-unrelated-input-image')
     useStore.setState({
       prompt: 'Amazon draft prompt',
-      inputImages: [{ id: 'image-a', dataUrl: 'data:image/png;base64,YQ==' }],
+      inputImages: [{ id: 'missing-input-image', dataUrl: 'data:image/png;base64,YQ==' }],
+      maskDraft: {
+        targetImageId: 'missing-input-image',
+        maskDataUrl: 'data:image/png;base64,bWFzaw==',
+        updatedAt: 1,
+      },
+      maskEditorImageId: 'missing-input-image',
       params: { ...DEFAULT_PARAMS, size: '1024x1024', quality: 'medium' },
       pendingTaskCategory: {
         mode: 'prompt-match',
@@ -766,10 +771,175 @@ describe('mask draft lifecycle in store actions', () => {
 
     try {
       await submitTask()
-      await new Promise((resolve) => setTimeout(resolve, 0))
+      await vi.waitFor(() => expect(callImageApi).toHaveBeenCalled())
 
+      const task = useStore.getState().tasks[0]
+      const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
+      expect(task?.inputImageIds).toEqual(['missing-input-image'])
+      expect(task?.maskImageId).toBe('missing-mask-image')
+      expect(task?.category).toMatchObject({
+        workflow: 'amazon-listing',
+        amazonSlot: 'PT01',
+        generationStage: 'draft',
+      })
+      expect(callOptions.inputImageDataUrls).toEqual([])
+      expect(callOptions.maskDataUrl).toBeUndefined()
+      expect(task?.error).not.toBe('输入图片已不存在')
+      expect(task?.error).not.toBe('遮罩图片已不存在')
+      expect(prepareSpy).not.toHaveBeenCalled()
+    } finally {
+      prepareSpy.mockRestore()
+      maskSpy.mockRestore()
+      storeSpy.mockRestore()
+    }
+  })
+
+  it('executes Amazon draft tasks through non-streaming Images API generations without input image payloads', async () => {
+    const responseProfile = createDefaultOpenAIProfile({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      name: '生图',
+      apiKey: 'image-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+      streamImages: true,
+    })
+    const styleImage = { id: 'style-reference-image', dataUrl: 'data:image/png;base64,c3R5bGU=' }
+    await putImage(imageA)
+    await putImage(styleImage)
+    useStore.setState({
+      prompt: 'Amazon draft prompt',
+      inputImages: [imageA],
+      settings: normalizeSettings({
+        profiles: [responseProfile],
+        activeProfileId: responseProfile.id,
+      }),
+      pendingTaskCategory: {
+        mode: 'prompt-match',
+        prompt: 'Amazon draft prompt',
+        category: {
+          workflow: 'amazon-listing',
+          amazonSlot: 'PT01',
+          styleReferenceImageId: styleImage.id,
+          generationStage: 'draft',
+        },
+      },
+    })
+
+    const submitted = await submitTask()
+
+    await vi.waitFor(() => expect(callImageApi).toHaveBeenCalled())
+    const task = useStore.getState().tasks[0]
+    const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
+    expect(submitted).toBe(true)
+    expect(task?.inputImageIds).toEqual([imageA.id, styleImage.id])
+    expect(task?.category).toMatchObject({
+      workflow: 'amazon-listing',
+      styleReferenceImageId: styleImage.id,
+      generationStage: 'draft',
+    })
+    expect(callOptions.inputImageDataUrls).toEqual([])
+    expect(callOptions.maskDataUrl).toBeUndefined()
+    expect(callOptions.settings).toMatchObject({
+      model: DEFAULT_IMAGES_MODEL,
+      apiMode: 'images',
+      streamImages: false,
+    })
+  })
+
+  it('executes Amazon draft tasks from a custom OpenAI Responses profile with the Images API model', async () => {
+    const responseProfile = createDefaultOpenAIProfile({
+      id: 'custom-responses-image-profile',
+      name: '自定义生图',
+      apiKey: 'image-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+      streamImages: true,
+    })
+    await putImage(imageA)
+    useStore.setState({
+      prompt: 'Amazon draft prompt',
+      inputImages: [imageA],
+      settings: normalizeSettings({
+        profiles: [responseProfile],
+        activeProfileId: responseProfile.id,
+      }),
+      pendingTaskCategory: {
+        mode: 'prompt-match',
+        prompt: 'Amazon draft prompt',
+        category: {
+          workflow: 'amazon-aplus',
+          amazonSlot: 'A+S01',
+          generationStage: 'draft',
+        },
+      },
+    })
+
+    const submitted = await submitTask()
+
+    await vi.waitFor(() => expect(callImageApi).toHaveBeenCalled())
+    const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
+    expect(submitted).toBe(true)
+    expect(callOptions.inputImageDataUrls).toEqual([])
+    expect(callOptions.maskDataUrl).toBeUndefined()
+    expect(callOptions.settings).toMatchObject({
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
+      streamImages: false,
+    })
+  })
+
+  it('keeps fal Amazon draft task submissions on the reference image payload path', async () => {
+    const referencePayload = await import('./lib/referenceImagePayload')
+    const prepareSpy = vi.spyOn(referencePayload, 'prepareReferenceImageAndMaskPayload').mockResolvedValue({
+      dataUrls: ['data:image/webp;base64,compressed'],
+      originalBytes: 1,
+      payloadBytes: 1,
+      compressedCount: 1,
+      pass: 'primary',
+      notice: '',
+    })
+    const falProfile = createDefaultFalProfile({
+      id: 'fal-amazon-draft-profile',
+      name: 'fal 草稿',
+      apiKey: 'fal-key',
+    })
+    await putImage(imageA)
+    useStore.setState({
+      prompt: 'Amazon draft prompt',
+      inputImages: [imageA],
+      settings: normalizeSettings({
+        profiles: [falProfile],
+        activeProfileId: falProfile.id,
+      }),
+      pendingTaskCategory: {
+        mode: 'prompt-match',
+        prompt: 'Amazon draft prompt',
+        category: {
+          workflow: 'amazon-listing',
+          amazonSlot: 'PT01',
+          generationStage: 'draft',
+        },
+      },
+    })
+
+    try {
+      const submitted = await submitTask()
+
+      await vi.waitFor(() => expect(callImageApi).toHaveBeenCalled())
+      const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
+      expect(submitted).toBe(true)
+      expect(callOptions.inputImageDataUrls).toEqual(['data:image/webp;base64,compressed'])
+      expect(callOptions.settings).toMatchObject({
+        activeProfileId: falProfile.id,
+        model: falProfile.model,
+      })
+      expect(callOptions.settings.profiles).toContainEqual(expect.objectContaining({
+        id: falProfile.id,
+        provider: falProfile.provider,
+        model: falProfile.model,
+      }))
       expect(prepareSpy).toHaveBeenCalledWith(
-        expect.any(Array),
+        [imageA.dataUrl],
         undefined,
         expect.objectContaining({ stage: 'draft' }),
       )

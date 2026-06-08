@@ -311,8 +311,7 @@ export const DSP_ASSET_SPECS: AmazonDspAssetSpec[] = [
 const CJK_ON_IMAGE_TEXT_RE = /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]/
 const STYLE_REFERENCE_GUARD = [
   'Style reference rule:',
-  '- The last input image is a hidden style reference selected by the user.',
-  '- Use it only for color palette, lighting, contrast, material finish, typography feel, and overall visual polish.',
+  '- Use the Series style guide text for color palette, lighting, contrast, material finish, typography feel, and overall visual polish.',
   '- Do not copy any placeholder words, fixed layout, color swatch positions, exact composition, product arrangement, product count, props, scene, or information density from the style reference board.',
   '- Follow the image task, layout density, and negative prompt sections for the actual content and arrangement.',
 ].join('\n')

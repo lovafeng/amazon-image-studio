@@ -125,6 +125,25 @@ function isAmazonTaskWorkflow(
   return workflow === 'amazon-listing' || workflow === 'amazon-aplus' || workflow === 'amazon-dsp'
 }
 
+function isAmazonDraftGenerationTask(task: Pick<TaskRecord, 'category'>): boolean {
+  return isAmazonTaskWorkflow(task.category?.workflow) && task.category?.generationStage === 'draft'
+}
+
+function useNonStreamingImagesApiForAmazonDraft(profile: ApiProfile): ApiProfile {
+  if (profile.provider !== 'openai') return profile
+
+  const shouldUseImagesModel = profile.apiMode !== 'images'
+  const shouldUseDefaultInputImageProfileId = profile.id === DEFAULT_OPENAI_PROFILE_ID && shouldUseImagesModel
+
+  return {
+    ...profile,
+    id: shouldUseDefaultInputImageProfileId ? DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID : profile.id,
+    model: shouldUseImagesModel ? DEFAULT_IMAGES_MODEL : profile.model,
+    apiMode: 'images',
+    streamImages: false,
+  }
+}
+
 function removeMainStyleReference(
   category: NonNullable<TaskRecord['category']>,
 ): NonNullable<TaskRecord['category']> {
@@ -3834,7 +3853,12 @@ async function executeTask(taskId: string) {
     })
     return
   }
-  const activeProfile = taskProfile ?? getActiveApiProfile(settings)
+  let activeProfile = taskProfile ?? getActiveApiProfile(settings)
+  const isAmazonDraftGeneration = isAmazonDraftGenerationTask(task)
+  const useSimpleOpenAIAmazonDraftGeneration = isAmazonDraftGeneration && activeProfile.provider === 'openai'
+  if (useSimpleOpenAIAmazonDraftGeneration) {
+    activeProfile = useNonStreamingImagesApiForAmazonDraft(activeProfile)
+  }
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
   const taskProvider = task.apiProvider ?? activeProfile.provider
   let falRequestInfo: { requestId: string; endpoint: string } | null = task.falRequestId && task.falEndpoint
@@ -3849,27 +3873,31 @@ async function executeTask(taskId: string) {
   }
 
   try {
-    // 获取输入图片 data URLs
-    const inputDataUrls: string[] = []
-    for (const imgId of task.inputImageIds) {
-      const dataUrl = await ensureImageCached(imgId)
-      if (!dataUrl) throw new Error('输入图片已不存在')
-      inputDataUrls.push(dataUrl)
-    }
+    let apiInputDataUrls: string[] = []
+    let apiMaskDataUrl: string | undefined
     let maskDataUrl: string | undefined
-    if (task.maskImageId) {
-      maskDataUrl = await ensureImageCached(task.maskImageId)
-      if (!maskDataUrl) throw new Error('遮罩图片已不存在')
+    if (!useSimpleOpenAIAmazonDraftGeneration) {
+      // 获取输入图片 data URLs
+      const inputDataUrls: string[] = []
+      for (const imgId of task.inputImageIds) {
+        const dataUrl = await ensureImageCached(imgId)
+        if (!dataUrl) throw new Error('输入图片已不存在')
+        inputDataUrls.push(dataUrl)
+      }
+      if (task.maskImageId) {
+        maskDataUrl = await ensureImageCached(task.maskImageId)
+        if (!maskDataUrl) throw new Error('遮罩图片已不存在')
+      }
+      const preparedPayload = await prepareReferenceImageAndMaskPayload(inputDataUrls, maskDataUrl, {
+        stage: getReferencePayloadStageForTask(task),
+      })
+      apiInputDataUrls = preparedPayload.dataUrls
+      apiMaskDataUrl = preparedPayload.maskDataUrl
     }
-    const preparedPayload = await prepareReferenceImageAndMaskPayload(inputDataUrls, maskDataUrl, {
-      stage: getReferencePayloadStageForTask(task),
-    })
-    const apiInputDataUrls = preparedPayload.dataUrls
-    const apiMaskDataUrl = preparedPayload.maskDataUrl
 
     const result = await callImageApi({
       settings: requestSettings,
-      prompt: replaceImageMentionsForApi(task.prompt, inputDataUrls.length),
+      prompt: replaceImageMentionsForApi(task.prompt, apiInputDataUrls.length),
       params: task.params,
       inputImageDataUrls: apiInputDataUrls,
       maskDataUrl: apiMaskDataUrl,

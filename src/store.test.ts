@@ -819,6 +819,43 @@ describe('mask draft lifecycle in store actions', () => {
     expect(finalTask?.inputImageIds).toEqual(expect.arrayContaining(['reference-a', 'draft-output-a', 'style-a']))
   })
 
+  it('rejects an Amazon final task when references are full and the draft output is not attached', async () => {
+    const references = Array.from({ length: 16 }, (_, index) => ({
+      id: `reference-${index + 1}`,
+      dataUrl: `data:image/png;base64,cmVm${index + 1}`,
+      source: 'upload' as const,
+    }))
+    for (const image of references) {
+      await putImage(image)
+    }
+    await putImage({ id: 'draft-output-a', dataUrl: 'data:image/png;base64,ZHJhZnQ=', source: 'generated' })
+    const draftTask = {
+      id: 'draft-task-a',
+      prompt: 'Amazon draft prompt',
+      params: { ...DEFAULT_PARAMS, size: '1024x1024', quality: 'medium' as const },
+      inputImageIds: references.map((image) => image.id),
+      outputImages: ['draft-output-a'],
+      status: 'done' as const,
+      error: null,
+      createdAt: 1,
+      finishedAt: 2,
+      elapsed: 1,
+      category: {
+        workflow: 'amazon-listing' as const,
+        amazonSlot: 'PT01',
+        generationStage: 'draft' as const,
+      },
+    }
+
+    const result = await createAmazonFinalImageFromDraft(draftTask)
+
+    const state = useStore.getState()
+    expect(result).toBe(false)
+    expect(state.tasks).toEqual([])
+    expect(state.inputImages.map((image) => image.id)).not.toContain('draft-output-a')
+    expect(state.showToast).toHaveBeenCalledWith('参考图数量已达上限，请删除一张参考图后再制作高清', 'error')
+  })
+
   it('rejects an Amazon final task when the selected draft output is not from the draft task', async () => {
     await putImage({ id: 'reference-a', dataUrl: 'data:image/png;base64,cmVm', source: 'upload' })
     await putImage({ id: 'draft-output-a', dataUrl: 'data:image/png;base64,ZHJhZnQ=', source: 'generated' })

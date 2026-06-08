@@ -4210,12 +4210,14 @@ export async function createAmazonFinalImageFromDraft(task: TaskRecord, selected
     if (dataUrl) inputImages.push({ id: imageId, dataUrl })
   }
 
+  const hasDraftInputImage = inputImages.some((image) => image.id === draftImageId)
   const effectiveStyleReferenceCount = hiddenStyleReferenceImageId && !inputImages.some((image) => image.id === hiddenStyleReferenceImageId) ? 1 : 0
-  const canAppendDraft = inputImages.length + effectiveStyleReferenceCount + 1 <= API_MAX_INPUT_IMAGES
-  if (canAppendDraft && !inputImages.some((image) => image.id === draftImageId)) {
+  if (!hasDraftInputImage && inputImages.length + effectiveStyleReferenceCount + 1 > API_MAX_INPUT_IMAGES) {
+    showToast('参考图数量已达上限，请删除一张参考图后再制作高清', 'error')
+    return false
+  }
+  if (!hasDraftInputImage) {
     inputImages.push({ id: draftImageId, dataUrl: draftDataUrl })
-  } else if (!canAppendDraft) {
-    showToast('参考图数量已达上限，将不附加草稿图，继续制作高清', 'info')
   }
 
   clearMaskDraft()

@@ -62,7 +62,6 @@ describe('amazonGeneration', () => {
       productTitle: 'Probe',
       amazonSlot: 'DSP-CUSTOM-300x250',
       plannerSessionId: 'planner-a',
-      plannerBatchId: 'batch-a',
       styleReferenceImageId: 'style-a',
       styleReferenceLabel: 'Clean',
       generationStage: 'final',

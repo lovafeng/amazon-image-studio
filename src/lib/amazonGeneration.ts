@@ -29,8 +29,9 @@ export function isAmazonDraftTask(task: Pick<TaskRecord, 'status' | 'category' |
 }
 
 export function createAmazonFinalCategory(category: TaskCategory, draftSourceImageId: string): TaskCategory {
+  const { plannerBatchId: _plannerBatchId, ...finalCategory } = category
   return {
-    ...category,
+    ...finalCategory,
     generationStage: 'final',
     draftSourceImageId,
   }

@@ -219,6 +219,8 @@ export interface TaskRecord {
     plannerSessionId?: string
     plannerBatchId?: string
     styleReferenceLabel?: string
+    generationStage?: 'draft' | 'final'
+    draftSourceImageId?: string
   }
 }
 

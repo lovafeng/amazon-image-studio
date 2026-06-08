@@ -64,6 +64,40 @@ describe('prepareReferenceImagePayload', () => {
     expect(result.notice).toContain('已自动降级压缩')
   })
 
+  it('uses the draft compression preset when preparing draft reference images', async () => {
+    const requests: PlannerReferenceImageCompressionRequest[] = []
+    const compressor = vi.fn(async (_dataUrl: string, request: PlannerReferenceImageCompressionRequest) => {
+      requests.push(request)
+      return dataUrlOfLength(request.maxEdge === 768 ? 90 : 40, 'data:image/webp;base64,')
+    })
+
+    const result = await prepareReferenceImagePayload([dataUrlOfLength(200)], {
+      stage: 'draft',
+      maxPayloadBytes: 80,
+      compressor,
+    })
+
+    expect(result.pass).toBe('fallback')
+    expect(requests).toEqual([
+      { maxEdge: 768, quality: 0.72 },
+      { maxEdge: 640, quality: 0.65 },
+    ])
+  })
+
+  it('keeps the final compression preset as the default', async () => {
+    const requests: PlannerReferenceImageCompressionRequest[] = []
+    const compressor = vi.fn(async (_dataUrl: string, request: PlannerReferenceImageCompressionRequest) => {
+      requests.push(request)
+      return dataUrlOfLength(40, 'data:image/webp;base64,')
+    })
+
+    await prepareReferenceImagePayload([dataUrlOfLength(200)], {
+      compressor,
+    })
+
+    expect(requests).toEqual([{ maxEdge: 1024, quality: 0.82 }])
+  })
+
   it('throws locally when the fallback payload is still too large', async () => {
     const compressor = vi.fn(async () => dataUrlOfLength(80, 'data:image/webp;base64,'))
 
@@ -109,6 +143,26 @@ describe('prepareReferenceImageAndMaskPayload', () => {
     expect(result.maskDataUrl).toBe(dataUrlOfLength(30, 'data:image/png;base64,'))
     expect(result.payloadBytes).toBe(120)
     expect(result.pass).toBe('primary')
+  })
+
+  it('uses the draft compression preset for matched image and mask payloads', async () => {
+    const maskRequests: PlannerReferenceImageCompressionRequest[] = []
+    const compressor = vi.fn(async () => dataUrlOfLength(40, 'data:image/webp;base64,'))
+    const maskCompressor = vi.fn(async (_imageDataUrl: string, _maskDataUrl: string, request: PlannerReferenceImageCompressionRequest) => {
+      maskRequests.push(request)
+      return {
+        imageDataUrl: dataUrlOfLength(50, 'data:image/webp;base64,'),
+        maskDataUrl: dataUrlOfLength(30, 'data:image/png;base64,'),
+      }
+    })
+
+    await prepareReferenceImageAndMaskPayload([dataUrlOfLength(200)], dataUrlOfLength(160), {
+      stage: 'draft',
+      compressor,
+      maskCompressor,
+    })
+
+    expect(maskRequests).toEqual([{ maxEdge: 768, quality: 0.72 }])
   })
 
   it('keeps a mask-only payload compatible for direct API callers', async () => {

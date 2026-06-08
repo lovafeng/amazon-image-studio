@@ -16,6 +16,13 @@ export interface PlannerReferenceImageCompressionRequest {
   quality: number
 }
 
+export type PlannerReferenceImagePayloadStage = 'draft' | 'final'
+
+interface PlannerReferenceImageCompressionPreset {
+  primary: PlannerReferenceImageCompressionRequest
+  fallback: PlannerReferenceImageCompressionRequest
+}
+
 export type PlannerReferenceImageCompressor = (
   dataUrl: string,
   request: PlannerReferenceImageCompressionRequest,
@@ -32,15 +39,35 @@ export type PlannerReferenceImageMaskCompressor = (
 export interface PreparePlannerReferenceImagePayloadOptions {
   signal?: AbortSignal
   maxPayloadBytes?: number
+  stage?: PlannerReferenceImagePayloadStage
   compressor?: PlannerReferenceImageCompressor
   maskCompressor?: PlannerReferenceImageMaskCompressor
 }
 
-const PRIMARY_MAX_EDGE = 1024
-const PRIMARY_QUALITY = 0.82
-const FALLBACK_MAX_EDGE = 768
-const FALLBACK_QUALITY = 0.72
+const FINAL_PRIMARY_MAX_EDGE = 1024
+const FINAL_PRIMARY_QUALITY = 0.82
+const FINAL_FALLBACK_MAX_EDGE = 768
+const FINAL_FALLBACK_QUALITY = 0.72
+const DRAFT_PRIMARY_MAX_EDGE = 768
+const DRAFT_PRIMARY_QUALITY = 0.72
+const DRAFT_FALLBACK_MAX_EDGE = 640
+const DRAFT_FALLBACK_QUALITY = 0.65
 const MAX_PAYLOAD_BYTES = 8 * 1024 * 1024
+
+const COMPRESSION_PRESETS: Record<PlannerReferenceImagePayloadStage, PlannerReferenceImageCompressionPreset> = {
+  draft: {
+    primary: { maxEdge: DRAFT_PRIMARY_MAX_EDGE, quality: DRAFT_PRIMARY_QUALITY },
+    fallback: { maxEdge: DRAFT_FALLBACK_MAX_EDGE, quality: DRAFT_FALLBACK_QUALITY },
+  },
+  final: {
+    primary: { maxEdge: FINAL_PRIMARY_MAX_EDGE, quality: FINAL_PRIMARY_QUALITY },
+    fallback: { maxEdge: FINAL_FALLBACK_MAX_EDGE, quality: FINAL_FALLBACK_QUALITY },
+  },
+}
+
+function getCompressionPreset(stage: PlannerReferenceImagePayloadStage | undefined): PlannerReferenceImageCompressionPreset {
+  return COMPRESSION_PRESETS[stage ?? 'final']
+}
 
 function canUseCanvasCompression() {
   return typeof document !== 'undefined' && typeof Image !== 'undefined' && typeof FileReader !== 'undefined'
@@ -286,10 +313,11 @@ export async function prepareReferenceImagePayload(
 
   const maxPayloadBytes = options.maxPayloadBytes ?? MAX_PAYLOAD_BYTES
   const compressor = options.compressor ?? compressReferenceImageDataUrl
+  const compressionPreset = getCompressionPreset(options.stage)
 
   const primaryDataUrls = await compressAll(
     dataUrls,
-    { maxEdge: PRIMARY_MAX_EDGE, quality: PRIMARY_QUALITY },
+    compressionPreset.primary,
     compressor,
     options.signal,
   )
@@ -307,7 +335,7 @@ export async function prepareReferenceImagePayload(
 
   const fallbackDataUrls = await compressAll(
     dataUrls,
-    { maxEdge: FALLBACK_MAX_EDGE, quality: FALLBACK_QUALITY },
+    compressionPreset.fallback,
     compressor,
     options.signal,
   )
@@ -348,11 +376,12 @@ export async function prepareReferenceImageAndMaskPayload(
   const maxPayloadBytes = options.maxPayloadBytes ?? MAX_PAYLOAD_BYTES
   const compressor = options.compressor ?? compressReferenceImageDataUrl
   const maskCompressor = options.maskCompressor ?? compressReferenceImageAndMaskDataUrl
+  const compressionPreset = getCompressionPreset(options.stage)
 
   const primary = await compressAllWithOptionalMask(
     dataUrls,
     maskDataUrl,
-    { maxEdge: PRIMARY_MAX_EDGE, quality: PRIMARY_QUALITY },
+    compressionPreset.primary,
     compressor,
     maskCompressor,
     options.signal,
@@ -373,7 +402,7 @@ export async function prepareReferenceImageAndMaskPayload(
   const fallback = await compressAllWithOptionalMask(
     dataUrls,
     maskDataUrl,
-    { maxEdge: FALLBACK_MAX_EDGE, quality: FALLBACK_QUALITY },
+    compressionPreset.fallback,
     compressor,
     maskCompressor,
     options.signal,

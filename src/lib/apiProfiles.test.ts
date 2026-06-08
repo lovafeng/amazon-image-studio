@@ -6,11 +6,14 @@ import {
   DEFAULT_IMAGES_MODEL,
   DEFAULT_AMAZON_PLANNER_PROFILE_ID,
   DEFAULT_OPENAI_PROFILE_ID,
+  DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID,
   DEFAULT_RESPONSES_MODEL,
   DEFAULT_SETTINGS,
+  createOpenAIInputImageProfile,
   createDefaultOpenAIProfile,
   createDefaultFalProfile,
   findEquivalentApiProfile,
+  getActiveApiProfile,
   getAgentResponsesProfile,
   getAmazonPlannerProfile,
   getDefaultImageProfile,
@@ -737,6 +740,33 @@ describe('custom providers', () => {
 })
 
 describe('amazon planner profile', () => {
+  it('keeps default OpenAI style board requests on the virtual Images profile after settings normalization', () => {
+    const imageProfile = createDefaultOpenAIProfile({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      name: '生图',
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
+      streamImages: true,
+    })
+    const requestProfile = createOpenAIInputImageProfile(imageProfile)
+    const normalizedSettings = normalizeSettings({
+      profiles: [imageProfile],
+      activeProfileId: imageProfile.id,
+    })
+    const requestSettings = normalizeSettings({
+      ...normalizedSettings,
+      profiles: [requestProfile, ...normalizedSettings.profiles],
+      activeProfileId: requestProfile.id,
+    })
+
+    expect(getActiveApiProfile(requestSettings)).toMatchObject({
+      id: DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID,
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
+      streamImages: false,
+    })
+  })
+
   it('resolves the built-in image profile even when the planner profile is active', () => {
     const settings = normalizeSettings({
       profiles: [

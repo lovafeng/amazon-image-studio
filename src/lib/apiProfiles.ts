@@ -32,6 +32,7 @@ const DEFAULT_IMAGE_PROFILE_STREAM_IMAGES = !DEFAULT_IMAGE_PROFILE_USES_RESPONSE
 export const DEFAULT_FAL_BASE_URL = 'https://fal.run'
 export const DEFAULT_FAL_MODEL = 'openai/gpt-image-2'
 export const DEFAULT_OPENAI_PROFILE_ID = 'default-openai'
+export const DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID = `${DEFAULT_OPENAI_PROFILE_ID}-input-images`
 export const DEFAULT_AMAZON_PLANNER_PROFILE_ID = 'default-openai-planner'
 export const DEFAULT_API_TIMEOUT = 600
 const LEGACY_DEFAULT_STREAM_PARTIAL_IMAGES = 1
@@ -301,6 +302,17 @@ export function createDefaultOpenAIProfile(overrides: Partial<ApiProfile> = {}):
     streamImages: true,
     streamPartialImages: DEFAULT_STREAM_PARTIAL_IMAGES,
     ...overrides,
+  }
+}
+
+export function createOpenAIInputImageProfile(profile: ApiProfile): ApiProfile {
+  if (profile.provider !== 'openai' || profile.id !== DEFAULT_OPENAI_PROFILE_ID) return profile
+  return {
+    ...profile,
+    id: DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID,
+    model: profile.apiMode === 'images' ? profile.model : DEFAULT_IMAGES_MODEL,
+    apiMode: 'images',
+    streamImages: false,
   }
 }
 

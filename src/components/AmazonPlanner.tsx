@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import { addImageFromFile, addImageFromUrl, ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail, submitTask, useStore } from '../store'
-import { getAmazonPlannerProfile, getDefaultImageProfile, normalizeSettings, validateApiProfile } from '../lib/apiProfiles'
+import { createOpenAIInputImageProfile, getAmazonPlannerProfile, getDefaultImageProfile, normalizeSettings, validateApiProfile } from '../lib/apiProfiles'
 import {
   DEFAULT_AMAZON_PROMPT_DRAFT,
   type AmazonPromptDraft,
@@ -54,7 +54,7 @@ import {
   type AmazonDomImportResult,
 } from '../lib/amazonDomImport'
 import { DEFAULT_PARAMS } from '../types'
-import type { AmazonPlannerSelectedStyleReference, AmazonPlannerSession, TaskRecord } from '../types'
+import type { AmazonPlannerSelectedStyleReference, AmazonPlannerSession, ApiProfile, TaskRecord } from '../types'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, DownloadIcon, EyeIcon, HistoryIcon, ImportIcon, PhotoIcon, PlusIcon, TrashIcon } from './icons'
 import PlannerProductionGuide from './PlannerProductionGuide'
 import StyleReferenceLibrary from './StyleReferenceLibrary'
@@ -1161,11 +1161,14 @@ export default function AmazonPlanner() {
     return profile
   }
 
-  const createImageRequestSettings = (profileId: string) => {
+  const createImageRequestSettings = (profile: ApiProfile) => {
     const normalizedSettings = normalizeSettings(settings)
     return normalizeSettings({
       ...normalizedSettings,
-      activeProfileId: profileId,
+      profiles: normalizedSettings.profiles.some((item) => item.id === profile.id)
+        ? normalizedSettings.profiles.map((item) => item.id === profile.id ? profile : item)
+        : [profile, ...normalizedSettings.profiles],
+      activeProfileId: profile.id,
     })
   }
 
@@ -1454,7 +1457,8 @@ export default function AmazonPlanner() {
     if (!imageProfile) {
       return
     }
-    const imageRequestSettings = createImageRequestSettings(imageProfile.id)
+    const styleImageProfile = createOpenAIInputImageProfile(imageProfile)
+    const imageRequestSettings = createImageRequestSettings(styleImageProfile)
 
     setIsGeneratingStyleImages(true)
     setStyleError('')

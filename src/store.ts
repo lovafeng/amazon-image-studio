@@ -20,7 +20,7 @@ import type {
   ResponsesOutputItem,
 } from './types'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_PARAMS } from './types'
-import { DEFAULT_IMAGES_MODEL, DEFAULT_OPENAI_PROFILE_ID, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, getActiveApiProfile, getAgentResponsesProfile, getCustomProviderDefinition, getImageGenerationProfile, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
+import { DEFAULT_IMAGES_MODEL, DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID, DEFAULT_OPENAI_PROFILE_ID, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, createOpenAIInputImageProfile, getActiveApiProfile, getAgentResponsesProfile, getCustomProviderDefinition, getImageGenerationProfile, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
 import { dismissAllTooltips } from './lib/tooltipDismiss'
 import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/promptImageMentions'
 import {
@@ -88,7 +88,6 @@ const FAL_RECOVERY_POLL_MS = 10_000
 const CUSTOM_RECOVERY_POLL_MS = 10_000
 const SUPPORT_PROMPT_IMAGE_THRESHOLD = 50
 const AGENT_INPUT_DRAFT_RETENTION_MS = 3 * 24 * 60 * 60 * 1000
-const DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID = `${DEFAULT_OPENAI_PROFILE_ID}-input-images`
 const falRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const customRecoveryTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const openAIWatchdogTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -132,14 +131,12 @@ function isAmazonDraftGenerationTask(task: Pick<TaskRecord, 'category'>): boolea
 function useNonStreamingImagesApiForAmazonDraft(profile: ApiProfile): ApiProfile {
   if (profile.provider !== 'openai') return profile
 
-  const shouldUseImagesModel = profile.apiMode !== 'images'
-  const shouldUseDefaultInputImageProfileId = profile.id === DEFAULT_OPENAI_PROFILE_ID
-
   return {
-    ...profile,
-    id: shouldUseDefaultInputImageProfileId ? DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID : profile.id,
-    model: shouldUseImagesModel ? DEFAULT_IMAGES_MODEL : profile.model,
-    apiMode: 'images',
+    ...createOpenAIInputImageProfile({
+      ...profile,
+      model: profile.apiMode !== 'images' ? DEFAULT_IMAGES_MODEL : profile.model,
+      apiMode: 'images',
+    }),
     streamImages: false,
   }
 }

@@ -70,6 +70,16 @@ describe('AmazonPlanner', () => {
     expect(styleGenerationBlock).not.toContain('inputImageDataUrls: referenceImages')
   })
 
+  it('uses the virtual Images profile for default OpenAI style board generation', () => {
+    const styleGenerationBlock = amazonPlannerSource.slice(
+      amazonPlannerSource.indexOf('const generateStyleImages = async () => {'),
+      amazonPlannerSource.indexOf('const applyPlannerResult = (result: PlannerApiResult, sourceLabel: string) => {'),
+    )
+
+    expect(styleGenerationBlock).toContain('createOpenAIInputImageProfile(imageProfile)')
+    expect(styleGenerationBlock).toContain('createImageRequestSettings(styleImageProfile)')
+  })
+
   it('keeps style boards when switching Listing, A+ and DSP planner modes', () => {
     const changeModeStart = amazonPlannerSource.indexOf('const changePlannerMode = (mode: AmazonPlannerMode) => {')
     const changeAPlusTypeStart = amazonPlannerSource.indexOf('const changeAPlusType = (nextType: APlusContentType) => {')

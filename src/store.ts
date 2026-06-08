@@ -4232,8 +4232,7 @@ export async function createAmazonFinalImageFromDraft(task: TaskRecord, selected
     category: createAmazonFinalCategory(task.category!, draftImageId),
   })
 
-  const storeModule = await import('./store')
-  return storeModule.submitTask({ apiProfileId: task.apiProfileId })
+  return submitTask({ apiProfileId: task.apiProfileId })
 }
 
 /** 编辑输出：清空当前输入，只保留待编辑的输出图 */

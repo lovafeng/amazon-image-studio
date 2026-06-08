@@ -6,6 +6,7 @@ import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
+import { getTaskGenerationStageLabel } from '../lib/taskHistory'
 import { CodeIcon } from './icons'
 import TaskReuseMenu from './TaskReuseMenu'
 import ViewportTooltip from './ViewportTooltip'
@@ -377,6 +378,7 @@ export default function TaskCard({
 
   const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
+  const generationStageLabel = getTaskGenerationStageLabel(task)
   const isInterrupted = task.status === 'error' && task.error === '已停止生成。'
   const firstOutputImageId = task.outputImages?.[0]
   const actualSizeForFirstImage = firstOutputImageId ? task.actualParamsByImage?.[firstOutputImageId]?.size : undefined
@@ -620,6 +622,11 @@ export default function TaskCard({
               onTouchEnd={(e) => e.stopPropagation()}
               onTouchCancel={(e) => e.stopPropagation()}
             >
+              {generationStageLabel && (
+                <span className="rounded-md bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                  {generationStageLabel}
+                </span>
+              )}
               {/* API Name */}
               {(task.apiProfileName || task.apiProvider) && (
                 <span 

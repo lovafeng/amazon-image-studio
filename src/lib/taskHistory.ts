@@ -138,6 +138,13 @@ export function getWorkflowLabel(workflow: TaskWorkflow) {
   }
 }
 
+export function getTaskGenerationStageLabel(task: Pick<TaskRecord, 'category'>) {
+  if (task.category?.workflow !== 'amazon-listing' && task.category?.workflow !== 'amazon-aplus' && task.category?.workflow !== 'amazon-dsp') return ''
+  if (task.category?.generationStage === 'draft') return '草稿'
+  if (task.category?.generationStage === 'final') return '高清'
+  return ''
+}
+
 export function getAspectLabel(aspect: TaskAspect) {
   switch (aspect) {
     case 'landscape':
@@ -202,6 +209,7 @@ export function matchesTaskHistoryFilters(task: TaskRecord, filters: TaskHistory
     JSON.stringify(task.actualParams ?? {}),
     category.productTitle,
     getWorkflowLabel(category.workflow),
+    getTaskGenerationStageLabel(task),
     getAspectLabel(category.aspect),
     category.amazonSlot,
     category.aPlusType,

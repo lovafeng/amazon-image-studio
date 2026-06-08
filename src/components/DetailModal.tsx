@@ -11,7 +11,7 @@ import { createMaskPreviewDataUrl } from '../lib/canvasImage'
 import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageIds } from '../lib/downloadImages'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
-import { getAspectLabel, getTaskHistoryCategory, getWorkflowLabel } from '../lib/taskHistory'
+import { getAspectLabel, getTaskGenerationStageLabel, getTaskHistoryCategory, getWorkflowLabel } from '../lib/taskHistory'
 import { isAmazonDraftTask } from '../lib/amazonGeneration'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
 import TaskReuseMenu from './TaskReuseMenu'
@@ -96,6 +96,7 @@ export default function DetailModal() {
   }, [task?.params, task?.status, streamPreviewSlots, streamPreviewSrc])
   const activeStreamPreviewSrc = streamPreviewItems[imageIndex]?.src || ''
   const historyCategory = useMemo(() => task ? getTaskHistoryCategory(task) : null, [task])
+  const generationStageLabel = task ? getTaskGenerationStageLabel(task) : ''
 
   useEffect(() => {
     setStreamPreviewLoaded(false)
@@ -966,6 +967,11 @@ export default function DetailModal() {
                     <span>·</span>
                     <span>{currentHistoryCategory.amazonSlot}</span>
                   </>
+                )}
+                {generationStageLabel && (
+                  <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                    {generationStageLabel}
+                  </span>
                 )}
               </div>
               <button

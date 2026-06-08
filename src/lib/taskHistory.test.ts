@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEFAULT_PARAMS, type TaskRecord } from '../types'
 import {
   UNCATEGORIZED_PRODUCT_FILTER,
+  getTaskGenerationStageLabel,
   getTaskHistoryCategory,
   getTaskProductFilterOptions,
   getWorkflowLabel,
@@ -81,6 +82,27 @@ describe('task history categories', () => {
       aspect: 'landscape',
     })
     expect(getWorkflowLabel('amazon-dsp')).toBe('DSP 图')
+  })
+
+  it('labels Amazon draft and final generation stages', () => {
+    expect(getTaskGenerationStageLabel({ category: { workflow: 'amazon-listing', generationStage: 'draft' } } as any)).toBe('草稿')
+    expect(getTaskGenerationStageLabel({ category: { workflow: 'amazon-listing', generationStage: 'final' } } as any)).toBe('高清')
+    expect(getTaskGenerationStageLabel({ category: { workflow: 'gallery' } } as any)).toBe('')
+  })
+
+  it('matches history search by draft and final stage labels', () => {
+    const draftTask = task({
+      category: { workflow: 'amazon-listing', generationStage: 'draft' },
+    })
+
+    expect(matchesTaskHistoryFilters(draftTask, {
+      searchQuery: '草稿',
+      filterStatus: 'all',
+      filterFavorite: false,
+      filterProductTitle: '',
+      filterWorkflow: 'all',
+      filterAspect: 'all',
+    })).toBe(true)
   })
 
   it('infers product and workflow from legacy prompts', () => {

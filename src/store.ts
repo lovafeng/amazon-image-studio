@@ -133,7 +133,7 @@ function useNonStreamingImagesApiForAmazonDraft(profile: ApiProfile): ApiProfile
   if (profile.provider !== 'openai') return profile
 
   const shouldUseImagesModel = profile.apiMode !== 'images'
-  const shouldUseDefaultInputImageProfileId = profile.id === DEFAULT_OPENAI_PROFILE_ID && shouldUseImagesModel
+  const shouldUseDefaultInputImageProfileId = profile.id === DEFAULT_OPENAI_PROFILE_ID
 
   return {
     ...profile,

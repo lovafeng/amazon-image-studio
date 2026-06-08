@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import storeSource from './store.ts?raw'
 import { DEFAULT_PARAMS } from './types'
-import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_IMAGES_MODEL, DEFAULT_OPENAI_PROFILE_ID, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, normalizeSettings } from './lib/apiProfiles'
+import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_IMAGES_MODEL, DEFAULT_OPENAI_PROFILE_ID, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, getActiveApiProfile, normalizeSettings } from './lib/apiProfiles'
 import type { AgentConversation, AmazonPlannerSession, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 vi.mock('./lib/db', () => {
@@ -842,6 +842,49 @@ describe('mask draft lifecycle in store actions', () => {
     expect(callOptions.settings).toMatchObject({
       model: DEFAULT_IMAGES_MODEL,
       apiMode: 'images',
+      streamImages: false,
+    })
+  })
+
+  it('keeps default OpenAI Images draft retries on the virtual Images profile after settings normalization', async () => {
+    const imageProfile = createDefaultOpenAIProfile({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      name: '生图',
+      apiKey: 'image-key',
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
+      streamImages: true,
+    })
+    await putImage(imageA)
+    useStore.setState({
+      prompt: 'Amazon draft retry prompt',
+      inputImages: [imageA],
+      settings: normalizeSettings({
+        profiles: [imageProfile],
+        activeProfileId: imageProfile.id,
+      }),
+      pendingTaskCategory: {
+        mode: 'prompt-match',
+        prompt: 'Amazon draft retry prompt',
+        category: {
+          workflow: 'amazon-listing',
+          amazonSlot: 'PT04',
+          generationStage: 'draft',
+        },
+      },
+    })
+
+    const submitted = await submitTask()
+
+    await vi.waitFor(() => expect(callImageApi).toHaveBeenCalled())
+    const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
+    const activeProfile = getActiveApiProfile(callOptions.settings)
+    expect(submitted).toBe(true)
+    expect(callOptions.inputImageDataUrls).toEqual([])
+    expect(activeProfile).toMatchObject({
+      id: `${DEFAULT_OPENAI_PROFILE_ID}-input-images`,
+      apiMode: 'images',
+      model: DEFAULT_IMAGES_MODEL,
       streamImages: false,
     })
   })

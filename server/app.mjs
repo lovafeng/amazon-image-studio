@@ -54,6 +54,11 @@ function sendImageContent(res, content) {
   res.end(content.bytes)
 }
 
+function isBrowserNavigationRequest(req) {
+  const mode = req.headers['sec-fetch-mode']
+  return mode === 'navigate' || (Array.isArray(mode) && mode.includes('navigate'))
+}
+
 function publicUser(user) {
   return {
     id: user.id,
@@ -666,6 +671,15 @@ async function handleData(req, res, storage, pathname, session) {
   if (pathname.startsWith('/api/images/')) {
     const id = routeId(pathname, '/api/images/')
     if (req.method === 'GET') {
+      if (isBrowserNavigationRequest(req)) {
+        const content = storage.getImageContent(owner, id)
+        if (!content) {
+          sendJson(res, 404, { error: '图片不存在' })
+          return true
+        }
+        sendImageContent(res, content)
+        return true
+      }
       sendOk(res, storage.getImage(owner, id) ?? null)
       return true
     }

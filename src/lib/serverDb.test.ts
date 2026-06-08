@@ -271,6 +271,71 @@ describe('server backed db client', () => {
     expect(fetchMock).not.toHaveBeenCalledWith('/api/images/image-a', { credentials: 'same-origin' })
   })
 
+  it('backfills a missing thumbnail from the blob endpoint instead of the full image JSON', async () => {
+    vi.stubGlobal('Image', class {
+      onload: null | (() => void) = null
+      onerror: null | (() => void) = null
+      naturalWidth = 640
+      naturalHeight = 480
+      set src(_value: string) {
+        queueMicrotask(() => this.onload?.())
+      }
+    })
+    vi.stubGlobal('FileReader', class {
+      result: string | null = null
+      onload: null | (() => void) = null
+      onerror: null | (() => void) = null
+      readAsDataURL(blob: Blob) {
+        this.result = `data:${blob.type};base64,ZmFrZQ==`
+        queueMicrotask(() => this.onload?.())
+      }
+    })
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => ({
+        width: 0,
+        height: 0,
+        getContext: () => ({ drawImage: vi.fn() }),
+        toBlob: (callback: BlobCallback) => callback(new Blob(['thumb'], { type: 'image/webp' })),
+      })),
+    })
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input)
+      if (url === '/api/thumbnails/image-a' && !init?.method) {
+        return new Response(JSON.stringify(null), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      if (url === '/api/images/image-a/blob') {
+        return new Response(new Blob(['full-image'], { type: 'image/png' }), {
+          status: 200,
+          headers: { 'content-type': 'image/png' },
+        })
+      }
+      if (url === '/api/thumbnails/image-a' && init?.method === 'PUT') {
+        return new Response(JSON.stringify({ id: 'image-a' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ error: 'unexpected request' }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+
+    const thumbnail = await getImageThumbnail('image-a')
+
+    expect(thumbnail).toMatchObject({
+      id: 'image-a',
+      width: 640,
+      height: 480,
+      thumbnailVersion: 2,
+    })
+    expect(fetchMock).toHaveBeenCalledWith('/api/images/image-a/blob', { credentials: 'same-origin' })
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/images/image-a', { credentials: 'same-origin' })
+  })
+
   it('migrates legacy IndexedDB planner sessions before loading server history', async () => {
     const session = amazonPlannerSession()
     const serverSessions = new Map<string, AmazonPlannerSession>()

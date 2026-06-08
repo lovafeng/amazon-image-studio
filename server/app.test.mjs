@@ -306,6 +306,34 @@ describe('http app', () => {
     expect(thumbnail.text()).toBe('thumb')
   })
 
+  it('serves stored images as raw content when the image API URL is opened in browser navigation', async () => {
+    const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const cookie = login.headers['set-cookie'][0]
+
+    await request('/api/images/image-a', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        id: 'image-a',
+        dataUrl: 'data:image/png;base64,aGVsbG8=',
+        createdAt: 1,
+        source: 'upload',
+      }),
+    })
+
+    const image = await request('/api/images/image-a', {
+      headers: {
+        cookie,
+        'sec-fetch-mode': 'navigate',
+      },
+    })
+
+    expect(image.status).toBe(200)
+    expect(image.headers['content-type']).toBe('image/png')
+    expect(image.headers['content-length']).toBe('5')
+    expect(image.text()).toBe('hello')
+  })
+
   it('rejects unsafe raw image and thumbnail MIME types after login', async () => {
     const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
     const cookie = login.headers['set-cookie'][0]

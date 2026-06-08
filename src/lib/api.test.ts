@@ -225,6 +225,60 @@ describe('callImageApi', () => {
     })
   })
 
+  it('accepts Responses stream events while using the Images API proxy path', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
+    const streamBody = [
+      'data: {"type":"response.image_generation_call.partial_image","partial_image_index":0,"partial_image_b64":"cGFydGlhbA=="}',
+      '',
+      'data: {"type":"response.completed","response":{"output":[{"type":"image_generation_call","result":"ZmluYWw=","size":"1024x1024","quality":"auto","output_format":"jpeg"}]}}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(streamBody, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+    const partialImages: string[] = []
+
+    const result = await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        apiProxy: true,
+        apiMode: 'images',
+        streamImages: true,
+        streamPartialImages: 1,
+        profiles: DEFAULT_SETTINGS.profiles.map((profile) => ({
+          ...profile,
+          apiKey: 'test-key',
+          apiProxy: true,
+          apiMode: 'images',
+          streamImages: true,
+          streamPartialImages: 1,
+        })),
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+      onPartialImage: (partial: { image: string }) => partialImages.push(partial.image),
+    } as any)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api-proxy/images/generations',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    expect(partialImages).toEqual(['data:image/jpeg;base64,cGFydGlhbA=='])
+    expect(result).toMatchObject({
+      images: ['data:image/jpeg;base64,ZmluYWw='],
+      actualParams: {
+        output_format: 'jpeg',
+        quality: 'auto',
+        size: '1024x1024',
+      },
+    })
+  })
+
   it('splits Images API streaming into concurrent single-image requests when n is greater than 1', async () => {
     vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'false')
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {

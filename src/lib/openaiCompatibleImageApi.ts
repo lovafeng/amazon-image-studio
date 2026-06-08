@@ -340,7 +340,7 @@ async function parseImagesApiResponse(payload: ImageApiResponse, mime: string, s
 
 function eventToImageResponseItem(event: Record<string, unknown>): ImageResponseItem {
   return {
-    b64_json: getStringValue(event, 'b64_json'),
+    b64_json: getStringValue(event, 'b64_json') ?? getStringValue(event, 'result'),
     revised_prompt: getStringValue(event, 'revised_prompt'),
     size: getStringValue(event, 'size'),
     quality: getStringValue(event, 'quality'),
@@ -356,6 +356,8 @@ async function parseImagesApiStreamResponse(
   onPartialImage?: CallApiOptions['onPartialImage'],
 ): Promise<CallApiResult> {
   const completedItems: ImageResponseItem[] = []
+  let responsesCompletedPayload: ResponsesApiResponse | null = null
+  const responseOutputItems: ResponsesOutputItem[] = []
 
   await readJsonServerSentEvents(response, (event) => {
     const type = getStringValue(event, 'type')
@@ -369,32 +371,64 @@ async function parseImagesApiStreamResponse(
       }
       return
     }
+    if (type === 'response.image_generation_call.partial_image') {
+      const b64 = getStringValue(event, 'partial_image_b64')
+      if (b64) {
+        onPartialImage?.({
+          image: normalizeBase64Image(b64, mime),
+          partialImageIndex: getNumberValue(event, 'partial_image_index'),
+        })
+      }
+      return
+    }
 
     if (type === 'image_generation.completed' || type === 'image_edit.completed') {
       completedItems.push(eventToImageResponseItem(event))
+      return
     }
+
+    const responsesPayload = getResponsesStreamPayload(event)
+    if (!responsesPayload) return
+
+    if (type === 'response.output_item.done' && Array.isArray(responsesPayload.output)) {
+      responseOutputItems.push(...responsesPayload.output)
+      return
+    }
+    responsesCompletedPayload = responsesPayload
   })
 
-  if (!completedItems.length) {
+  if (completedItems.length) {
+    const images = completedItems
+      .map((item) => item.b64_json)
+      .filter((b64): b64 is string => Boolean(b64))
+      .map((b64) => normalizeBase64Image(b64, mime))
+    if (!images.length) throw new Error('流式接口未返回可用图片数据')
+
+    const actualParamsList = completedItems.map((item) => mergeActualParams(pickActualParams(item)))
+    const actualParams = mergeActualParams(
+      actualParamsList[0],
+      images.length > 1 ? { n: images.length } : undefined,
+    )
+    return {
+      images,
+      actualParams,
+      actualParamsList,
+      revisedPrompts: completedItems.map((item) => item.revised_prompt),
+    }
+  }
+
+  const responsesPayload = responsesCompletedPayload ?? (responseOutputItems.length ? { output: responseOutputItems } : null)
+  if (!responsesPayload) {
     throw new Error('流式接口未返回最终图片数据')
   }
 
-  const images = completedItems
-    .map((item) => item.b64_json)
-    .filter((b64): b64 is string => Boolean(b64))
-    .map((b64) => normalizeBase64Image(b64, mime))
-  if (!images.length) throw new Error('流式接口未返回可用图片数据')
-
-  const actualParamsList = completedItems.map((item) => mergeActualParams(pickActualParams(item)))
-  const actualParams = mergeActualParams(
-    actualParamsList[0],
-    images.length > 1 ? { n: images.length } : undefined,
-  )
+  const imageResults = parseResponsesImageResults(responsesPayload, mime)
+  const actualParams = mergeActualParams(imageResults[0]?.actualParams ?? {})
   return {
-    images,
+    images: imageResults.map((result) => result.image),
     actualParams,
-    actualParamsList,
-    revisedPrompts: completedItems.map((item) => item.revised_prompt),
+    actualParamsList: imageResults.map((result) => mergeActualParams(result.actualParams ?? {})),
+    revisedPrompts: imageResults.map((result) => result.revisedPrompt),
   }
 }
 

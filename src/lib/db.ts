@@ -212,25 +212,9 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
     return existingThumbnail
   }
 
-  const image = await getImage(id)
-  if (!image) return undefined
-  const legacyImage = image as StoredImage & Partial<StoredImageThumbnail>
-  if (legacyImage.thumbnailDataUrl && legacyImage.thumbnailVersion === THUMBNAIL_VERSION) {
-    const thumbnail: StoredImageThumbnail = {
-      id,
-      thumbnailDataUrl: legacyImage.thumbnailDataUrl,
-      width: legacyImage.width,
-      height: legacyImage.height,
-      thumbnailVersion: THUMBNAIL_VERSION,
-    }
-    await putImageThumbnail(thumbnail)
-    if ((!image.width || !image.height) && thumbnail.width && thumbnail.height) {
-      await putImage({ ...image, width: thumbnail.width, height: thumbnail.height })
-    }
-    return thumbnail
-  }
-
-  const metadata = await safeCreateImageThumbnail(image.dataUrl)
+  const blob = await getImageBlob(id)
+  if (!blob) return undefined
+  const metadata = await safeCreateImageThumbnail(await blobToDataUrl(blob))
   if (!metadata.thumbnailDataUrl) return undefined
   const thumbnail: StoredImageThumbnail = {
     id,
@@ -240,9 +224,6 @@ export async function getImageThumbnail(id: string): Promise<StoredImageThumbnai
     thumbnailVersion: THUMBNAIL_VERSION,
   }
   await putImageThumbnail(thumbnail)
-  if (metadata.width && metadata.height && (image.width !== metadata.width || image.height !== metadata.height)) {
-    await putImage({ ...image, width: metadata.width, height: metadata.height })
-  }
   return thumbnail
 }
 

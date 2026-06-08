@@ -115,7 +115,7 @@ vi.mock('./lib/agentApi', () => ({
 }))
 import { clearAgentConversations, clearAmazonPlannerSessions, clearImages, clearTasks, getAllAgentConversations, getAllAmazonPlannerSessions, getImage, putAgentConversation, putAmazonPlannerSession, putImage } from './lib/db'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
-import { cleanStaleAgentInputDrafts, clearData, editOutputs, ensureImageUrlCached, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
+import { cleanStaleAgentInputDrafts, clearData, createAmazonFinalImageFromDraft, editOutputs, ensureImageUrlCached, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -735,6 +735,91 @@ describe('mask draft lifecycle in store actions', () => {
       amazonSlot: 'PT01',
       styleReferenceImageId: styleImage.id,
     })
+  })
+
+  it('uses draft reference compression for Amazon draft task submissions', async () => {
+    const referencePayload = await import('./lib/referenceImagePayload')
+    const prepareSpy = vi.spyOn(referencePayload, 'prepareReferenceImageAndMaskPayload').mockResolvedValue({
+      dataUrls: ['data:image/webp;base64,compressed'],
+      originalBytes: 1,
+      payloadBytes: 1,
+      compressedCount: 1,
+      pass: 'primary',
+      notice: '',
+    })
+
+    await putImage({ id: 'image-a', dataUrl: 'data:image/png;base64,YQ==', source: 'upload' })
+    useStore.setState({
+      prompt: 'Amazon draft prompt',
+      inputImages: [{ id: 'image-a', dataUrl: 'data:image/png;base64,YQ==' }],
+      params: { ...DEFAULT_PARAMS, size: '1024x1024', quality: 'medium' },
+      pendingTaskCategory: {
+        mode: 'prompt-match',
+        prompt: 'Amazon draft prompt',
+        category: {
+          workflow: 'amazon-listing',
+          amazonSlot: 'PT01',
+          generationStage: 'draft',
+        },
+      },
+    })
+
+    await submitTask()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(prepareSpy).toHaveBeenCalledWith(
+      expect.any(Array),
+      undefined,
+      expect.objectContaining({ stage: 'draft' }),
+    )
+  })
+
+  it('creates a high-quality Amazon final task from a draft output', async () => {
+    const submitSpy = vi.spyOn(await import('./store'), 'submitTask').mockResolvedValue(true)
+    await putImage({ id: 'reference-a', dataUrl: 'data:image/png;base64,cmVm', source: 'upload' })
+    await putImage({ id: 'style-a', dataUrl: 'data:image/png;base64,c3R5bGU=', source: 'generated' })
+    await putImage({ id: 'draft-output-a', dataUrl: 'data:image/png;base64,ZHJhZnQ=', source: 'generated' })
+    const draftTask = {
+      id: 'draft-task-a',
+      prompt: 'Amazon draft prompt',
+      params: { ...DEFAULT_PARAMS, size: '1024x1024', quality: 'medium' as const },
+      inputImageIds: ['reference-a', 'style-a'],
+      outputImages: ['draft-output-a'],
+      status: 'done' as const,
+      error: null,
+      createdAt: 1,
+      finishedAt: 2,
+      elapsed: 1,
+      category: {
+        workflow: 'amazon-listing' as const,
+        amazonSlot: 'PT01',
+        styleReferenceImageId: 'style-a',
+        plannerSessionId: 'planner-a',
+        generationStage: 'draft' as const,
+      },
+    }
+
+    try {
+      await createAmazonFinalImageFromDraft(draftTask)
+
+      const state = useStore.getState()
+      expect(state.prompt).toBe('Amazon draft prompt')
+      expect(state.params).toMatchObject({ size: '1024x1024', quality: 'high' })
+      expect(state.inputImages.map((image) => image.id)).toEqual(['reference-a', 'draft-output-a'])
+      expect(state.pendingTaskCategory).toMatchObject({
+        mode: 'prompt-match',
+        category: {
+          workflow: 'amazon-listing',
+          amazonSlot: 'PT01',
+          styleReferenceImageId: 'style-a',
+          generationStage: 'final',
+          draftSourceImageId: 'draft-output-a',
+        },
+      })
+      expect(submitSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      submitSpy.mockRestore()
+    }
   })
 
   it('does not append a hidden style reference image for an Amazon MAIN prompt', async () => {

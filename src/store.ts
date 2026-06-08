@@ -61,6 +61,12 @@ import { prepareReferenceImageAndMaskPayload } from './lib/referenceImagePayload
 import { getTaskHistoryCategory } from './lib/taskHistory'
 import { isAmazonListingMainSlot } from './lib/listingPlanner'
 import { createImageObjectUrlCache } from './lib/imageObjectUrlCache'
+import {
+  AMAZON_FINAL_QUALITY,
+  createAmazonFinalCategory,
+  getReferencePayloadStageForTask,
+  isAmazonDraftTask,
+} from './lib/amazonGeneration'
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate'
 
 // ===== Image cache =====
@@ -3855,7 +3861,9 @@ async function executeTask(taskId: string) {
       maskDataUrl = await ensureImageCached(task.maskImageId)
       if (!maskDataUrl) throw new Error('遮罩图片已不存在')
     }
-    const preparedPayload = await prepareReferenceImageAndMaskPayload(inputDataUrls, maskDataUrl)
+    const preparedPayload = await prepareReferenceImageAndMaskPayload(inputDataUrls, maskDataUrl, {
+      stage: getReferencePayloadStageForTask(task),
+    })
     const apiInputDataUrls = preparedPayload.dataUrls
     const apiMaskDataUrl = preparedPayload.maskDataUrl
 
@@ -4160,6 +4168,67 @@ export async function reuseConfig(task: TaskRecord) {
       : '已复用配置到输入框',
     'success',
   )
+}
+
+export async function createAmazonFinalImageFromDraft(task: TaskRecord, selectedOutputImageId?: string) {
+  const {
+    setPrompt,
+    setParams,
+    setInputImages,
+    clearMaskDraft,
+    setPendingTaskCategory,
+    showToast,
+  } = useStore.getState()
+
+  if (!isAmazonDraftTask(task)) {
+    showToast('只有已完成的 Amazon 草稿任务可以制作高清', 'error')
+    return false
+  }
+
+  const draftImageId = selectedOutputImageId || task.outputImages[0]
+  if (!draftImageId) {
+    showToast('草稿图不存在，请重新生成草稿', 'error')
+    return false
+  }
+
+  const draftDataUrl = await ensureImageCached(draftImageId)
+  if (!draftDataUrl) {
+    showToast('草稿图不存在，请重新生成草稿', 'error')
+    return false
+  }
+
+  const hiddenStyleReferenceImageId = task.category?.styleReferenceImageId?.trim()
+  const inputImages: InputImage[] = []
+  for (const imageId of task.inputImageIds) {
+    if (hiddenStyleReferenceImageId && imageId === hiddenStyleReferenceImageId) continue
+    const dataUrl = await ensureImageCached(imageId)
+    if (dataUrl) inputImages.push({ id: imageId, dataUrl })
+  }
+
+  const effectiveStyleReferenceCount = hiddenStyleReferenceImageId && !inputImages.some((image) => image.id === hiddenStyleReferenceImageId) ? 1 : 0
+  const canAppendDraft = inputImages.length + effectiveStyleReferenceCount + 1 <= API_MAX_INPUT_IMAGES
+  if (canAppendDraft && !inputImages.some((image) => image.id === draftImageId)) {
+    inputImages.push({ id: draftImageId, dataUrl: draftDataUrl })
+  } else if (!canAppendDraft) {
+    showToast('参考图数量已达上限，将不附加草稿图，继续制作高清', 'info')
+  }
+
+  clearMaskDraft()
+  setInputImages(inputImages)
+  setPrompt(task.prompt)
+  setParams({
+    ...task.params,
+    quality: AMAZON_FINAL_QUALITY,
+    n: 1,
+  })
+  setPendingTaskCategory({
+    mode: 'prompt-match',
+    prompt: task.prompt,
+    category: createAmazonFinalCategory(task.category!, draftImageId),
+  })
+
+  const storeModule = await import('./store')
+  return storeModule.submitTask({ apiProfileId: task.apiProfileId })
 }
 
 /** 编辑输出：清空当前输入，只保留待编辑的输出图 */

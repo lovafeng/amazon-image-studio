@@ -38,4 +38,36 @@ describe('TaskReuseMenu', () => {
 
     expect(html).toContain('disabled')
   })
+
+  it('renders a high-quality final action for completed drafts', () => {
+    const html = renderToStaticMarkup(
+      <TaskReuseMenu
+        hasOutputImages
+        canCreateFinalFromDraft
+        onCreateFinalFromDraft={() => {}}
+        onReuseConfig={() => {}}
+        onUseOutputAsReference={() => {}}
+        onUseAsStyle={() => {}}
+        onRestorePlannerSession={() => {}}
+        onEditOutputs={() => {}}
+      />,
+    )
+
+    expect(html).toContain('制作高清')
+  })
+
+  it('does not show high-quality final action when a task is not a draft', () => {
+    const html = renderToStaticMarkup(
+      <TaskReuseMenu
+        hasOutputImages
+        onReuseConfig={() => {}}
+        onUseOutputAsReference={() => {}}
+        onUseAsStyle={() => {}}
+        onRestorePlannerSession={() => {}}
+        onEditOutputs={() => {}}
+      />,
+    )
+
+    expect(html).not.toContain('制作高清')
+  })
 })

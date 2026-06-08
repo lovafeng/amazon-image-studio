@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { useStore, reuseConfig, editOutputs, removeTask, ensureImageCached } from '../store'
+import { useStore, reuseConfig, editOutputs, removeTask, ensureImageCached, createAmazonFinalImageFromDraft } from '../store'
 import type { TaskRecord } from '../types'
 import { getTaskHistoryCategory, matchesTaskHistoryFilters } from '../lib/taskHistory'
+import { isAmazonDraftTask } from '../lib/amazonGeneration'
 import TaskCard from './TaskCard'
 
 export const TASK_GRID_REFERENCE_IMAGE_LIMIT = 16
@@ -489,6 +490,8 @@ export default function TaskGrid() {
               onReuse={() => reuseConfig(task)}
               onEditOutputs={() => editOutputs(task)}
               onUseOutputAsReference={() => void addTaskOutputsAsInputImages(task)}
+              canCreateFinalFromDraft={isAmazonDraftTask(task)}
+              onCreateFinalFromDraft={() => void createAmazonFinalImageFromDraft(task)}
               onUseAsStyle={() => useTaskOutputAsStyle(task)}
               onRestorePlannerSession={() => restorePlannerSessionFromTask(task)}
               canRestorePlannerSession={Boolean(task.category?.plannerSessionId)}

@@ -3,8 +3,10 @@ import { useState } from 'react'
 interface TaskReuseMenuProps {
   hasOutputImages: boolean
   canRestorePlannerSession?: boolean
+  canCreateFinalFromDraft?: boolean
   onReuseConfig: () => void
   onUseOutputAsReference: () => void
+  onCreateFinalFromDraft?: () => void
   onUseAsStyle: () => void
   onRestorePlannerSession: () => void
   onEditOutputs: () => void
@@ -36,8 +38,10 @@ function MenuAction({
 export default function TaskReuseMenu({
   hasOutputImages,
   canRestorePlannerSession = false,
+  canCreateFinalFromDraft = false,
   onReuseConfig,
   onUseOutputAsReference,
+  onCreateFinalFromDraft = () => {},
   onUseAsStyle,
   onRestorePlannerSession,
   onEditOutputs,
@@ -62,6 +66,9 @@ export default function TaskReuseMenu({
       >
         <MenuAction onClick={onReuseConfig}>复用参数</MenuAction>
         <MenuAction disabled={!hasOutputImages} onClick={onUseOutputAsReference}>输出图作参考</MenuAction>
+        {canCreateFinalFromDraft && (
+          <MenuAction disabled={!hasOutputImages} onClick={onCreateFinalFromDraft}>制作高清</MenuAction>
+        )}
         <MenuAction disabled={!hasOutputImages} onClick={onUseAsStyle}>用作当前风格</MenuAction>
         <MenuAction disabled={!canRestorePlannerSession} onClick={onRestorePlannerSession}>恢复所属策划</MenuAction>
         <MenuAction disabled={!hasOutputImages} onClick={onEditOutputs}>编辑输出</MenuAction>

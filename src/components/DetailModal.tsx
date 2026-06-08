@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { DEFAULT_PARAMS, type TaskRecord } from '../types'
-import { useStore, getCachedImage, ensureImageCached, ensureImageUrlCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask } from '../store'
+import { useStore, getCachedImage, ensureImageCached, ensureImageUrlCached, reuseConfig, editOutputs, removeTask, updateTaskInStore, showCodexCliPrompt, getCodexCliPromptKey, retryTask, createAmazonFinalImageFromDraft } from '../store'
 import { useCloseOnEscape } from '../hooks/useCloseOnEscape'
 import { usePreventBackgroundScroll } from '../hooks/usePreventBackgroundScroll'
 import { useTooltip } from '../hooks/useTooltip'
@@ -12,6 +12,7 @@ import { dismissAllTooltips } from '../lib/tooltipDismiss'
 import { downloadImageIds } from '../lib/downloadImages'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
 import { getAspectLabel, getTaskHistoryCategory, getWorkflowLabel } from '../lib/taskHistory'
+import { isAmazonDraftTask } from '../lib/amazonGeneration'
 import { CloseIcon, CodeIcon, CopyIcon, DownloadIcon, EditIcon, LinkIcon, TrashIcon } from './icons'
 import TaskReuseMenu from './TaskReuseMenu'
 
@@ -302,6 +303,12 @@ export default function DetailModal() {
     setInputImages([...useStore.getState().inputImages, ...additions])
     setDetailTaskId(null)
     showToast(`已添加 ${additions.length} 张输出图作参考`, 'success')
+  }
+
+  const handleCreateFinalFromDraft = async () => {
+    if (!task) return
+    await createAmazonFinalImageFromDraft(task, currentOutputImageId || undefined)
+    setDetailTaskId(null)
   }
 
   const handleUseAsStyle = () => {
@@ -1033,8 +1040,10 @@ export default function DetailModal() {
               <TaskReuseMenu
                 hasOutputImages={Boolean(outputLen)}
                 canRestorePlannerSession={Boolean(task.category?.plannerSessionId)}
+                canCreateFinalFromDraft={isAmazonDraftTask(task)}
                 onReuseConfig={handleReuse}
                 onUseOutputAsReference={() => void handleUseOutputAsReference()}
+                onCreateFinalFromDraft={() => void handleCreateFinalFromDraft()}
                 onUseAsStyle={handleUseAsStyle}
                 onRestorePlannerSession={handleRestorePlannerSession}
                 onEditOutputs={handleEdit}

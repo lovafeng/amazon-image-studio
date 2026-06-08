@@ -45,4 +45,9 @@ describe('TaskGrid virtualization', () => {
     expect(taskCardSource).not.toContain("useWidePreviewLayout ? 'flex flex-col'")
     expect(taskCardSource).not.toContain('style={widePreviewStyle}')
   })
+
+  it('wires Amazon draft tasks to final generation from the task grid', () => {
+    expect(taskGridSource).toContain('createAmazonFinalImageFromDraft')
+    expect(taskGridSource).toContain('isAmazonDraftTask(task)')
+  })
 })

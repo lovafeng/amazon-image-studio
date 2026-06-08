@@ -15,6 +15,8 @@ interface Props {
   onReuse: () => void
   onEditOutputs: () => void
   onUseOutputAsReference?: () => void
+  canCreateFinalFromDraft?: boolean
+  onCreateFinalFromDraft?: () => void
   onUseAsStyle?: () => void
   onRestorePlannerSession?: () => void
   canRestorePlannerSession?: boolean
@@ -85,6 +87,8 @@ export default function TaskCard({
   onReuse,
   onEditOutputs,
   onUseOutputAsReference = () => {},
+  canCreateFinalFromDraft = false,
+  onCreateFinalFromDraft = () => {},
   onUseAsStyle = () => {},
   onRestorePlannerSession = () => {},
   canRestorePlannerSession = false,
@@ -726,8 +730,10 @@ export default function TaskCard({
               <TaskReuseMenu
                 hasOutputImages={Boolean(task.outputImages?.length)}
                 canRestorePlannerSession={canRestorePlannerSession}
+                canCreateFinalFromDraft={canCreateFinalFromDraft}
                 onReuseConfig={onReuse}
                 onUseOutputAsReference={onUseOutputAsReference}
+                onCreateFinalFromDraft={onCreateFinalFromDraft}
                 onUseAsStyle={onUseAsStyle}
                 onRestorePlannerSession={onRestorePlannerSession}
                 onEditOutputs={onEditOutputs}

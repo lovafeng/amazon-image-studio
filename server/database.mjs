@@ -39,11 +39,11 @@ function parseThumbnail(row) {
   }
 }
 
-function parseImageContent(row) {
+function parseImageContent(row, dataUrlColumn = 'data_url') {
   if (!row) return undefined
   const content = row.content_blob
     ? { mimeType: row.mime_type, bytes: Buffer.from(row.content_blob) }
-    : decodeDataUrl(row.data_url)
+    : decodeDataUrl(row[dataUrlColumn])
   return {
     id: row.id,
     bytes: content.bytes,
@@ -595,7 +595,7 @@ export function createStorage(sqlitePath, options = {}) {
       return parseThumbnail(statements.getThumbnail.get(normalizeOwner(owner), id))
     },
     getImageThumbnailContent(owner, id) {
-      return parseImageContent(statements.getThumbnail.get(normalizeOwner(owner), id))
+      return parseImageContent(statements.getThumbnail.get(normalizeOwner(owner), id), 'thumbnail_data_url')
     },
     putImageThumbnail(owner, thumbnail) {
       const { id, thumbnailDataUrl, ...metadata } = thumbnail

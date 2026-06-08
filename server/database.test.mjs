@@ -479,6 +479,40 @@ describe('sqlite storage', () => {
     legacyStorage.close()
   })
 
+  it('serves raw content for legacy thumbnail data url rows after binary schema migration', () => {
+    const sqlitePath = join(tempDir, 'legacy-thumbnail-content.sqlite')
+    const legacyDb = new Database(sqlitePath)
+    legacyDb.exec(`
+      create table thumbnails (
+        owner text not null,
+        id text not null,
+        thumbnail_data_url text not null,
+        metadata_json text not null,
+        primary key (owner, id)
+      );
+    `)
+    legacyDb.prepare('insert into thumbnails (owner, id, thumbnail_data_url, metadata_json) values (?, ?, ?, ?)').run(
+      'user01',
+      'legacy-thumbnail',
+      'data:image/webp;base64,dGh1bWJsZWdhY3k=',
+      JSON.stringify({ width: 16, height: 9, thumbnailVersion: 1 }),
+    )
+    legacyDb.close()
+
+    const legacyStorage = createStorage(sqlitePath)
+    const content = legacyStorage.getImageThumbnailContent('user01', 'legacy-thumbnail')
+    expect(content).toMatchObject({
+      id: 'legacy-thumbnail',
+      mimeType: 'image/webp',
+      byteSize: 11,
+      width: 16,
+      height: 9,
+      thumbnailVersion: 1,
+    })
+    expect(content.bytes.equals(Buffer.from('thumblegacy'))).toBe(true)
+    legacyStorage.close()
+  })
+
   it('isolates images and thumbnails with the same id by owner', () => {
     const adminImage = {
       id: 'image-a',

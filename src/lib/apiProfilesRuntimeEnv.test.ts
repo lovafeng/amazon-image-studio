@@ -66,6 +66,8 @@ describe('api profile runtime env defaults', () => {
         baseUrl: 'https://done.amzdataincn.com/reseller/v1',
         apiKey: 'server-env',
         apiProxy: true,
+        streamImages: false,
+        streamPartialImages: 3,
       },
     ])
   })
@@ -93,6 +95,8 @@ describe('api profile runtime env defaults', () => {
           baseUrl: 'https://chatgpt.com/backend-api/codex',
           apiKey: 'old-browser-key',
           apiProxy: false,
+          streamImages: true,
+          streamPartialImages: 3,
         },
       ],
       activeProfileId: IMAGE_PROFILE.id,
@@ -115,6 +119,8 @@ describe('api profile runtime env defaults', () => {
         baseUrl: 'https://done.amzdataincn.com/reseller/v1',
         apiKey: 'server-env',
         apiProxy: true,
+        streamImages: false,
+        streamPartialImages: 3,
       },
     ])
   })

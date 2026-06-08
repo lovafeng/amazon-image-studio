@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import TaskGrid, { getVirtualTaskWindow } from './TaskGrid'
+import TaskGrid, { getTaskOutputReferencePlan, getVirtualTaskWindow } from './TaskGrid'
 import taskGridSource from './TaskGrid.tsx?raw'
+import taskCardSource from './TaskCard.tsx?raw'
 
 describe('TaskGrid virtualization', () => {
   it('renders only a virtual slice of the filtered task list', () => {
@@ -24,5 +25,24 @@ describe('TaskGrid virtualization', () => {
       offsetTop: 240,
       totalHeight: 9600,
     })
+  })
+
+  it('limits reused task outputs to the reference image cap', () => {
+    const currentIds = Array.from({ length: 14 }, (_, index) => `current-${index}`)
+    const outputImageIds = ['new-a', 'new-b', 'new-c', 'new-d']
+
+    expect(getTaskOutputReferencePlan(currentIds, outputImageIds)).toEqual({
+      imageIds: ['new-a', 'new-b'],
+      discarded: 2,
+      alreadyPresent: false,
+      atLimit: false,
+    })
+  })
+
+  it('keeps task cards at a stable grid height for virtualization', () => {
+    expect(taskGridSource).toContain('TASK_GRID_CARD_HEIGHT')
+    expect(taskGridSource).toContain('style={{ height: TASK_GRID_CARD_HEIGHT }}')
+    expect(taskCardSource).not.toContain("useWidePreviewLayout ? 'flex flex-col'")
+    expect(taskCardSource).not.toContain('style={widePreviewStyle}')
   })
 })

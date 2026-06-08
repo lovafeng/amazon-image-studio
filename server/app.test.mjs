@@ -294,14 +294,49 @@ describe('http app', () => {
     const image = await request('/api/images/image-a/blob', { headers: { cookie } })
     expect(image.status).toBe(200)
     expect(image.headers['content-type']).toBe('image/png')
+    expect(image.headers['x-content-type-options']).toBe('nosniff')
     expect(image.headers['content-length']).toBe('5')
     expect(image.text()).toBe('hello')
 
     const thumbnail = await request('/api/thumbnails/image-a/blob', { headers: { cookie } })
     expect(thumbnail.status).toBe(200)
     expect(thumbnail.headers['content-type']).toBe('image/webp')
+    expect(thumbnail.headers['x-content-type-options']).toBe('nosniff')
     expect(thumbnail.headers['content-length']).toBe('5')
     expect(thumbnail.text()).toBe('thumb')
+  })
+
+  it('rejects unsafe raw image and thumbnail MIME types after login', async () => {
+    const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const cookie = login.headers['set-cookie'][0]
+
+    await request('/api/images/vector-a', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        id: 'vector-a',
+        dataUrl: 'data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9ImFsZXJ0KDEpIj48L3N2Zz4=',
+        createdAt: 1,
+        source: 'upload',
+      }),
+    })
+    await request('/api/thumbnails/html-a', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        id: 'html-a',
+        thumbnailDataUrl: 'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==',
+        thumbnailVersion: 2,
+      }),
+    })
+
+    const image = await request('/api/images/vector-a/blob', { headers: { cookie } })
+    expect(image.status).toBe(415)
+    expect(image.json()).toEqual({ error: '不支持的图片类型' })
+
+    const thumbnail = await request('/api/thumbnails/html-a/blob', { headers: { cookie } })
+    expect(thumbnail.status).toBe(415)
+    expect(thumbnail.json()).toEqual({ error: '不支持的图片类型' })
   })
 
   it('returns 404 for missing raw image content after login', async () => {

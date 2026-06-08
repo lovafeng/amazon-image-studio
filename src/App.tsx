@@ -31,6 +31,7 @@ export default function App() {
   const setSettings = useStore((s) => s.setSettings)
   const [authSession, setAuthSession] = useState<AuthSession | null>(null)
   const [accountDataReady, setAccountDataReady] = useState(false)
+  const [accountDataLoadFailed, setAccountDataLoadFailed] = useState(false)
   const [view, setView] = useState<'workspace' | 'admin' | 'usage'>('workspace')
   const [showNewUserOnboarding, setShowNewUserOnboarding] = useState(false)
   const initializedUserIdRef = useRef<string | null>(null)
@@ -53,6 +54,7 @@ export default function App() {
 
   const loadAccountData = async (userId: string, isActive = () => true) => {
     setAccountDataReady(false)
+    setAccountDataLoadFailed(false)
     await prepareStoreForAuthenticatedUser(userId)
     if (!isActive()) return
 
@@ -75,18 +77,28 @@ export default function App() {
     useStore.getState().setAppMode('gallery')
     initializedUserIdRef.current = userId
     setAccountDataReady(true)
+    setAccountDataLoadFailed(false)
+  }
+
+  const markAccountDataLoadFailed = () => {
+    initializedUserIdRef.current = null
+    setAccountDataReady(false)
+    setAccountDataLoadFailed(true)
   }
 
   useEffect(() => {
     if (!authSession?.authenticated || !authSession.user) {
       initializedUserIdRef.current = null
       setAccountDataReady(false)
+      setAccountDataLoadFailed(false)
       return
     }
     if (initializedUserIdRef.current === authSession.user.id && accountDataReady) return
 
     let active = true
-    void loadAccountData(authSession.user.id, () => active)
+    void loadAccountData(authSession.user.id, () => active).catch(() => {
+      if (active) markAccountDataLoadFailed()
+    })
 
     return () => {
       active = false
@@ -131,11 +143,16 @@ export default function App() {
     setShowNewUserOnboarding(false)
   }
 
+  const handleRetryAccountDataLoad = () => {
+    void loadAccountData(authSession!.user!.id).catch(markAccountDataLoadFailed)
+  }
+
   const handleLogout = () => {
     void logout().then(() => {
       resetUserScopedLocalState()
       initializedUserIdRef.current = null
       setAccountDataReady(false)
+      setAccountDataLoadFailed(false)
       setShowNewUserOnboarding(false)
       setView('workspace')
       setAuthSession({ authenticated: false })
@@ -152,6 +169,35 @@ export default function App() {
 
   if (!authSession.authenticated) {
     return <LoginPage onLogin={handleLogin} onRegister={handleRegister} />
+  }
+
+  if (accountDataLoadFailed) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-gray-50 px-6 text-sm text-gray-600 dark:bg-gray-950 dark:text-gray-300">
+        <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-6 text-center shadow-sm dark:border-white/[0.08] dark:bg-gray-900">
+          <h1 className="text-base font-semibold text-gray-900 dark:text-gray-100">账号数据加载失败</h1>
+          <p className="mt-2 leading-6 text-gray-500 dark:text-gray-400">
+            请重试，或退出登录后重新进入。
+          </p>
+          <div className="mt-6 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={handleRetryAccountDataLoad}
+              className="h-10 rounded-md bg-blue-600 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-500 dark:bg-blue-500 dark:hover:bg-blue-400"
+            >
+              重试
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="h-10 rounded-md border border-gray-300 bg-white px-4 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-gray-900"
+            >
+              退出登录
+            </button>
+          </div>
+        </div>
+      </main>
+    )
   }
 
   if (!accountDataReady) {

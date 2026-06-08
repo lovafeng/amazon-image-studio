@@ -173,6 +173,26 @@ describe('image object url cache', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/images/image-a/blob', { credentials: 'same-origin' })
     expect(createObjectUrl).toHaveBeenCalledTimes(1)
   })
+
+  it('deduplicates concurrent object URL loads for the same image id', async () => {
+    let resolveFetch: (response: Response) => void
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:image-concurrent')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise<Response>((resolve) => {
+      resolveFetch = resolve
+    }))
+
+    const first = ensureImageUrlCached('image-concurrent')
+    const second = ensureImageUrlCached('image-concurrent')
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    resolveFetch!(new Response(new Blob(['image-bytes'], { type: 'image/png' })))
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      'blob:image-concurrent',
+      'blob:image-concurrent',
+    ])
+    expect(createObjectUrl).toHaveBeenCalledTimes(1)
+  })
 })
 
 function agentConversation(overrides: Partial<AgentConversation> = {}): AgentConversation {
@@ -441,7 +461,7 @@ describe('mask draft lifecycle in store actions', () => {
 
   it('submits with an explicit image profile when the active profile is AI planning', async () => {
     const imageProfile = createDefaultOpenAIProfile({
-      id: DEFAULT_OPENAI_PROFILE_ID,
+      id: 'image-profile',
       name: '生图',
       apiKey: 'image-key',
       apiMode: 'images',
@@ -467,7 +487,7 @@ describe('mask draft lifecycle in store actions', () => {
     const task = useStore.getState().tasks[0]
     expect(submitted).toBe(true)
     expect(task).toMatchObject({
-      apiProfileId: DEFAULT_OPENAI_PROFILE_ID,
+      apiProfileId: 'image-profile',
       apiProfileName: '生图',
       apiMode: 'images',
       apiModel: DEFAULT_IMAGES_MODEL,
@@ -476,7 +496,7 @@ describe('mask draft lifecycle in store actions', () => {
 
   it('auto-selects the image profile when submitting with an active AI planning profile', async () => {
     const imageProfile = createDefaultOpenAIProfile({
-      id: DEFAULT_OPENAI_PROFILE_ID,
+      id: 'image-profile',
       name: '生图',
       apiKey: 'image-key',
       apiMode: 'images',
@@ -502,7 +522,7 @@ describe('mask draft lifecycle in store actions', () => {
     const task = useStore.getState().tasks[0]
     expect(submitted).toBe(true)
     expect(task).toMatchObject({
-      apiProfileId: DEFAULT_OPENAI_PROFILE_ID,
+      apiProfileId: 'image-profile',
       apiProfileName: '生图',
       apiMode: 'images',
       apiModel: DEFAULT_IMAGES_MODEL,
@@ -511,7 +531,7 @@ describe('mask draft lifecycle in store actions', () => {
 
   it('auto-selects the original image profile when retrying with an active AI planning profile', async () => {
     const imageProfile = createDefaultOpenAIProfile({
-      id: DEFAULT_OPENAI_PROFILE_ID,
+      id: 'image-profile',
       name: '生图',
       apiKey: 'image-key',
       apiMode: 'images',
@@ -534,7 +554,7 @@ describe('mask draft lifecycle in store actions', () => {
 
     await retryTask(task({
       apiProvider: 'openai',
-      apiProfileId: DEFAULT_OPENAI_PROFILE_ID,
+      apiProfileId: 'image-profile',
       apiProfileName: '生图',
       apiMode: 'images',
       apiModel: DEFAULT_IMAGES_MODEL,
@@ -543,7 +563,7 @@ describe('mask draft lifecycle in store actions', () => {
     const state = useStore.getState()
     expect(state.tasks).toHaveLength(1)
     expect(state.tasks[0]).toMatchObject({
-      apiProfileId: DEFAULT_OPENAI_PROFILE_ID,
+      apiProfileId: 'image-profile',
       apiProfileName: '生图',
       apiMode: 'images',
       apiModel: DEFAULT_IMAGES_MODEL,
@@ -551,9 +571,45 @@ describe('mask draft lifecycle in store actions', () => {
     expect(state.setConfirmDialog).not.toHaveBeenCalled()
   })
 
+  it('retries legacy default input-image tasks with Images API', async () => {
+    const responseProfile = createDefaultOpenAIProfile({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      name: '生图',
+      apiKey: 'image-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        profiles: [responseProfile],
+        activeProfileId: responseProfile.id,
+      }),
+    })
+
+    await retryTask(task({
+      apiProvider: 'openai',
+      apiProfileId: `${DEFAULT_OPENAI_PROFILE_ID}-input-images`,
+      apiProfileName: '生图',
+      apiMode: 'images',
+      apiModel: DEFAULT_IMAGES_MODEL,
+      inputImageIds: [imageA.id],
+    }))
+
+    const state = useStore.getState()
+    expect(state.tasks).toHaveLength(1)
+    expect(state.tasks[0]).toMatchObject({
+      apiProfileId: `${DEFAULT_OPENAI_PROFILE_ID}-input-images`,
+      apiProfileName: '生图',
+      apiMode: 'images',
+      apiModel: DEFAULT_IMAGES_MODEL,
+      inputImageIds: expect.arrayContaining([imageA.id]),
+    })
+    expect(state.setConfirmDialog).not.toHaveBeenCalled()
+  })
+
   it('auto-selects the Responses profile when submitting an Agent message with an active image profile', async () => {
     const imageProfile = createDefaultOpenAIProfile({
-      id: DEFAULT_OPENAI_PROFILE_ID,
+      id: 'image-profile',
       name: '生图',
       apiKey: 'image-key',
       apiMode: 'images',

@@ -6,6 +6,8 @@ import { callAgentConversationTitleApi, callAgentResponsesApi } from './agentApi
 describe('callAgentResponsesApi', () => {
   afterEach(() => {
     vi.restoreAllMocks()
+    vi.unstubAllEnvs()
+    vi.resetModules()
   })
 
   it('streams Agent text and requests configured partial images', async () => {
@@ -82,6 +84,45 @@ describe('callAgentResponsesApi', () => {
     const [, init] = fetchMock.mock.calls[0]
     const body = JSON.parse(String((init as RequestInit).body))
     expect(body.tools[0].input_image_mask).toEqual({ image_url: 'data:image/png;base64,bWFzaw==' })
+  })
+
+  it('does not request unsupported image partial streaming for the default server-key Agent Responses profile', async () => {
+    vi.resetModules()
+    vi.stubEnv('VITE_DEFAULT_API_URL', 'https://done.amzdataincn.com/reseller/v1')
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
+    vi.stubEnv('VITE_API_PROXY_LOCKED', 'true')
+    vi.stubEnv('VITE_API_PROXY_SERVER_KEY_AVAILABLE', 'true')
+
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      output: [{
+        type: 'message',
+        content: [{ type: 'output_text', text: 'OK' }],
+      }],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }))
+    const { DEFAULT_SETTINGS: runtimeDefaultSettings, createDefaultAmazonPlannerProfile } = await import('./apiProfiles')
+    const { callAgentResponsesApi: callRuntimeAgentResponsesApi } = await import('./agentApi')
+    const profile = createDefaultAmazonPlannerProfile()
+
+    expect(profile).toMatchObject({
+      apiKey: 'server-env',
+      apiMode: 'responses',
+      streamImages: false,
+    })
+
+    await callRuntimeAgentResponsesApi({
+      settings: runtimeDefaultSettings,
+      profile,
+      params: DEFAULT_PARAMS,
+      input: [{ role: 'user', content: [{ type: 'input_text', text: 'prompt' }] }],
+    })
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = JSON.parse(String((init as RequestInit).body))
+    expect(body.stream).toBeUndefined()
+    expect(body.tools[0].partial_images).toBeUndefined()
   })
 
   it('stops reading a stream when the caller aborts after output starts', async () => {

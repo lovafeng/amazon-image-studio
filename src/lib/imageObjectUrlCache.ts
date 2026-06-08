@@ -16,7 +16,7 @@ export function createImageObjectUrlCache<TMetadata>(maxEntries: number) {
 
   function set(id: string, url: string, metadata: TMetadata): ObjectUrlEntry<TMetadata> {
     const previous = cache.get(id)
-    if (previous) URL.revokeObjectURL(previous.url)
+    if (previous && previous.url !== url) URL.revokeObjectURL(previous.url)
 
     const entry = { url, metadata }
     cache.delete(id)

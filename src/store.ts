@@ -70,6 +70,7 @@ const imageCache = new Map<string, string>()
 const thumbnailCache = new Map<string, { dataUrl: string; width?: number; height?: number; thumbnailVersion?: number }>()
 const imageUrlCache = createImageObjectUrlCache<undefined>(24)
 const thumbnailUrlCache = createImageObjectUrlCache<{ width?: number; height?: number; thumbnailVersion?: number }>(80)
+const pendingImageUrlLoads = new Map<string, Promise<string | undefined>>()
 const thumbnailBackfillIds = new Map<string, 'visible' | 'background'>()
 const thumbnailBackfillRunningIds = new Set<string>()
 const thumbnailSubscribers = new Map<string, Set<(thumbnail: { dataUrl: string; width?: number; height?: number }) => void>>()
@@ -276,9 +277,22 @@ export async function ensureImageCached(id: string): Promise<string | undefined>
 export async function ensureImageUrlCached(id: string): Promise<string | undefined> {
   const cached = imageUrlCache.get(id)
   if (cached) return cached.url
-  const blob = await getImageBlob(id)
-  if (!blob) return undefined
-  return imageUrlCache.set(id, URL.createObjectURL(blob), undefined).url
+  const pending = pendingImageUrlLoads.get(id)
+  if (pending) return pending
+
+  const load = (async () => {
+    const blob = await getImageBlob(id)
+    if (!blob) return undefined
+    const refreshed = imageUrlCache.get(id)
+    if (refreshed) return refreshed.url
+    return imageUrlCache.set(id, URL.createObjectURL(blob), undefined).url
+  })()
+  pendingImageUrlLoads.set(id, load)
+  try {
+    return await load
+  } finally {
+    pendingImageUrlLoads.delete(id)
+  }
 }
 
 export async function ensureImageThumbnailCached(id: string): Promise<{ dataUrl: string; width?: number; height?: number } | undefined> {

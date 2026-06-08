@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { configDefaults, defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'fs'
 import { normalizeDevProxyConfig } from './src/lib/devProxy'
@@ -61,6 +61,15 @@ export default defineConfig(({ command }) => {
     server: {
       host: true,
       proxy: devProxy,
+    },
+    test: {
+      setupFiles: ['./src/test/setupEnv.ts'],
+      exclude: [
+        ...configDefaults.exclude,
+        '**/.worktrees/**',
+        '**/.codegraph/**',
+        '**/.playwright-cli/**',
+      ],
     },
   }
 })

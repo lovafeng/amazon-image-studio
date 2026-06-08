@@ -41,10 +41,6 @@ function parseTaskSizeRatio(size: string | undefined | null) {
   return width / height
 }
 
-function clampWidePreviewRatio(ratio: number) {
-  return Math.min(Math.max(ratio, WIDE_PREVIEW_RATIO), 3)
-}
-
 function TaskActionButton({
   tooltip,
   className,
@@ -382,14 +378,11 @@ export default function TaskCard({
   const actualSizeForFirstImage = firstOutputImageId ? task.actualParamsByImage?.[firstOutputImageId]?.size : undefined
   const requestedOrActualRatio = parseTaskSizeRatio(actualSizeForFirstImage ?? task.actualParams?.size ?? taskParams.size)
   const previewAspectRatio = coverAspectRatio ?? requestedOrActualRatio
-  const useWidePreviewLayout = Boolean(previewAspectRatio && previewAspectRatio >= WIDE_PREVIEW_RATIO)
-  const widePreviewStyle = useWidePreviewLayout && previewAspectRatio
-    ? { aspectRatio: `${clampWidePreviewRatio(previewAspectRatio)} / 1` }
-    : undefined
-  const previewImageClass = useWidePreviewLayout ? 'h-full w-full object-contain' : 'w-full h-full object-cover'
+  const useWidePreviewContain = Boolean(previewAspectRatio && previewAspectRatio >= WIDE_PREVIEW_RATIO)
+  const previewImageClass = useWidePreviewContain ? 'h-full w-full object-contain' : 'w-full h-full object-cover'
 
   return (
-    <div className="relative rounded-xl">
+    <div className="relative h-full rounded-xl">
       {/* 侧滑底图 */}
       <div
         className={`absolute inset-0 rounded-xl flex items-center transition-opacity duration-200 pointer-events-none ${
@@ -409,7 +402,7 @@ export default function TaskCard({
 
       <div
         ref={cardRef}
-        className={`relative bg-white dark:bg-gray-900 rounded-xl border overflow-hidden cursor-pointer touch-pan-y will-change-transform duration-200 hover:shadow-lg dark:hover:bg-gray-800/80 ${
+        className={`relative h-full bg-white dark:bg-gray-900 rounded-xl border overflow-hidden cursor-pointer touch-pan-y will-change-transform duration-200 hover:shadow-lg dark:hover:bg-gray-800/80 ${
           isSwiping ? '!bg-white dark:!bg-gray-900' : ''
         } ${
           !isSwiping ? 'transition-[box-shadow,border-color,background-color,transform]' : 'transition-[box-shadow,border-color,background-color]'
@@ -460,11 +453,10 @@ export default function TaskCard({
           </svg>
         </div>
       )}
-      <div className={useWidePreviewLayout ? 'flex flex-col' : 'flex h-40'}>
+      <div className="flex h-full">
         {/* 左侧图片区域 */}
         <div
-          className={`${useWidePreviewLayout ? 'w-full' : 'w-40 min-w-[10rem] h-full flex-shrink-0'} bg-gray-100 dark:bg-black/20 relative flex items-center justify-center overflow-hidden`}
-          style={widePreviewStyle}
+          className="h-full w-48 min-w-[12rem] flex-shrink-0 bg-gray-100 dark:bg-black/20 relative flex items-center justify-center overflow-hidden"
         >
           {task.status === 'running' && streamPreviewSrc && (
             <>
@@ -601,7 +593,7 @@ export default function TaskCard({
         </div>
 
         {/* 右侧信息区域 */}
-        <div className={`${useWidePreviewLayout ? '' : 'flex-1'} p-3 flex flex-col min-w-0`}>
+        <div className="flex-1 p-3 flex flex-col min-w-0">
           <div className="flex-1 min-h-0 mb-2 overflow-hidden">
             {showPendingPrompt ? (
               <div className="leading-relaxed">

@@ -7,6 +7,7 @@ const AI_PROXY_UPSTREAM_TIMEOUT_MS = 15 * 60 * 1000
 const LEGACY_DEFAULT_IMAGES_MODEL = 'gpt-image-2'
 const RESPONSES_IMAGE_MODEL = 'gpt-5.5'
 const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
+const RAW_INLINE_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 const aiProxyDispatcher = new Agent({
   headersTimeout: AI_PROXY_UPSTREAM_TIMEOUT_MS,
   bodyTimeout: AI_PROXY_UPSTREAM_TIMEOUT_MS,
@@ -40,8 +41,13 @@ function sendOk(res, value = { ok: true }, headers = {}) {
 }
 
 function sendImageContent(res, content) {
+  if (!RAW_INLINE_IMAGE_MIME_TYPES.has(content.mimeType)) {
+    sendJson(res, 415, { error: '不支持的图片类型' })
+    return
+  }
   res.writeHead(200, {
     'content-type': content.mimeType,
+    'x-content-type-options': 'nosniff',
     'content-length': String(content.bytes.byteLength),
     'cache-control': 'private, max-age=86400',
   })

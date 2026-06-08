@@ -4,7 +4,9 @@ import type { TaskRecord } from '../types'
 import { getTaskHistoryCategory, matchesTaskHistoryFilters } from '../lib/taskHistory'
 import TaskCard from './TaskCard'
 
-const VIRTUAL_ROW_HEIGHT = 216
+export const TASK_GRID_REFERENCE_IMAGE_LIMIT = 16
+export const TASK_GRID_CARD_HEIGHT = 200
+const VIRTUAL_ROW_HEIGHT = TASK_GRID_CARD_HEIGHT + 16
 const VIRTUAL_OVERSCAN_ROWS = 2
 
 interface VirtualTaskWindowInput {
@@ -44,6 +46,29 @@ function getTaskGridColumnCount(width: number) {
   if (width >= 1024) return 1
   if (width >= 640) return 2
   return 1
+}
+
+export function getTaskOutputReferencePlan(
+  currentImageIds: string[],
+  outputImageIds: string[],
+  limit = TASK_GRID_REFERENCE_IMAGE_LIMIT,
+) {
+  const existingIds = new Set(currentImageIds)
+  const candidates: string[] = []
+  for (const imageId of outputImageIds) {
+    if (existingIds.has(imageId)) continue
+    existingIds.add(imageId)
+    candidates.push(imageId)
+  }
+  const remaining = Math.max(0, limit - currentImageIds.length)
+  const imageIds = candidates.slice(0, remaining)
+
+  return {
+    imageIds,
+    discarded: candidates.length - imageIds.length,
+    alreadyPresent: candidates.length === 0,
+    atLimit: remaining === 0,
+  }
 }
 
 export default function TaskGrid() {
@@ -142,20 +167,32 @@ export default function TaskGrid() {
       return
     }
 
-    const existingIds = new Set(useStore.getState().inputImages.map((image) => image.id))
+    const currentInputImages = useStore.getState().inputImages
+    const referencePlan = getTaskOutputReferencePlan(
+      currentInputImages.map((image) => image.id),
+      outputImageIds,
+    )
+    if (referencePlan.atLimit) {
+      showToast(`参考图数量已达上限（${TASK_GRID_REFERENCE_IMAGE_LIMIT} 张），无法继续添加`, 'error')
+      return
+    }
+
     const additions: Array<{ id: string; dataUrl: string }> = []
-    for (const imageId of outputImageIds) {
-      if (existingIds.has(imageId)) continue
+    for (const imageId of referencePlan.imageIds) {
       const dataUrl = await ensureImageCached(imageId)
       if (dataUrl) additions.push({ id: imageId, dataUrl })
     }
     if (!additions.length) {
-      showToast('输出图已在参考图中', 'info')
+      showToast(referencePlan.alreadyPresent ? '输出图已在参考图中' : '没有可添加的输出图', 'info')
       return
     }
 
     setInputImages([...useStore.getState().inputImages, ...additions])
-    showToast(`已添加 ${additions.length} 张输出图作参考`, 'success')
+    if (referencePlan.discarded > 0) {
+      showToast(`已添加 ${additions.length} 张输出图作参考，已达上限 ${TASK_GRID_REFERENCE_IMAGE_LIMIT} 张，${referencePlan.discarded} 张被丢弃`, 'success')
+    } else {
+      showToast(`已添加 ${additions.length} 张输出图作参考`, 'success')
+    }
   }
 
   const useTaskOutputAsStyle = (task: TaskRecord) => {
@@ -427,7 +464,12 @@ export default function TaskGrid() {
         style={{ transform: `translateY(${virtualWindow.offsetTop}px)` }}
       >
         {visibleTasks.map((task) => (
-          <div key={task.id} className="task-card-wrapper" data-task-id={task.id}>
+          <div
+            key={task.id}
+            className="task-card-wrapper"
+            data-task-id={task.id}
+            style={{ height: TASK_GRID_CARD_HEIGHT }}
+          >
             <TaskCard
               task={task}
               onClick={(e) => {

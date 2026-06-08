@@ -325,6 +325,7 @@ export function createDefaultAmazonPlannerProfile(overrides: Partial<ApiProfile>
     model: DEFAULT_RESPONSES_MODEL,
     apiMode: 'responses',
     apiProxy: DEFAULT_OPENAI_API_PROXY,
+    streamImages: false,
     ...overrides,
   })
 }
@@ -462,6 +463,11 @@ function applyRuntimeDefaultsToDefaultProfile(profile: ApiProfile): ApiProfile {
   const shouldUpgradeStreamDefaults = hasLegacyDefaultStreamSettings(migratedProfile)
   const shouldUseRuntimeImageStreamDefault =
     migratedProfile.id === DEFAULT_OPENAI_PROFILE_ID && hasDefaultImageStreamSettings(migratedProfile)
+  const shouldUseRuntimePlannerStreamDefault =
+    DEFAULT_SERVER_API_KEY_AVAILABLE &&
+    migratedProfile.id === DEFAULT_AMAZON_PLANNER_PROFILE_ID &&
+    isAmazonPlannerProfile(migratedProfile) &&
+    hasDefaultPlannerStreamSettings(migratedProfile)
 
   return {
     ...migratedProfile,
@@ -470,12 +476,14 @@ function applyRuntimeDefaultsToDefaultProfile(profile: ApiProfile): ApiProfile {
       : !migratedProfile.baseUrl.trim() || migratedProfile.baseUrl === OPENAI_DEFAULT_BASE_URL ? DEFAULT_BASE_URL : migratedProfile.baseUrl,
     apiKey: DEFAULT_SERVER_API_KEY_AVAILABLE ? DEFAULT_PROFILE_API_KEY : migratedProfile.apiKey.trim() ? migratedProfile.apiKey : DEFAULT_PROFILE_API_KEY,
     apiProxy: DEFAULT_OPENAI_API_PROXY || migratedProfile.apiProxy,
-    streamImages: shouldUseRuntimeImageStreamDefault
+    streamImages: shouldUseRuntimePlannerStreamDefault
+      ? false
+      : shouldUseRuntimeImageStreamDefault
       ? DEFAULT_IMAGE_PROFILE_STREAM_IMAGES
       : shouldUpgradeStreamDefaults
       ? true
       : migratedProfile.streamImages,
-    streamPartialImages: shouldUseRuntimeImageStreamDefault || shouldUpgradeStreamDefaults
+    streamPartialImages: shouldUseRuntimePlannerStreamDefault || shouldUseRuntimeImageStreamDefault || shouldUpgradeStreamDefaults
       ? DEFAULT_STREAM_PARTIAL_IMAGES
       : migratedProfile.streamPartialImages,
   }
@@ -833,6 +841,11 @@ function hasDefaultImageStreamSettings(profile: Pick<ApiProfile, 'streamImages' 
   return hasCurrentDefaultImageStreamSettings(profile) || hasDefaultStreamSettings(profile)
 }
 
+function hasDefaultPlannerStreamSettings(profile: Pick<ApiProfile, 'streamImages' | 'streamPartialImages'>): boolean {
+  return hasDefaultStreamSettings(profile) ||
+    (profile.streamImages === false && profile.streamPartialImages === DEFAULT_STREAM_PARTIAL_IMAGES)
+}
+
 function isDefaultOpenAIProfile(profile: ApiProfile): boolean {
   return profile.id === DEFAULT_OPENAI_PROFILE_ID &&
     profile.name === '生图' &&
@@ -870,7 +883,7 @@ function isDefaultAmazonPlannerProfile(profile: ApiProfile): boolean {
     profile.apiMode === 'responses' &&
     profile.codexCli === false &&
     profile.apiProxy === DEFAULT_OPENAI_API_PROXY &&
-    hasDefaultStreamSettings(profile)
+    hasDefaultPlannerStreamSettings(profile)
 }
 
 function hasOnlyDefaultProfiles(settings: AppSettings): boolean {

@@ -114,6 +114,42 @@ describe('AmazonPlanner', () => {
     expect(amazonPlannerSource).not.toContain('提交生成')
   })
 
+  it('uses local draft copy for Planner action guidance instead of production helper text', () => {
+    const importBlock = amazonPlannerSource.slice(
+      amazonPlannerSource.indexOf("from '../lib/listingPlannerApi'"),
+      amazonPlannerSource.indexOf("from '../lib/plannerProductionGuide'"),
+    )
+    const guidanceBlock = amazonPlannerSource.slice(
+      amazonPlannerSource.indexOf('function getDraftPlannerActionGuidance'),
+      amazonPlannerSource.indexOf('function getDraftBatchSubmitStatusText'),
+    )
+
+    expect(importBlock).not.toContain('getPlannerActionGuidance')
+    expect(amazonPlannerSource).toContain('const actionGuidance = getDraftPlannerActionGuidance({')
+    expect(guidanceBlock).toContain('才能生成草稿')
+    expect(guidanceBlock).toContain('下一步提交草稿')
+    expect(guidanceBlock).toContain('可生成当前')
+    expect(guidanceBlock).not.toContain('提交生成')
+  })
+
+  it('uses local draft copy for Planner batch submission status text', () => {
+    const importBlock = amazonPlannerSource.slice(
+      amazonPlannerSource.indexOf("from '../lib/listingPlannerApi'"),
+      amazonPlannerSource.indexOf("from '../lib/plannerProductionGuide'"),
+    )
+    const batchStatusBlock = amazonPlannerSource.slice(
+      amazonPlannerSource.indexOf('function getDraftBatchSubmitStatusText'),
+      amazonPlannerSource.indexOf('function getPlannerModeLabel'),
+    )
+
+    expect(importBlock).not.toContain('getBatchSubmitStatusText')
+    expect(amazonPlannerSource).toContain('const batchSubmitStatusText = getDraftBatchSubmitStatusText({')
+    expect(batchStatusBlock).toContain('准备提交 ${unsubmittedCount} 张未提交草稿')
+    expect(batchStatusBlock).toContain('已提交 ${options.batchSubmittedCount}/${unsubmittedCount} 张草稿')
+    expect(batchStatusBlock).toContain('先选择风格板后可提交未提交草稿')
+    expect(batchStatusBlock).not.toContain('未提交项')
+  })
+
   it('uses 1K as the safe default and waits for each batch task to finish', () => {
     expect(amazonPlannerSource).toContain("useState<AmazonPlannerResolution>('1k')")
     expect(amazonPlannerSource).toContain("(['1k', '2k', '4k'] as const)")

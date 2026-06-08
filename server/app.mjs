@@ -177,7 +177,7 @@ function getHeaderValue(headers, name) {
 }
 
 function isLegacyDefaultImageProxyPath(pathname) {
-  return /\/images\/generations$/.test(pathname)
+  return /\/images\/(generations|edits)$/.test(pathname)
 }
 
 function createLegacyResponsesInput(prompt, inputImages) {

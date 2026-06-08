@@ -615,6 +615,75 @@ describe('http app', () => {
     await upstream.close()
   })
 
+  it('routes legacy default image edit requests with input images through Responses', async () => {
+    let upstreamRequest
+    const upstream = await createUpstreamServer((req, res) => {
+      const chunks = []
+      req.on('data', (chunk) => chunks.push(chunk))
+      req.on('end', () => {
+        upstreamRequest = {
+          method: req.method,
+          url: req.url,
+          authorization: req.headers.authorization,
+          contentType: req.headers['content-type'],
+          body: Buffer.concat(chunks).toString('utf8'),
+        }
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({
+          output: [{
+            type: 'image_generation_call',
+            result: 'ZWRpdA==',
+          }],
+        }))
+      })
+    })
+    await restartApp({
+      aiApiBaseUrl: `${upstream.baseUrl}/reseller/v1`,
+      aiApiKey: 'env-api-key',
+    })
+    const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const cookie = login.headers['set-cookie'][0]
+    const form = new FormData()
+    form.set('model', 'gpt-image-2')
+    form.set('prompt', 'Edit this product image.')
+    form.set('size', '1024x1536')
+    form.set('quality', 'medium')
+    form.set('output_format', 'jpeg')
+    form.set('output_compression', '70')
+    form.append('image[]', new Blob([Buffer.from('image-bytes')], { type: 'image/png' }), 'product.png')
+
+    const response = await fetch(`${baseUrl}/api-proxy/v1/images/edits`, {
+      method: 'POST',
+      headers: { cookie },
+      body: form,
+    })
+
+    expect(response.status).toBe(200)
+    expect(upstreamRequest).toMatchObject({
+      method: 'POST',
+      url: '/reseller/v1/responses',
+      authorization: 'Bearer env-api-key',
+      contentType: 'application/json',
+    })
+    const upstreamBody = JSON.parse(upstreamRequest.body)
+    expect(upstreamBody).toMatchObject({
+      model: 'gpt-5.5',
+      tool_choice: 'required',
+      tools: [{
+        type: 'image_generation',
+        action: 'edit',
+        size: '1024x1536',
+        quality: 'medium',
+        output_format: 'jpeg',
+        output_compression: 70,
+      }],
+    })
+    expect(upstreamBody.input[0].content).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'input_image', image_url: expect.stringMatching(/^data:image\/png;base64,/) }),
+    ]))
+    await upstream.close()
+  })
+
   it('returns a gateway error and records usage when the AI proxy upstream fails', async () => {
     await restartApp({
       aiApiBaseUrl: 'http://127.0.0.1:1/v1',

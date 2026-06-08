@@ -615,7 +615,7 @@ describe('http app', () => {
     await upstream.close()
   })
 
-  it('routes legacy default image edit requests with input images through Responses', async () => {
+  it('proxies legacy default image edit multipart requests to Images API unchanged', async () => {
     let upstreamRequest
     const upstream = await createUpstreamServer((req, res) => {
       const chunks = []
@@ -630,10 +630,7 @@ describe('http app', () => {
         }
         res.writeHead(200, { 'content-type': 'application/json' })
         res.end(JSON.stringify({
-          output: [{
-            type: 'image_generation_call',
-            result: 'ZWRpdA==',
-          }],
+          data: [{ b64_json: 'ZWRpdA==' }],
         }))
       })
     })
@@ -661,26 +658,21 @@ describe('http app', () => {
     expect(response.status).toBe(200)
     expect(upstreamRequest).toMatchObject({
       method: 'POST',
-      url: '/reseller/v1/responses',
+      url: '/reseller/v1/images/edits',
       authorization: 'Bearer env-api-key',
-      contentType: 'application/json',
+      contentType: expect.stringMatching(/^multipart\/form-data; boundary=/),
     })
-    const upstreamBody = JSON.parse(upstreamRequest.body)
-    expect(upstreamBody).toMatchObject({
-      model: 'gpt-5.5',
-      tool_choice: 'required',
-      tools: [{
-        type: 'image_generation',
-        action: 'edit',
-        size: '1024x1536',
-        quality: 'medium',
-        output_format: 'jpeg',
-        output_compression: 70,
-      }],
+    await expect(response.json()).resolves.toEqual({
+      data: [{ b64_json: 'ZWRpdA==' }],
     })
-    expect(upstreamBody.input[0].content).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'input_image', image_url: expect.stringMatching(/^data:image\/png;base64,/) }),
-    ]))
+    expect(upstreamRequest.body).toContain('name="model"')
+    expect(upstreamRequest.body).toContain('gpt-image-2')
+    expect(upstreamRequest.body).toContain('name="prompt"')
+    expect(upstreamRequest.body).toContain('Edit this product image.')
+    expect(upstreamRequest.body).toContain('name="quality"')
+    expect(upstreamRequest.body).toContain('medium')
+    expect(upstreamRequest.body).toContain('name="image[]"')
+    expect(upstreamRequest.body).toContain('image-bytes')
     await upstream.close()
   })
 

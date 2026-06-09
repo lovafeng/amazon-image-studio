@@ -29,4 +29,8 @@ describe('DetailModal', () => {
     expect(outputLoadEffectBlock).toContain('ensureImageUrlCached')
     expect(outputLoadEffectBlock).not.toContain('ensureImageCached(imageId)')
   })
+
+  it('opens the footer reuse menu upward so final generation is not clipped', () => {
+    expect(detailModalSource).toContain('menuPlacement="top"')
+  })
 })

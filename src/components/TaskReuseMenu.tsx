@@ -4,6 +4,7 @@ interface TaskReuseMenuProps {
   hasOutputImages: boolean
   canRestorePlannerSession?: boolean
   canCreateFinalFromDraft?: boolean
+  menuPlacement?: 'bottom' | 'top'
   onReuseConfig: () => void
   onUseOutputAsReference: () => void
   onCreateFinalFromDraft?: () => void
@@ -39,6 +40,7 @@ export default function TaskReuseMenu({
   hasOutputImages,
   canRestorePlannerSession = false,
   canCreateFinalFromDraft = false,
+  menuPlacement = 'bottom',
   onReuseConfig,
   onUseOutputAsReference,
   onCreateFinalFromDraft = () => {},
@@ -47,6 +49,7 @@ export default function TaskReuseMenu({
   onEditOutputs,
 }: TaskReuseMenuProps) {
   const [open, setOpen] = useState(false)
+  const menuPositionClass = menuPlacement === 'top' ? 'bottom-9' : 'top-9'
 
   return (
     <div className="relative inline-flex" onClick={(event) => event.stopPropagation()}>
@@ -62,7 +65,7 @@ export default function TaskReuseMenu({
       <div
         role="menu"
         aria-hidden={!open}
-        className={`absolute right-0 top-9 z-40 w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-xl dark:border-white/[0.08] dark:bg-gray-950 ${open ? '' : 'hidden'}`}
+        className={`absolute right-0 ${menuPositionClass} z-50 w-40 rounded-lg border border-gray-200 bg-white p-1 shadow-xl dark:border-white/[0.08] dark:bg-gray-950 ${open ? '' : 'hidden'}`}
       >
         <MenuAction onClick={onReuseConfig}>复用参数</MenuAction>
         <MenuAction disabled={!hasOutputImages} onClick={onUseOutputAsReference}>输出图作参考</MenuAction>

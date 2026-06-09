@@ -70,4 +70,21 @@ describe('TaskReuseMenu', () => {
 
     expect(html).not.toContain('制作高清')
   })
+
+  it('can place the action menu above footer controls', () => {
+    const html = renderToStaticMarkup(
+      <TaskReuseMenu
+        hasOutputImages
+        menuPlacement="top"
+        onReuseConfig={() => {}}
+        onUseOutputAsReference={() => {}}
+        onUseAsStyle={() => {}}
+        onRestorePlannerSession={() => {}}
+        onEditOutputs={() => {}}
+      />,
+    )
+
+    expect(html).toContain('bottom-9')
+    expect(html).not.toContain('top-9')
+  })
 })

@@ -374,6 +374,26 @@ describe('sqlite storage', () => {
     expect(storage.getStoredImageThumbnail('admin', 'image-a')).toBeUndefined()
   })
 
+  it('accepts dataUrl as a thumbnail payload alias', () => {
+    const thumbnail = {
+      id: 'thumbnail-alias',
+      dataUrl: 'data:image/webp;base64,dGh1bWI=',
+      width: 100,
+      height: 80,
+      thumbnailVersion: 2,
+    }
+
+    storage.putImageThumbnail('admin', thumbnail)
+
+    expect(storage.getStoredImageThumbnail('admin', 'thumbnail-alias')).toEqual({
+      id: 'thumbnail-alias',
+      thumbnailDataUrl: 'data:image/webp;base64,dGh1bWI=',
+      width: 100,
+      height: 80,
+      thumbnailVersion: 2,
+    })
+  })
+
   it('stores new image and thumbnail bytes outside data url text', () => {
     const image = {
       id: 'image-binary',

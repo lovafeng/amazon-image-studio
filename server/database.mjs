@@ -598,9 +598,10 @@ export function createStorage(sqlitePath, options = {}) {
       return parseImageContent(statements.getThumbnail.get(normalizeOwner(owner), id), 'thumbnail_data_url')
     },
     putImageThumbnail(owner, thumbnail) {
-      const { id, thumbnailDataUrl, ...metadata } = thumbnail
-      const content = decodeDataUrl(thumbnailDataUrl)
-      statements.putThumbnail.run(normalizeOwner(owner), id, content.storageDataUrl, content.bytes, content.mimeType, content.bytes.byteLength, JSON.stringify(metadata))
+      const { id, thumbnailDataUrl, dataUrl, ...metadata } = thumbnail
+      const inputDataUrl = thumbnailDataUrl ?? dataUrl
+      const content = decodeDataUrl(inputDataUrl)
+      statements.putThumbnail.run(normalizeOwner(owner), id, content.storageDataUrl, content.bytes, content.mimeType, content.bytes.byteLength, JSON.stringify({ ...metadata, thumbnailDataUrl: inputDataUrl }))
       return id
     },
     getAllAmazonPlannerSessions(owner) {

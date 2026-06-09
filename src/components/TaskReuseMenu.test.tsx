@@ -87,4 +87,21 @@ describe('TaskReuseMenu', () => {
     expect(html).toContain('bottom-9')
     expect(html).not.toContain('top-9')
   })
+
+  it('can align the action menu inside narrow panels', () => {
+    const html = renderToStaticMarkup(
+      <TaskReuseMenu
+        hasOutputImages
+        menuAlign="left"
+        onReuseConfig={() => {}}
+        onUseOutputAsReference={() => {}}
+        onUseAsStyle={() => {}}
+        onRestorePlannerSession={() => {}}
+        onEditOutputs={() => {}}
+      />,
+    )
+
+    expect(html).toContain('left-0')
+    expect(html).not.toContain('right-0')
+  })
 })

@@ -1048,6 +1048,7 @@ export default function DetailModal() {
                 canRestorePlannerSession={Boolean(task.category?.plannerSessionId)}
                 canCreateFinalFromDraft={isAmazonDraftTask(task)}
                 menuPlacement="top"
+                menuAlign="left"
                 onReuseConfig={handleReuse}
                 onUseOutputAsReference={() => void handleUseOutputAsReference()}
                 onCreateFinalFromDraft={() => void handleCreateFinalFromDraft()}

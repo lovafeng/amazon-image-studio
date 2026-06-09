@@ -32,5 +32,6 @@ describe('DetailModal', () => {
 
   it('opens the footer reuse menu upward so final generation is not clipped', () => {
     expect(detailModalSource).toContain('menuPlacement="top"')
+    expect(detailModalSource).toContain('menuAlign="left"')
   })
 })

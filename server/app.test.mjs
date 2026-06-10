@@ -593,7 +593,6 @@ describe('http app', () => {
     const upstreamBody = JSON.parse(upstreamRequest.body)
     expect(upstreamBody).toMatchObject({
       model: 'gpt-5.5',
-      tool_choice: 'required',
       tools: [{
         type: 'image_generation',
         action: 'generate',
@@ -602,6 +601,7 @@ describe('http app', () => {
         moderation: 'auto',
       }],
     })
+    expect(upstreamBody).not.toHaveProperty('tool_choice')
     expect(upstreamBody.input).toContain('Create a simple product image.')
     expect(appStorage.getUsageSummary(userId)).toMatchObject({
       calls: 1,

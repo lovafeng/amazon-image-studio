@@ -266,7 +266,6 @@ async function createLegacyDefaultImageResponsesBody(pathname, headers, requestB
     model: RESPONSES_IMAGE_MODEL,
     input: createLegacyResponsesInput(fields.prompt || '', inputImages),
     tools: [tool],
-    tool_choice: 'required',
   })
 }
 

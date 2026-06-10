@@ -33,6 +33,8 @@ describe('callImageApi', () => {
       const [, init] = fetchMock.mock.calls[0]
       const body = JSON.parse(String((init as RequestInit).body))
       expect(body.input).toBe('Use the following text as the complete prompt. Do not rewrite it:\nprompt')
+      expect(body.tools[0].type).toBe('image_generation')
+      expect(body).not.toHaveProperty('tool_choice')
     },
   )
 

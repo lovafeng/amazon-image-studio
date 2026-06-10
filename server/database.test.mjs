@@ -581,6 +581,45 @@ describe('sqlite storage', () => {
     expect(storage.getAllAmazonPlannerSessions('admin')).toEqual([])
   })
 
+  it('stores, orders, deletes, and clears product workspaces by owner', () => {
+    const olderWorkspace = {
+      id: 'B0TESTOLD',
+      title: 'Old Tumbler',
+      updatedAt: 20,
+      referenceImageIds: ['ref-old'],
+      sixViewVersions: [],
+      confirmedSixViewVersionId: null,
+    }
+    const newerWorkspace = {
+      id: 'B0TESTNEW',
+      title: 'New Tumbler',
+      updatedAt: 30,
+      referenceImageIds: ['ref-new'],
+      sixViewVersions: [{
+        id: 'six-view-a',
+        imageId: 'six-view-image-a',
+        prompt: 'standard six view',
+        inputImageIds: ['ref-new'],
+        createdAt: 25,
+      }],
+      confirmedSixViewVersionId: 'six-view-a',
+    }
+
+    storage.putProductWorkspace('admin', olderWorkspace)
+    storage.putProductWorkspace('admin', newerWorkspace)
+    storage.putProductWorkspace('operator', { ...newerWorkspace, title: 'Operator Copy' })
+
+    expect(storage.getAllProductWorkspaces('admin')).toEqual([newerWorkspace, olderWorkspace])
+    expect(storage.getAllProductWorkspaces('operator')).toEqual([{ ...newerWorkspace, title: 'Operator Copy' }])
+
+    storage.deleteProductWorkspace('admin', 'B0TESTNEW')
+    expect(storage.getAllProductWorkspaces('admin')).toEqual([olderWorkspace])
+
+    storage.clearProductWorkspaces('admin')
+    expect(storage.getAllProductWorkspaces('admin')).toEqual([])
+    expect(storage.getAllProductWorkspaces('operator')).toEqual([{ ...newerWorkspace, title: 'Operator Copy' }])
+  })
+
   it('migrates existing single-account rows to the configured legacy owner', () => {
     const sqlitePath = join(tempDir, 'legacy.sqlite')
     const legacyTask = {

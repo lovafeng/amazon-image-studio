@@ -759,6 +759,36 @@ async function handleAmazonPlannerSessions(req, res, storage, pathname, session)
   return false
 }
 
+async function handleProductWorkspaces(req, res, storage, pathname, session) {
+  if (pathname !== '/api/product-workspaces' && !pathname.startsWith('/api/product-workspaces/')) return false
+
+  const owner = session.userId
+  if (req.method === 'GET' && pathname === '/api/product-workspaces') {
+    sendOk(res, storage.getAllProductWorkspaces(owner))
+    return true
+  }
+  if (req.method === 'DELETE' && pathname === '/api/product-workspaces') {
+    storage.clearProductWorkspaces(owner)
+    sendOk(res)
+    return true
+  }
+  if (pathname.startsWith('/api/product-workspaces/')) {
+    const id = routeId(pathname, '/api/product-workspaces/')
+    if (req.method === 'PUT') {
+      const workspace = { ...(await readJson(req)), id }
+      sendOk(res, { id: storage.putProductWorkspace(owner, workspace) })
+      return true
+    }
+    if (req.method === 'DELETE') {
+      storage.deleteProductWorkspace(owner, id)
+      sendOk(res)
+      return true
+    }
+  }
+
+  return false
+}
+
 async function handleUsageAndAdmin(req, res, storage, pathname, session) {
   if (req.method === 'GET' && pathname === '/api/usage/me') {
     sendOk(res, {
@@ -856,6 +886,7 @@ export function createRequestHandler({ config, storage }) {
           return
         }
         if (await handleUsageAndAdmin(req, res, storage, pathname, session)) return
+        if (await handleProductWorkspaces(req, res, storage, pathname, session)) return
         if (await handleAmazonPlannerSessions(req, res, storage, pathname, session)) return
         if (await handleData(req, res, storage, pathname, session)) return
       }

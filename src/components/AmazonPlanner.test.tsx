@@ -32,7 +32,7 @@ describe('AmazonPlanner', () => {
 
   it('restores planner style boards from compressed thumbnails instead of full images', () => {
     const restoreBlock = amazonPlannerSource.slice(
-      amazonPlannerSource.indexOf('const restorePlannerSession = async (session: AmazonPlannerSession) => {'),
+      amazonPlannerSource.indexOf('const restorePlannerSession = async (session: ProductWorkspace) => {'),
       amazonPlannerSource.indexOf('const removePlannerSession = async (sessionId: string) => {'),
     )
 
@@ -185,5 +185,38 @@ describe('AmazonPlanner', () => {
     expect(amazonPlannerSource).toContain('缺风格')
     expect(amazonPlannerSource).toContain('待提交')
     expect(amazonPlannerSource).toContain('已提交')
+  })
+
+  it('uses explicit product workspace terminology instead of planner history', () => {
+    expect(amazonPlannerSource).toContain('新建工作区')
+    expect(amazonPlannerSource).toContain('工作区 ID')
+    expect(amazonPlannerSource).toContain('打开工作区')
+    expect(amazonPlannerSource).toContain('商品工作区')
+    expect(amazonPlannerSource).not.toContain('策划历史')
+  })
+
+  it('renders the mandatory standard six-view step', () => {
+    expect(amazonPlannerSource).toContain('标准 6 视图')
+    expect(amazonPlannerSource).toContain('生成标准 6 视图')
+    expect(amazonPlannerSource).toContain('设为已确认 6 视图')
+    expect(amazonPlannerSource).toContain('后续生图默认只使用已确认 6 视图作为产品结构参考')
+  })
+
+  it('surfaces six-view upload guidance, confirmation checks and quick repair prompts', () => {
+    expect(amazonPlannerSource).toContain('一次性成功参考图')
+    expect(amazonPlannerSource).toContain('建议上传 3-6 张同一产品多视角参考图')
+    expect(amazonPlannerSource).toContain('正面、背面、左右侧、俯视控制面板')
+    expect(amazonPlannerSource).toContain('logo/文字区域清晰无遮挡')
+    expect(amazonPlannerSource).toContain('确认前检查')
+    expect(amazonPlannerSource).toContain('正视图 logo/品牌字样可见')
+    expect(amazonPlannerSource).toContain('补回正视图和控制面板上的真实品牌 logo/wordmark')
+    expect(amazonPlannerSource).toContain('锁定机身比例、侧面把手、通风口、脚垫')
+  })
+
+  it('gates draft generation on a confirmed six-view reference', () => {
+    expect(amazonPlannerSource).toContain('confirmedSixViewVersion')
+    expect(amazonPlannerSource).toContain('请先确认标准 6 视图')
+    expect(amazonPlannerSource).toContain('!confirmedSixViewVersion')
+    expect(amazonPlannerSource).toContain('sixViewReferenceAttached: Boolean(confirmedSixViewVersion)')
   })
 })

@@ -221,6 +221,8 @@ export interface TaskRecord {
     styleReferenceLabel?: string
     generationStage?: 'draft' | 'final'
     draftSourceImageId?: string
+    productWorkspaceId?: string
+    sixViewVersionId?: string
   }
 }
 
@@ -316,6 +318,46 @@ export interface AmazonPlannerSession {
   listingText: string
   referenceImageIds: string[]
   draft: AmazonPlannerSessionDraft
+  seriesStyleGuides: {
+    listing: string
+    aplus: string
+    dsp: string
+  }
+  styleCandidates: AmazonPlannerSessionStyleCandidate[]
+  styleImages: AmazonPlannerSessionStyleImage[]
+  selectedStyleIndex: number | null
+  selectedStyleReference?: AmazonPlannerSelectedStyleReference | null
+  styleDensityMode?: AmazonStyleDensityMode
+  imagePlans: AmazonPlannerSessionImagePlan[]
+  aPlusPlans: AmazonPlannerSessionAPlusPlan[]
+  dspPlans: AmazonPlannerSessionDspPlan[]
+  selectedPlanIndex: number | null
+  selectedAPlusPlanIndex: number | null
+  selectedDspPlanIndex: number | null
+  actionProgress?: Record<string, 'filled' | 'submitted'>
+  createdAt: number
+  updatedAt: number
+}
+
+export interface ProductWorkspaceSixViewVersion {
+  id: string
+  imageId: string
+  prompt: string
+  inputImageIds: string[]
+  createdAt: number
+}
+
+export interface ProductWorkspace {
+  id: string
+  title: string
+  mode: 'listing' | 'aplus' | 'dsp'
+  aPlusType: 'standard' | 'standard-large' | 'premium'
+  resolution: '1k' | '2k' | '4k'
+  listingText: string
+  referenceImageIds: string[]
+  draft: AmazonPlannerSessionDraft
+  sixViewVersions: ProductWorkspaceSixViewVersion[]
+  confirmedSixViewVersionId: string | null
   seriesStyleGuides: {
     listing: string
     aplus: string
@@ -532,6 +574,7 @@ export interface ExportData {
   tasks?: TaskRecord[]
   agentConversations?: AgentConversation[]
   amazonPlannerSessions?: AmazonPlannerSession[]
+  productWorkspaces?: ProductWorkspace[]
   /** imageId → 图片信息 */
   imageFiles?: Record<string, {
     path: string

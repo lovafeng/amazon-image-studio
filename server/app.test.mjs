@@ -812,6 +812,40 @@ describe('http app', () => {
     expect(list.json()).toEqual([session])
   })
 
+  it('allows users to manage only their own product workspaces', async () => {
+    const userLogin = await postJson('/api/auth/register', { email: 'user@example.com', password: 'secret' })
+    const cookie = userLogin.headers['set-cookie'][0]
+    const adminLogin = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const adminCookie = adminLogin.headers['set-cookie'][0]
+    appStorage.putProductWorkspace(adminLogin.json().user.id, { id: 'admin-workspace', title: 'Admin', updatedAt: 2 })
+
+    const workspace = {
+      id: 'B0WORKSPACE',
+      title: 'Tumbler Workspace',
+      updatedAt: 1,
+      referenceImageIds: ['ref-a'],
+      sixViewVersions: [],
+      confirmedSixViewVersionId: null,
+    }
+    const save = await request('/api/product-workspaces/B0WORKSPACE', {
+      method: 'PUT',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify(workspace),
+    })
+    const list = await request('/api/product-workspaces', { headers: { cookie } })
+    const remove = await request('/api/product-workspaces/B0WORKSPACE', {
+      method: 'DELETE',
+      headers: { cookie },
+    })
+    const adminList = await request('/api/product-workspaces', { headers: { cookie: adminCookie } })
+
+    expect(save.status).toBe(200)
+    expect(list.status).toBe(200)
+    expect(list.json()).toEqual([workspace])
+    expect(remove.status).toBe(200)
+    expect(adminList.json()).toEqual([{ id: 'admin-workspace', title: 'Admin', updatedAt: 2 }])
+  })
+
   it('allows admin to list analysis tasks across all users', async () => {
     const userRegister = await postJson('/api/auth/register', { email: 'user@example.com', password: 'secret' })
     const userId = userRegister.json().user.id

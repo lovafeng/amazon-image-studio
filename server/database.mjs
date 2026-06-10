@@ -214,6 +214,14 @@ function createOwnedTables(db) {
       primary key (owner, id)
     );
 
+    create table if not exists product_workspaces (
+      owner text not null,
+      id text not null,
+      record_json text not null,
+      updated_at integer,
+      primary key (owner, id)
+    );
+
     create table if not exists usage_events (
       id text primary key,
       user_id text not null,
@@ -281,6 +289,7 @@ function createOwnedIndexes(db) {
     create index if not exists agent_conversations_owner_updated_idx on agent_conversations (owner, updated_at desc, id desc);
     create index if not exists images_owner_created_idx on images (owner, created_at desc, id desc);
     create index if not exists amazon_planner_sessions_owner_updated_idx on amazon_planner_sessions (owner, updated_at desc, id desc);
+    create index if not exists product_workspaces_owner_updated_idx on product_workspaces (owner, updated_at desc, id desc);
     create index if not exists usage_events_user_created_idx on usage_events (user_id, created_at desc, id desc);
     create index if not exists api_proxy_logs_user_created_idx on api_proxy_logs (user_id, created_at desc, id desc);
     create index if not exists api_proxy_logs_created_idx on api_proxy_logs (created_at desc, id desc);
@@ -353,6 +362,10 @@ export function createStorage(sqlitePath, options = {}) {
     putAmazonPlannerSession: db.prepare('insert into amazon_planner_sessions (owner, id, record_json, updated_at) values (?, ?, ?, ?) on conflict(owner, id) do update set record_json = excluded.record_json, updated_at = excluded.updated_at'),
     deleteAmazonPlannerSession: db.prepare('delete from amazon_planner_sessions where owner = ? and id = ?'),
     clearAmazonPlannerSessions: db.prepare('delete from amazon_planner_sessions where owner = ?'),
+    getAllProductWorkspaces: db.prepare('select record_json from product_workspaces where owner = ? order by updated_at desc, id desc'),
+    putProductWorkspace: db.prepare('insert into product_workspaces (owner, id, record_json, updated_at) values (?, ?, ?, ?) on conflict(owner, id) do update set record_json = excluded.record_json, updated_at = excluded.updated_at'),
+    deleteProductWorkspace: db.prepare('delete from product_workspaces where owner = ? and id = ?'),
+    clearProductWorkspaces: db.prepare('delete from product_workspaces where owner = ?'),
     createUser: db.prepare('insert into users (id, email, phone, password_hash, role, status, token_limit, created_at, last_login_at) values (?, ?, ?, ?, ?, ?, ?, ?, null)'),
     getUserById: db.prepare('select id, email, phone, password_hash, role, status, token_limit, created_at, last_login_at from users where id = ?'),
     findUserByIdentifier: db.prepare('select id, email, phone, password_hash, role, status, token_limit, created_at, last_login_at from users where email = ? or phone = ?'),
@@ -616,6 +629,19 @@ export function createStorage(sqlitePath, options = {}) {
     },
     clearAmazonPlannerSessions(owner) {
       statements.clearAmazonPlannerSessions.run(normalizeOwner(owner))
+    },
+    getAllProductWorkspaces(owner) {
+      return statements.getAllProductWorkspaces.all(normalizeOwner(owner)).map(parseJsonRecord)
+    },
+    putProductWorkspace(owner, workspace) {
+      statements.putProductWorkspace.run(normalizeOwner(owner), workspace.id, JSON.stringify(workspace), workspace.updatedAt ?? null)
+      return workspace.id
+    },
+    deleteProductWorkspace(owner, id) {
+      statements.deleteProductWorkspace.run(normalizeOwner(owner), id)
+    },
+    clearProductWorkspaces(owner) {
+      statements.clearProductWorkspaces.run(normalizeOwner(owner))
     },
     close() {
       db.close()

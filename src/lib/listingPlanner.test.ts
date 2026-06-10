@@ -62,6 +62,36 @@ describe('Amazon prompt builders', () => {
     expect(prompt).not.toContain('A+ module requirements:')
   })
 
+  it('adds a confirmed six-view product reference guard for downstream generation', () => {
+    const listingPrompt = buildAmazonPlanPrompt({
+      prompt: 'Create an Amazon secondary image.',
+      negativePrompt: 'wrong product shape',
+      sixViewReferenceAttached: true,
+    })
+    const aPlusPrompt = buildAmazonAPlusPlanPrompt({
+      prompt: 'Create an A+ module image.',
+      negativePrompt: 'wrong product shape',
+      sixViewReferenceAttached: true,
+    })
+    const dspPrompt = buildAmazonDspPlanPrompt({
+      prompt: 'Create a DSP image.',
+      negativePrompt: 'wrong product shape',
+      sixViewReferenceAttached: true,
+    })
+
+    for (const prompt of [listingPrompt, aPlusPrompt, dspPrompt]) {
+      expect(prompt).toContain('confirmed standardized six-view product reference')
+      expect(prompt).toContain('Preserve the exact product geometry')
+      expect(prompt).toContain('Do not invent, bend, warp, tilt, or redesign the product')
+      expect(prompt).toContain('If the image task asks for a movable or temporary state')
+      expect(prompt).toContain('Treat every other input image as style-only')
+      expect(prompt).toContain('Preserve real on-product brand logos')
+      expect(prompt).toContain('remove only floating logo overlays')
+      expect(prompt).toContain('When the generated image shows a front or top control-panel surface')
+      expect(prompt).toContain('keep the real brand wordmark visible on that surface')
+    }
+  })
+
   it('builds minimal density guidance when requested', () => {
     const prompt = buildAmazonPlanPrompt({
       prompt: 'Create an Amazon secondary image.',
@@ -129,6 +159,7 @@ describe('Amazon prompt builders', () => {
     expect(prompt).toContain('typography samples')
     expect(prompt).toContain('color palette swatches')
     expect(prompt).toContain('lighting/material samples')
+    expect(prompt).toContain('Do not include a full product hero render')
     expect(prompt).toContain('icon/callout treatment')
     expect(prompt).toContain('PRODUCT TITLE')
     expect(prompt).toContain('Series style guide:')

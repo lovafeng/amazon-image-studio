@@ -3,12 +3,13 @@ import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import storeSource from './store.ts?raw'
 import { DEFAULT_PARAMS } from './types'
 import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_IMAGES_MODEL, DEFAULT_OPENAI_PROFILE_ID, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, getActiveApiProfile, normalizeSettings } from './lib/apiProfiles'
-import type { AgentConversation, AmazonPlannerSession, ExportData, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
+import type { AgentConversation, AmazonPlannerSession, ExportData, ProductWorkspace, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 vi.mock('./lib/db', () => {
   const tasks = new Map<string, TaskRecord>()
   const agentConversations = new Map<string, AgentConversation>()
   const amazonPlannerSessions = new Map<string, AmazonPlannerSession>()
+  const productWorkspaces = new Map<string, ProductWorkspace>()
   const images = new Map<string, StoredImage>()
   const thumbnails = new Map<string, StoredImageThumbnail>()
   let imageSeq = 0
@@ -47,6 +48,17 @@ vi.mock('./lib/db', () => {
     },
     clearAmazonPlannerSessions: async () => {
       amazonPlannerSessions.clear()
+    },
+    getAllProductWorkspaces: async () => [...productWorkspaces.values()],
+    putProductWorkspace: async (workspace: ProductWorkspace) => {
+      productWorkspaces.set(workspace.id, workspace)
+      return workspace.id
+    },
+    deleteProductWorkspace: async (id: string) => {
+      productWorkspaces.delete(id)
+    },
+    clearProductWorkspaces: async () => {
+      productWorkspaces.clear()
     },
     getImage: async (id: string) => images.get(id),
     getImageBlob: async (id: string) => {
@@ -113,7 +125,7 @@ vi.mock('./lib/agentApi', () => ({
     }
   }),
 }))
-import { clearAgentConversations, clearAmazonPlannerSessions, clearImages, clearTasks, getAllAgentConversations, getAllAmazonPlannerSessions, getImage, putAgentConversation, putAmazonPlannerSession, putImage } from './lib/db'
+import { clearAgentConversations, clearAmazonPlannerSessions, clearImages, clearProductWorkspaces, clearTasks, getAllAgentConversations, getAllAmazonPlannerSessions, getAllProductWorkspaces, getImage, putAgentConversation, putAmazonPlannerSession, putImage, putProductWorkspace } from './lib/db'
 import * as db from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
@@ -281,6 +293,53 @@ function amazonPlannerSession(overrides: Partial<AmazonPlannerSession> = {}): Am
     selectedPlanIndex: 0,
     selectedAPlusPlanIndex: null,
     selectedDspPlanIndex: null,
+    createdAt: 1,
+    updatedAt: 2,
+    ...overrides,
+  }
+}
+
+function productWorkspace(overrides: Partial<ProductWorkspace> = {}): ProductWorkspace {
+  return {
+    id: 'B0WORKSPACE',
+    title: 'Tumbler Workspace',
+    mode: 'listing',
+    aPlusType: 'standard-large',
+    resolution: '2k',
+    listingText: 'Title: Tumbler',
+    referenceImageIds: [],
+    draft: {
+      kind: 'main',
+      productTitle: 'Tumbler',
+      category: 'Kitchen',
+      brand: '',
+      color: '',
+      material: '',
+      audience: '',
+      sellingPoints: '',
+      packageIncludes: '',
+      scene: '',
+      forbidden: '',
+    },
+    sixViewVersions: [],
+    confirmedSixViewVersionId: null,
+    seriesStyleGuides: {
+      listing: 'Warm studio style.',
+      aplus: '',
+      dsp: '',
+    },
+    styleCandidates: [],
+    styleImages: [],
+    selectedStyleIndex: null,
+    selectedStyleReference: null,
+    styleDensityMode: 'rich',
+    imagePlans: [],
+    aPlusPlans: [],
+    dspPlans: [],
+    selectedPlanIndex: null,
+    selectedAPlusPlanIndex: null,
+    selectedDspPlanIndex: null,
+    actionProgress: {},
     createdAt: 1,
     updatedAt: 2,
     ...overrides,
@@ -1647,11 +1706,40 @@ describe('data import', () => {
     expect(await getAllAmazonPlannerSessions()).toEqual([session])
     expect(useStore.getState().showToast).toHaveBeenCalledWith('已导入 0 条记录和 1 条策划历史', 'success')
   })
+
+  it('imports product workspaces with task data', async () => {
+    const workspace = productWorkspace({
+      id: 'imported-workspace',
+      referenceImageIds: ['image-a'],
+      sixViewVersions: [{
+        id: 'six-view-a',
+        imageId: 'six-view-image-a',
+        prompt: 'standard six view',
+        inputImageIds: ['image-a'],
+        createdAt: 2,
+      }],
+      confirmedSixViewVersionId: 'six-view-a',
+      styleImages: [{ candidateIndex: 0, imageId: 'style-image-a' }],
+    })
+
+    const imported = await importData(importFile({
+      version: 5,
+      exportedAt: new Date(0).toISOString(),
+      tasks: [],
+      productWorkspaces: [workspace],
+      imageFiles: {},
+    }), { importConfig: false, importTasks: true })
+
+    expect(imported).toBe(true)
+    expect(await getAllProductWorkspaces()).toEqual([workspace])
+    expect(useStore.getState().showToast).toHaveBeenCalledWith('已导入 0 条记录和 1 个工作区', 'success')
+  })
 })
 
 describe('data export and clearing', () => {
   beforeEach(async () => {
     await clearAmazonPlannerSessions()
+    await clearProductWorkspaces()
     await clearImages()
     useStore.setState({
       tasks: [],
@@ -1696,12 +1784,56 @@ describe('data export and clearing', () => {
     const buffer = await blob.arrayBuffer()
     const unzipped = unzipSync(new Uint8Array(buffer))
     const manifest = JSON.parse(strFromU8(unzipped['manifest.json'])) as ExportData
-    expect(manifest.version).toBe(4)
+    expect(manifest.version).toBe(5)
     expect(manifest.amazonPlannerSessions).toEqual([session])
     expect(manifest.imageFiles).toHaveProperty('image-a')
     expect(manifest.imageFiles).toHaveProperty('style-image-a')
     expect(manifest.imageFiles).not.toHaveProperty('unused-image')
     expect(clickedDownloads[0]?.download).toContain('amazon-image-studio-backup')
+
+    createObjectUrl.mockRestore()
+    revokeObjectUrl.mockRestore()
+    vi.unstubAllGlobals()
+  })
+
+  it('exports product workspaces and every workspace image in the backup manifest', async () => {
+    const workspace = productWorkspace({
+      id: 'exported-workspace',
+      referenceImageIds: ['workspace-reference-image'],
+      sixViewVersions: [{
+        id: 'six-view-a',
+        imageId: 'workspace-six-view-image',
+        prompt: 'standard six view',
+        inputImageIds: ['workspace-reference-image'],
+        createdAt: 1_700_000_000_000,
+      }],
+      confirmedSixViewVersionId: 'six-view-a',
+      styleImages: [{ candidateIndex: 0, imageId: 'workspace-style-image' }],
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+    })
+    await putProductWorkspace(workspace)
+    await putImage({ id: 'workspace-reference-image', dataUrl: 'data:image/png;base64,YQ==', createdAt: 1_700_000_000_000, source: 'upload' })
+    await putImage({ id: 'workspace-six-view-image', dataUrl: 'data:image/png;base64,Yg==', createdAt: 1_700_000_000_000, source: 'generated' })
+    await putImage({ id: 'workspace-style-image', dataUrl: 'data:image/png;base64,Yw==', createdAt: 1_700_000_000_000, source: 'generated' })
+    await putImage({ id: 'workspace-unused-image', dataUrl: 'data:image/png;base64,dW51c2Vk', createdAt: 1_700_000_000_000, source: 'upload' })
+
+    const anchor = { href: '', download: '', click: vi.fn() }
+    vi.stubGlobal('document', { createElement: vi.fn(() => anchor) })
+    const createObjectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:workspace-backup')
+    const revokeObjectUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+
+    await exportData({ exportConfig: false, exportTasks: true })
+
+    const blob = createObjectUrl.mock.calls[0]?.[0] as Blob
+    const buffer = await blob.arrayBuffer()
+    const unzipped = unzipSync(new Uint8Array(buffer))
+    const manifest = JSON.parse(strFromU8(unzipped['manifest.json'])) as ExportData
+    expect(manifest.productWorkspaces).toEqual([workspace])
+    expect(manifest.imageFiles).toHaveProperty('workspace-reference-image')
+    expect(manifest.imageFiles).toHaveProperty('workspace-six-view-image')
+    expect(manifest.imageFiles).toHaveProperty('workspace-style-image')
+    expect(manifest.imageFiles).not.toHaveProperty('workspace-unused-image')
 
     createObjectUrl.mockRestore()
     revokeObjectUrl.mockRestore()
@@ -1724,6 +1856,14 @@ describe('data export and clearing', () => {
     await clearData({ clearConfig: false, clearTasks: true })
 
     expect(await getAllAmazonPlannerSessions()).toEqual([])
+  })
+
+  it('clears product workspaces when clearing task data', async () => {
+    await putProductWorkspace(productWorkspace())
+
+    await clearData({ clearConfig: false, clearTasks: true })
+
+    expect(await getAllProductWorkspaces()).toEqual([])
   })
 
   it('can skip Amazon planner sessions when clearing task data', async () => {
@@ -1755,6 +1895,38 @@ describe('data export and clearing', () => {
 
     expect(await getImage('planner-reference-image')).toBeDefined()
     expect(await getImage('planner-style-image')).toBeDefined()
+  })
+
+  it('keeps product workspace reference, six-view, and style images when deleting a generated task', async () => {
+    const workspace = productWorkspace({
+      id: 'workspace-with-images',
+      referenceImageIds: ['workspace-reference-image'],
+      sixViewVersions: [{
+        id: 'six-view-a',
+        imageId: 'workspace-six-view-image',
+        prompt: 'standard six view',
+        inputImageIds: ['workspace-reference-image'],
+        createdAt: 2,
+      }],
+      confirmedSixViewVersionId: 'six-view-a',
+      styleImages: [{ candidateIndex: 0, imageId: 'workspace-style-image' }],
+    })
+    const deletedTask = task({
+      id: 'workspace-deleted-task',
+      inputImageIds: ['workspace-reference-image'],
+      outputImages: ['workspace-style-image'],
+    })
+    await putProductWorkspace(workspace)
+    await putImage({ id: 'workspace-reference-image', dataUrl: 'data:image/png;base64,cmVm', source: 'upload' })
+    await putImage({ id: 'workspace-six-view-image', dataUrl: 'data:image/png;base64,c2l4', source: 'generated' })
+    await putImage({ id: 'workspace-style-image', dataUrl: 'data:image/png;base64,c3R5bGU=', source: 'generated' })
+    useStore.setState({ tasks: [deletedTask], inputImages: [], galleryInputDraft: null, showToast: vi.fn() })
+
+    await removeTask(deletedTask)
+
+    expect(await getImage('workspace-reference-image')).toBeDefined()
+    expect(await getImage('workspace-six-view-image')).toBeDefined()
+    expect(await getImage('workspace-style-image')).toBeDefined()
   })
 
   it('keeps planner session images when deleting tasks in batch', async () => {

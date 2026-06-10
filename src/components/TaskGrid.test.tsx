@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import TaskGrid, { getTaskOutputReferencePlan, getVirtualTaskWindow } from './TaskGrid'
+import inputBarSource from './InputBar.tsx?raw'
+import searchBarSource from './SearchBar.tsx?raw'
 import taskGridSource from './TaskGrid.tsx?raw'
 import taskCardSource from './TaskCard.tsx?raw'
 
@@ -49,5 +51,14 @@ describe('TaskGrid virtualization', () => {
   it('wires Amazon draft tasks to final generation from the task grid', () => {
     expect(taskGridSource).toContain('createAmazonFinalImageFromDraft')
     expect(taskGridSource).toContain('isAmazonDraftTask(task)')
+  })
+
+  it('scopes every bottom history surface to the active product workspace', () => {
+    expect(taskGridSource).toContain('activeProductWorkspaceId')
+    expect(searchBarSource).toContain('activeProductWorkspaceId')
+    expect(inputBarSource).toContain('activeProductWorkspaceId')
+    expect(taskGridSource).toContain('filterProductWorkspaceId: activeProductWorkspaceId ?? undefined')
+    expect(searchBarSource).toContain('filterProductWorkspaceId: activeProductWorkspaceId ?? undefined')
+    expect(inputBarSource).toContain('filterProductWorkspaceId: activeProductWorkspaceId ?? undefined')
   })
 })

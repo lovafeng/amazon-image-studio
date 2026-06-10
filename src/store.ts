@@ -780,6 +780,7 @@ export function mergePersistedState(persistedState: unknown, currentState: AppSt
     streamPreviews: currentState.streamPreviews,
     streamPreviewSlots: currentState.streamPreviewSlots,
     appMode,
+    activeProductWorkspaceId: null,
     galleryInputDraft: galleryInputDraft && !isEmptyAgentInputDraft(galleryInputDraft) ? galleryInputDraft : null,
     agentConversations,
     activeAgentConversationId,
@@ -878,6 +879,8 @@ interface AppState {
   setFilterWorkflow: (workflow: HistoryWorkflowFilter) => void
   filterAspect: HistoryAspectFilter
   setFilterAspect: (aspect: HistoryAspectFilter) => void
+  activeProductWorkspaceId: string | null
+  setActiveProductWorkspaceId: (id: string | null) => void
   pendingTaskCategory: PendingTaskCategory | null
   setPendingTaskCategory: (category: PendingTaskCategory | null) => void
   galleryStyleReferenceRequest: { imageId: string; label: string; requestedAt: number } | null
@@ -1492,6 +1495,8 @@ export const useStore = create<AppState>()(
       setFilterWorkflow: (filterWorkflow) => set({ filterWorkflow }),
       filterAspect: 'all',
       setFilterAspect: (filterAspect) => set({ filterAspect }),
+      activeProductWorkspaceId: null,
+      setActiveProductWorkspaceId: (activeProductWorkspaceId) => set({ activeProductWorkspaceId }),
       pendingTaskCategory: null,
       setPendingTaskCategory: (pendingTaskCategory) => set({ pendingTaskCategory }),
       galleryStyleReferenceRequest: null,
@@ -1611,6 +1616,7 @@ export function resetUserScopedLocalState() {
     filterProductTitle: '',
     filterWorkflow: 'all',
     filterAspect: 'all',
+    activeProductWorkspaceId: null,
   })
 }
 

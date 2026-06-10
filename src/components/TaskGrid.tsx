@@ -80,6 +80,7 @@ export default function TaskGrid() {
   const filterProductTitle = useStore((s) => s.filterProductTitle)
   const filterWorkflow = useStore((s) => s.filterWorkflow)
   const filterAspect = useStore((s) => s.filterAspect)
+  const activeProductWorkspaceId = useStore((s) => s.activeProductWorkspaceId)
   const setDetailTaskId = useStore((s) => s.setDetailTaskId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
   const selectedTaskIds = useStore((s) => s.selectedTaskIds)
@@ -119,8 +120,9 @@ export default function TaskGrid() {
       filterProductTitle,
       filterWorkflow,
       filterAspect,
+      filterProductWorkspaceId: activeProductWorkspaceId ?? undefined,
     }))
-  }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect])
+  }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect, activeProductWorkspaceId])
 
   useEffect(() => {
     const updateViewport = () => {
@@ -428,7 +430,7 @@ export default function TaskGrid() {
   if (!filteredTasks.length) {
     return (
       <div className="text-center py-20 text-gray-400 dark:text-gray-500">
-        {searchQuery || filterFavorite || filterStatus !== 'all' || filterProductTitle || filterWorkflow !== 'all' || filterAspect !== 'all' ? (
+        {searchQuery || filterFavorite || filterStatus !== 'all' || filterProductTitle || filterWorkflow !== 'all' || filterAspect !== 'all' || activeProductWorkspaceId ? (
           <p className="text-sm">没有找到匹配的记录</p>
         ) : (
           <>

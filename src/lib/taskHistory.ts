@@ -25,6 +25,7 @@ export interface TaskHistoryFilters {
   filterProductTitle: string
   filterWorkflow: HistoryWorkflowFilter
   filterAspect: HistoryAspectFilter
+  filterProductWorkspaceId?: string
 }
 
 export interface ProductFilterOption {
@@ -186,9 +187,14 @@ export function getTaskProductFilterOptions(tasks: TaskRecord[]): ProductFilterO
   return [...productMap.values()].sort((a, b) => b.latestCreatedAt - a.latestCreatedAt)
 }
 
+export function getTaskProductWorkspaceId(task: TaskRecord) {
+  return task.category?.productWorkspaceId ?? task.category?.plannerSessionId ?? ''
+}
+
 export function matchesTaskHistoryFilters(task: TaskRecord, filters: TaskHistoryFilters) {
   if (filters.filterFavorite && !task.isFavorite) return false
   if (filters.filterStatus !== 'all' && task.status !== filters.filterStatus) return false
+  if (filters.filterProductWorkspaceId && getTaskProductWorkspaceId(task) !== filters.filterProductWorkspaceId) return false
 
   const category = getTaskHistoryCategory(task)
   if (filters.filterProductTitle === UNCATEGORIZED_PRODUCT_FILTER) {

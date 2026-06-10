@@ -6,6 +6,7 @@ import {
   createProductWorkspaceSixViewVersion,
   getConfirmedSixViewImageId,
   getConfirmedSixViewVersion,
+  getStandardSixViewSourceImageIds,
 } from './productWorkspace'
 
 function workspace(overrides: Partial<ProductWorkspace> = {}): ProductWorkspace {
@@ -131,6 +132,21 @@ describe('product workspace six-view helpers', () => {
       'six-view-image-a',
       'six-view-image-b',
       'style-a',
+    ])
+  })
+
+  it('selects six-view source images only from the current workspace', () => {
+    expect(getStandardSixViewSourceImageIds(workspace())).toEqual([
+      'six-view-image-b',
+      'ref-a',
+      'ref-b',
+    ])
+
+    expect(getStandardSixViewSourceImageIds(workspace({
+      referenceImageIds: ['ref-a', 'six-view-image-b', 'ref-a'],
+    }))).toEqual([
+      'six-view-image-b',
+      'ref-a',
     ])
   })
 })

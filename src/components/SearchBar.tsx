@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from 'react'
 import { removeMultipleTasks, useStore } from '../store'
-import { ALL_PRODUCT_FILTER, UNCATEGORIZED_PRODUCT_FILTER, getTaskProductFilterOptions, matchesTaskHistoryFilters } from '../lib/taskHistory'
+import { ALL_PRODUCT_FILTER, UNCATEGORIZED_PRODUCT_FILTER, getTaskProductFilterOptions, getTaskProductWorkspaceId, matchesTaskHistoryFilters } from '../lib/taskHistory'
 import type { HistoryAspectFilter, HistoryWorkflowFilter } from '../types'
 import Select from './Select'
 import { TrashIcon } from './icons'
@@ -19,10 +19,17 @@ export default function SearchBar() {
   const setFilterWorkflow = useStore((s) => s.setFilterWorkflow)
   const filterAspect = useStore((s) => s.filterAspect)
   const setFilterAspect = useStore((s) => s.setFilterAspect)
+  const activeProductWorkspaceId = useStore((s) => s.activeProductWorkspaceId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
 
+  const workspaceScopedTasks = useMemo(() => (
+    activeProductWorkspaceId
+      ? tasks.filter((task) => getTaskProductWorkspaceId(task) === activeProductWorkspaceId)
+      : tasks
+  ), [activeProductWorkspaceId, tasks])
+
   const productOptions = useMemo(() => {
-    const options = getTaskProductFilterOptions(tasks)
+    const options = getTaskProductFilterOptions(workspaceScopedTasks)
     const hasSelectedProduct = Boolean(
       filterProductTitle &&
       filterProductTitle !== UNCATEGORIZED_PRODUCT_FILTER &&
@@ -38,7 +45,7 @@ export default function SearchBar() {
       })),
       { label: '未识别商品', value: UNCATEGORIZED_PRODUCT_FILTER },
     ]
-  }, [filterProductTitle, tasks])
+  }, [filterProductTitle, workspaceScopedTasks])
 
   const filteredTasks = useMemo(() => {
     return tasks.filter((task) => matchesTaskHistoryFilters(task, {
@@ -48,10 +55,11 @@ export default function SearchBar() {
       filterProductTitle,
       filterWorkflow,
       filterAspect,
+      filterProductWorkspaceId: activeProductWorkspaceId ?? undefined,
     }))
-  }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect])
+  }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect, activeProductWorkspaceId])
 
-  const hasActiveFilters = Boolean(
+  const hasUserFilters = Boolean(
     searchQuery.trim() ||
     filterFavorite ||
     filterStatus !== 'all' ||
@@ -59,17 +67,18 @@ export default function SearchBar() {
     filterWorkflow !== 'all' ||
     filterAspect !== 'all',
   )
+  const workspaceFilterActive = Boolean(activeProductWorkspaceId)
   const productFilterActive = Boolean(filterProductTitle)
   const clearLabel = productFilterActive
     ? filterProductTitle === UNCATEGORIZED_PRODUCT_FILTER ? '清空未识别' : '清空该商品'
-    : hasActiveFilters ? '清空筛选结果' : '清空历史'
+    : workspaceFilterActive && !hasUserFilters ? '清空工作区历史' : hasUserFilters ? '清空筛选结果' : '清空历史'
 
   const handleClearHistory = useCallback(() => {
     if (!filteredTasks.length) return
     const taskIds = filteredTasks.map((task) => task.id)
     const scopeText = productFilterActive
       ? filterProductTitle === UNCATEGORIZED_PRODUCT_FILTER ? '未识别商品' : `商品「${filterProductTitle}」`
-      : hasActiveFilters ? '当前筛选结果' : '全部历史记录'
+      : workspaceFilterActive && !hasUserFilters ? '当前工作区' : hasUserFilters ? '当前筛选结果' : '全部历史记录'
 
     setConfirmDialog({
       title: clearLabel,
@@ -79,7 +88,7 @@ export default function SearchBar() {
         void removeMultipleTasks(taskIds)
       },
     })
-  }, [clearLabel, filterProductTitle, filteredTasks, hasActiveFilters, productFilterActive, setConfirmDialog])
+  }, [clearLabel, filterProductTitle, filteredTasks, hasUserFilters, productFilterActive, setConfirmDialog, workspaceFilterActive])
 
   return (
     <div data-no-drag-select data-onboarding-target="history-panel" className="mt-6 mb-4 flex flex-col gap-2 lg:flex-row lg:items-center">

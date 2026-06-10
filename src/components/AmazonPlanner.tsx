@@ -42,7 +42,7 @@ import { AMAZON_DRAFT_QUALITY } from '../lib/amazonGeneration'
 import { deleteProductWorkspace, getAllProductWorkspaces, putProductWorkspace, storeImage } from '../lib/db'
 import { normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { prepareReferenceImagePayload, type PlannerReferenceImagePayload } from '../lib/referenceImagePayload'
-import { buildStandardSixViewPrompt, createProductWorkspaceSixViewVersion, getConfirmedSixViewVersion } from '../lib/productWorkspace'
+import { buildStandardSixViewPrompt, createProductWorkspaceSixViewVersion, getConfirmedSixViewVersion, getStandardSixViewSourceImageIds } from '../lib/productWorkspace'
 import {
   AMAZON_DOM_TRANSFER_EVENT,
   AMAZON_DOM_TRANSFER_STORAGE_KEY,
@@ -653,6 +653,7 @@ export default function AmazonPlanner() {
   const clearInputImages = useStore((s) => s.clearInputImages)
   const setInputImages = useStore((s) => s.setInputImages)
   const setLightboxImageId = useStore((s) => s.setLightboxImageId)
+  const setActiveProductWorkspaceId = useStore((s) => s.setActiveProductWorkspaceId)
   const showToast = useStore((s) => s.showToast)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const cameraInputRef = useRef<HTMLInputElement>(null)
@@ -740,6 +741,7 @@ export default function AmazonPlanner() {
   const currentWorkspace = currentPlannerSessionId ? plannerSessions.find((session) => session.id === currentPlannerSessionId) ?? null : null
   const confirmedSixViewVersion = currentWorkspace ? getConfirmedSixViewVersion(currentWorkspace) : null
   const latestSixViewVersion = currentWorkspace?.sixViewVersions.length ? currentWorkspace.sixViewVersions[currentWorkspace.sixViewVersions.length - 1] : null
+  const canGenerateStandardSixView = currentWorkspace ? getStandardSixViewSourceImageIds(currentWorkspace).length > 0 : false
   const selectedStyleReferenceImageId = selectedStyleReference?.imageId ?? selectedStyleImage?.imageId
   const selectedStyleReferenceLabel = selectedStyleReference?.label ?? selectedStyleCandidate?.label
   const selectedStyleReferenceCategory = selectedStyleReferenceImageId
@@ -936,6 +938,11 @@ export default function AmazonPlanner() {
       ? getAmazonDspComplianceChecks(draft, selectedDspPlan, inputImages.length, hasStyleReference)
       : getAmazonListingPlannerChecks(draft, targetSize, inputImages.length, hasStyleReference, styleReferenceRequired)
   const atImageLimit = inputImages.length >= API_MAX_IMAGES
+
+  useEffect(() => {
+    setActiveProductWorkspaceId(currentPlannerSessionId)
+    return () => setActiveProductWorkspaceId(null)
+  }, [currentPlannerSessionId, setActiveProductWorkspaceId])
 
   useEffect(() => {
     const previewDomTransferPayload = (payload: unknown) => {
@@ -1156,7 +1163,7 @@ export default function AmazonPlanner() {
       aPlusType: overrides.aPlusType ?? aPlusType,
       resolution: overrides.resolution ?? resolution,
       listingText: snapshotListingText,
-      referenceImageIds: overrides.referenceImageIds ?? inputImages.map((image) => image.id),
+      referenceImageIds: overrides.referenceImageIds ?? existing?.referenceImageIds ?? inputImages.map((image) => image.id),
       draft: overrides.draft ?? toSessionDraft(draft),
       sixViewVersions: overrides.sixViewVersions ?? existing?.sixViewVersions ?? [],
       confirmedSixViewVersionId: overrides.confirmedSixViewVersionId ?? existing?.confirmedSixViewVersionId ?? null,
@@ -1388,7 +1395,8 @@ export default function AmazonPlanner() {
 
   const generateSixViewVersion = async () => {
     if (!currentWorkspace) return
-    if (!inputImages.length && !latestSixViewVersion) {
+    const sourceImageIds = getStandardSixViewSourceImageIds(currentWorkspace)
+    if (!sourceImageIds.length) {
       showToast('请先上传产品参考图', 'error')
       return
     }
@@ -1399,11 +1407,14 @@ export default function AmazonPlanner() {
     const styleImageProfile = createOpenAIInputImageProfile(imageProfile)
     const imageRequestSettings = createImageRequestSettings(styleImageProfile)
     const sourceImages: InputImage[] = []
-    if (latestSixViewVersion) {
-      const dataUrl = await ensureImageCached(latestSixViewVersion.imageId)
-      if (dataUrl) sourceImages.push({ id: latestSixViewVersion.imageId, dataUrl })
+    for (const imageId of sourceImageIds) {
+      const dataUrl = await ensureImageCached(imageId)
+      if (dataUrl) sourceImages.push({ id: imageId, dataUrl })
     }
-    sourceImages.push(...inputImages.filter((image) => !sourceImages.some((source) => source.id === image.id)))
+    if (!sourceImages.length) {
+      showToast('工作区参考图不存在，请重新上传', 'error')
+      return
+    }
 
     setIsGeneratingSixView(true)
     setSixViewError('')
@@ -1430,7 +1441,7 @@ export default function AmazonPlanner() {
         id: `six-view-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         imageId,
         prompt,
-        inputImageIds: sourceImages.map((image) => image.id),
+        inputImageIds: sourceImageIds,
         createdAt: Date.now(),
       })
       await savePlannerSession({
@@ -2947,8 +2958,8 @@ export default function AmazonPlanner() {
               <button
                 type="button"
                 onClick={() => void generateSixViewVersion()}
-                disabled={isGeneratingSixView || (!inputImages.length && !latestSixViewVersion)}
-                className={`inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition ${isGeneratingSixView || (!inputImages.length && !latestSixViewVersion) ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : 'bg-gray-900 text-white hover:bg-gray-700 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200'}`}
+                disabled={isGeneratingSixView || !canGenerateStandardSixView}
+                className={`inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition ${isGeneratingSixView || !canGenerateStandardSixView ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : 'bg-gray-900 text-white hover:bg-gray-700 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200'}`}
               >
                 <PhotoIcon className="h-4 w-4" />
                 {isGeneratingSixView ? '生成中...' : latestSixViewVersion ? '提示词编辑 6 视图' : '生成标准 6 视图'}

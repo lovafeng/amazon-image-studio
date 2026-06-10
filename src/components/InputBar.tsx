@@ -422,6 +422,7 @@ export default function InputBar() {
   const filterProductTitle = useStore((s) => s.filterProductTitle)
   const filterWorkflow = useStore((s) => s.filterWorkflow)
   const filterAspect = useStore((s) => s.filterAspect)
+  const activeProductWorkspaceId = useStore((s) => s.activeProductWorkspaceId)
 
   const filteredTasks = useMemo(() => {
     const sorted = [...tasks].sort((a, b) => b.createdAt - a.createdAt)
@@ -433,8 +434,9 @@ export default function InputBar() {
       filterProductTitle,
       filterWorkflow,
       filterAspect,
+      filterProductWorkspaceId: activeProductWorkspaceId ?? undefined,
     }))
-  }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect])
+  }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect, activeProductWorkspaceId])
 
   const handleSelectAllToggle = useCallback(() => {
     if (selectedTaskIds.length === filteredTasks.length && filteredTasks.length > 0) {

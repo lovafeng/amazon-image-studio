@@ -183,6 +183,51 @@ describe('task history categories', () => {
     })).toBe(true)
   })
 
+  it('limits history matches to the current product workspace when provided', () => {
+    const workspaceTask = task({
+      id: 'workspace-task',
+      category: {
+        productTitle: 'Nugget Ice Maker',
+        workflow: 'amazon-listing',
+        productWorkspaceId: 'B0CURRENT',
+      },
+    })
+    const legacyWorkspaceTask = task({
+      id: 'legacy-workspace-task',
+      category: {
+        productTitle: 'Nugget Ice Maker',
+        workflow: 'amazon-listing',
+        plannerSessionId: 'B0CURRENT',
+      },
+    })
+    const otherWorkspaceTask = task({
+      id: 'other-workspace-task',
+      category: {
+        productTitle: 'Nugget Ice Maker',
+        workflow: 'amazon-listing',
+        productWorkspaceId: 'B0OTHER',
+      },
+    })
+    const uncategorizedTask = task({
+      id: 'gallery-task',
+      category: { workflow: 'gallery' },
+    })
+    const filters = {
+      searchQuery: '',
+      filterStatus: 'all' as const,
+      filterFavorite: false,
+      filterProductTitle: '',
+      filterWorkflow: 'all' as const,
+      filterAspect: 'all' as const,
+      filterProductWorkspaceId: 'B0CURRENT',
+    }
+
+    expect(matchesTaskHistoryFilters(workspaceTask, filters)).toBe(true)
+    expect(matchesTaskHistoryFilters(legacyWorkspaceTask, filters)).toBe(true)
+    expect(matchesTaskHistoryFilters(otherWorkspaceTask, filters)).toBe(false)
+    expect(matchesTaskHistoryFilters(uncategorizedTask, filters)).toBe(false)
+  })
+
   it('sorts product filter options by most recent task', () => {
     const options = getTaskProductFilterOptions([
       task({ id: 'old-lamp', createdAt: 1, category: { productTitle: 'LED Desk Lamp', workflow: 'amazon-aplus' } }),

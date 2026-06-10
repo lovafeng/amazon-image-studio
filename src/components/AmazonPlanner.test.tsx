@@ -221,4 +221,25 @@ describe('AmazonPlanner', () => {
     expect(amazonPlannerSource).toContain('!confirmedSixViewVersion')
     expect(amazonPlannerSource).toContain('sixViewReferenceAttached: Boolean(confirmedSixViewVersion)')
   })
+
+  it('builds six-view generation inputs from the current workspace instead of global input images', () => {
+    const generateSixViewBlock = amazonPlannerSource.slice(
+      amazonPlannerSource.indexOf('const generateSixViewVersion = async () => {'),
+      amazonPlannerSource.indexOf('const confirmSixViewVersion = (version: ProductWorkspaceSixViewVersion) => {'),
+    )
+
+    expect(generateSixViewBlock).toContain('getStandardSixViewSourceImageIds(currentWorkspace)')
+    expect(generateSixViewBlock).toContain('ensureImageCached(imageId)')
+    expect(generateSixViewBlock).not.toContain('sourceImages.push(...inputImages.filter')
+    expect(generateSixViewBlock).not.toContain('sourceImages.map((image) => image.id)')
+  })
+
+  it('does not overwrite saved workspace references from unrelated global input images', () => {
+    const snapshotBlock = amazonPlannerSource.slice(
+      amazonPlannerSource.indexOf('const createPlannerSessionSnapshot = (overrides: Partial<ProductWorkspace> = {}): ProductWorkspace => {'),
+      amazonPlannerSource.indexOf('const savePlannerSession = async (overrides: Partial<ProductWorkspace> = {}) => {'),
+    )
+
+    expect(snapshotBlock).toContain('referenceImageIds: overrides.referenceImageIds ?? existing?.referenceImageIds ?? inputImages.map((image) => image.id)')
+  })
 })

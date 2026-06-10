@@ -53,6 +53,20 @@ export function getConfirmedSixViewImageId(workspace: Pick<ProductWorkspace, 'si
   return getConfirmedSixViewVersion(workspace)?.imageId ?? null
 }
 
+export function getStandardSixViewSourceImageIds(workspace: Pick<ProductWorkspace, 'referenceImageIds' | 'sixViewVersions'>): string[] {
+  const latestSixViewImageId = workspace.sixViewVersions.length
+    ? workspace.sixViewVersions[workspace.sixViewVersions.length - 1].imageId
+    : null
+  return [
+    latestSixViewImageId,
+    ...(workspace.referenceImageIds || []),
+  ].filter((id, index, ids): id is string => (
+    typeof id === 'string' &&
+    Boolean(id.trim()) &&
+    ids.indexOf(id) === index
+  ))
+}
+
 export function collectProductWorkspaceImageIds(workspace: Pick<ProductWorkspace, 'referenceImageIds' | 'sixViewVersions' | 'styleImages'>): string[] {
   return [
     ...(workspace.referenceImageIds || []),

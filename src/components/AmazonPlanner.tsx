@@ -42,7 +42,7 @@ import { AMAZON_DRAFT_QUALITY } from '../lib/amazonGeneration'
 import { deleteProductWorkspace, getAllProductWorkspaces, putProductWorkspace, storeImage } from '../lib/db'
 import { normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { prepareReferenceImagePayload, type PlannerReferenceImagePayload } from '../lib/referenceImagePayload'
-import { buildStandardSixViewPrompt, createProductWorkspaceSixViewVersion, getConfirmedSixViewVersion, getStandardSixViewSourceImageIds } from '../lib/productWorkspace'
+import { buildStandardSixViewPrompt, createEmptyProductWorkspace, createProductWorkspaceSixViewVersion, getConfirmedSixViewVersion, getStandardSixViewSourceImageIds } from '../lib/productWorkspace'
 import {
   AMAZON_DOM_TRANSFER_EVENT,
   AMAZON_DOM_TRANSFER_STORAGE_KEY,
@@ -1227,6 +1227,41 @@ export default function AmazonPlanner() {
     setActionProgress(nextProgress)
   }
 
+  const applyPlannerSessionState = (
+    session: ProductWorkspace,
+    restoredReferences: InputImage[],
+    restoredStyleImages: StyleImageState[],
+    restoredStyleReference: AmazonPlannerSelectedStyleReference | null,
+    selectedStyleRestored: boolean,
+  ) => {
+    setPlannerMode(session.mode ?? 'listing')
+    setAPlusType(session.aPlusType)
+    setResolution(session.resolution)
+    setListingText(session.listingText)
+    setInputImages(restoredReferences)
+    setDraft(fromSessionDraft(session.draft))
+    setSeriesStyleGuides(normalizeSeriesStyleGuides(session.seriesStyleGuides))
+    setStyleCandidates(session.styleCandidates)
+    setStyleImages(restoredStyleImages)
+    setSelectedStyleIndex(selectedStyleRestored ? session.selectedStyleIndex : null)
+    setSelectedStyleReference(restoredStyleReference)
+    setStyleDensityMode(session.styleDensityMode ?? 'rich')
+    setStylePreview(null)
+    setImagePlans(session.imagePlans as AmazonImagePlan[])
+    setAPlusPlans(session.aPlusPlans as AmazonAPlusPlan[])
+    setDspPlans((session.dspPlans ?? []) as AmazonDspPlan[])
+    setSelectedPlanIndex(session.selectedPlanIndex != null && session.imagePlans[session.selectedPlanIndex] ? session.selectedPlanIndex : null)
+    setSelectedAPlusPlanIndex(session.selectedAPlusPlanIndex != null && session.aPlusPlans[session.selectedAPlusPlanIndex] ? session.selectedAPlusPlanIndex : null)
+    setSelectedDspPlanIndex(session.selectedDspPlanIndex != null && session.dspPlans?.[session.selectedDspPlanIndex] ? session.selectedDspPlanIndex : null)
+    setPlannerError('')
+    setStyleError(session.selectedStyleIndex != null && !selectedStyleRestored
+      ? '工作区中的风格板图片不存在，请重新生成并选择风格板。策划文本已恢复。'
+      : '')
+    setCurrentPlannerSessionId(session.id)
+    setShowPlannerHistory(false)
+    resetActionProgress(session.actionProgress ?? {})
+  }
+
   const getImageProfileForSubmit = () => {
     const profile = getDefaultImageProfile(settings)
     if (!profile) {
@@ -2025,18 +2060,14 @@ export default function AmazonPlanner() {
       showToast('请输入工作区 ID', 'error')
       return
     }
-    const referenceImageIds = useStore.getState().inputImages.map((image) => image.id)
-    const workspace = createPlannerSessionSnapshot({
+    const workspace = createEmptyProductWorkspace({
       id: workspaceId,
       title: newWorkspaceTitle.trim() || workspaceId,
-      referenceImageIds,
-      sixViewVersions: [],
-      confirmedSixViewVersionId: null,
       createdAt: Date.now(),
     })
     await putProductWorkspace(workspace)
     upsertPlannerSessionList(workspace)
-    setCurrentPlannerSessionId(workspace.id)
+    applyPlannerSessionState(workspace, [], [], null, true)
     setNewWorkspaceId('')
     setNewWorkspaceTitle('')
     showToast('工作区已新建', 'success')
@@ -2165,32 +2196,7 @@ export default function AmazonPlanner() {
           })()
         : null
 
-    setPlannerMode(session.mode ?? 'listing')
-    setAPlusType(session.aPlusType)
-    setResolution(session.resolution)
-    setListingText(session.listingText)
-    setInputImages(restoredReferences)
-    setDraft(fromSessionDraft(session.draft))
-    setSeriesStyleGuides(normalizeSeriesStyleGuides(session.seriesStyleGuides))
-    setStyleCandidates(session.styleCandidates)
-    setStyleImages(restoredStyleImages)
-    setSelectedStyleIndex(selectedStyleRestored ? session.selectedStyleIndex : null)
-    setSelectedStyleReference(restoredStyleReference)
-    setStyleDensityMode(session.styleDensityMode ?? 'rich')
-    setStylePreview(null)
-    setImagePlans(session.imagePlans as AmazonImagePlan[])
-    setAPlusPlans(session.aPlusPlans as AmazonAPlusPlan[])
-    setDspPlans((session.dspPlans ?? []) as AmazonDspPlan[])
-    setSelectedPlanIndex(session.selectedPlanIndex != null && session.imagePlans[session.selectedPlanIndex] ? session.selectedPlanIndex : null)
-    setSelectedAPlusPlanIndex(session.selectedAPlusPlanIndex != null && session.aPlusPlans[session.selectedAPlusPlanIndex] ? session.selectedAPlusPlanIndex : null)
-    setSelectedDspPlanIndex(session.selectedDspPlanIndex != null && session.dspPlans?.[session.selectedDspPlanIndex] ? session.selectedDspPlanIndex : null)
-    setPlannerError('')
-    setStyleError(session.selectedStyleIndex != null && !selectedStyleRestored
-      ? '工作区中的风格板图片不存在，请重新生成并选择风格板。策划文本已恢复。'
-      : '')
-    setCurrentPlannerSessionId(session.id)
-    setShowPlannerHistory(false)
-    resetActionProgress(session.actionProgress ?? {})
+    applyPlannerSessionState(session, restoredReferences, restoredStyleImages, restoredStyleReference, selectedStyleRestored)
     showToast('工作区已打开', 'success')
   }
 

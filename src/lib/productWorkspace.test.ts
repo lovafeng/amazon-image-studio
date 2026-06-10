@@ -3,6 +3,7 @@ import type { ProductWorkspace } from '../types'
 import {
   buildStandardSixViewPrompt,
   collectProductWorkspaceImageIds,
+  createEmptyProductWorkspace,
   createProductWorkspaceSixViewVersion,
   getConfirmedSixViewImageId,
   getConfirmedSixViewVersion,
@@ -72,6 +73,41 @@ function workspace(overrides: Partial<ProductWorkspace> = {}): ProductWorkspace 
 }
 
 describe('product workspace six-view helpers', () => {
+  it('creates a blank product workspace without inheriting previous references or plans', () => {
+    const current = createEmptyProductWorkspace({
+      id: 'fresh-workspace',
+      title: 'Fresh Workspace',
+      createdAt: 10,
+    })
+
+    expect(current).toMatchObject({
+      id: 'fresh-workspace',
+      title: 'Fresh Workspace',
+      mode: 'listing',
+      aPlusType: 'standard-large',
+      resolution: '1k',
+      listingText: '',
+      referenceImageIds: [],
+      sixViewVersions: [],
+      confirmedSixViewVersionId: null,
+      seriesStyleGuides: { listing: '', aplus: '', dsp: '' },
+      styleCandidates: [],
+      styleImages: [],
+      selectedStyleIndex: null,
+      selectedStyleReference: null,
+      styleDensityMode: 'rich',
+      imagePlans: [],
+      aPlusPlans: [],
+      dspPlans: [],
+      selectedPlanIndex: null,
+      selectedAPlusPlanIndex: null,
+      selectedDspPlanIndex: null,
+      actionProgress: {},
+      createdAt: 10,
+      updatedAt: 10,
+    })
+  })
+
   it('builds a fixed 2x3 standard six-view prompt from product facts', () => {
     const prompt = buildStandardSixViewPrompt(workspace(), 'Correct the handle thickness.')
 

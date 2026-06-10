@@ -1,4 +1,46 @@
 import type { AmazonPlannerSessionDraft, ProductWorkspace, ProductWorkspaceSixViewVersion } from '../types'
+import { DEFAULT_AMAZON_PROMPT_DRAFT } from './amazonPrompt'
+
+type CreateEmptyProductWorkspaceInput = {
+  id: string
+  title: string
+  createdAt?: number
+}
+
+export function createEmptyProductWorkspace(input: CreateEmptyProductWorkspaceInput): ProductWorkspace {
+  const now = input.createdAt ?? Date.now()
+  return {
+    id: input.id,
+    title: input.title,
+    mode: 'listing',
+    aPlusType: 'standard-large',
+    resolution: '1k',
+    listingText: '',
+    referenceImageIds: [],
+    draft: { ...DEFAULT_AMAZON_PROMPT_DRAFT },
+    sixViewVersions: [],
+    confirmedSixViewVersionId: null,
+    seriesStyleGuides: {
+      listing: '',
+      aplus: '',
+      dsp: '',
+    },
+    styleCandidates: [],
+    styleImages: [],
+    selectedStyleIndex: null,
+    selectedStyleReference: null,
+    styleDensityMode: 'rich',
+    imagePlans: [],
+    aPlusPlans: [],
+    dspPlans: [],
+    selectedPlanIndex: null,
+    selectedAPlusPlanIndex: null,
+    selectedDspPlanIndex: null,
+    actionProgress: {},
+    createdAt: now,
+    updatedAt: now,
+  }
+}
 
 export function buildStandardSixViewPrompt(workspace: Pick<ProductWorkspace, 'draft'>, editInstruction = ''): string {
   const draft = workspace.draft

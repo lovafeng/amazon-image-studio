@@ -248,14 +248,14 @@ describe('AmazonPlanner', () => {
     expect(snapshotBlock).toContain('referenceImageIds: overrides.referenceImageIds ?? existing?.referenceImageIds ?? inputImages.map((image) => image.id)')
   })
 
-  it('saves visible reference images when explicitly creating a product workspace', () => {
+  it('creates a blank product workspace instead of inheriting closed workspace references', () => {
     const createWorkspaceBlock = amazonPlannerSource.slice(
       amazonPlannerSource.indexOf('const createProductWorkspace = async () => {'),
       amazonPlannerSource.indexOf('const selectPlan = (index: number) => {'),
     )
 
-    expect(createWorkspaceBlock).toContain('const referenceImageIds = useStore.getState().inputImages.map((image) => image.id)')
-    expect(createWorkspaceBlock).toContain('referenceImageIds,')
-    expect(createWorkspaceBlock).not.toContain('referenceImageIds: [],')
+    expect(createWorkspaceBlock).toContain('createEmptyProductWorkspace')
+    expect(createWorkspaceBlock).toContain('applyPlannerSessionState(workspace')
+    expect(createWorkspaceBlock).not.toContain('useStore.getState().inputImages.map((image) => image.id)')
   })
 })

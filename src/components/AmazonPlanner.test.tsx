@@ -211,6 +211,8 @@ describe('AmazonPlanner', () => {
     expect(amazonPlannerSource).toContain('正视图 logo/品牌字样可见')
     expect(amazonPlannerSource).toContain('补回正视图和控制面板上的真实品牌 logo/wordmark')
     expect(amazonPlannerSource).toContain('锁定机身比例、侧面把手、通风口、脚垫')
+    expect(amazonPlannerSource).toContain('上盖弧度、圆角和铰链曲线保持一致')
+    expect(amazonPlannerSource).toContain('锁定上盖弧度')
   })
 
   it('gates draft generation on a confirmed six-view reference', () => {

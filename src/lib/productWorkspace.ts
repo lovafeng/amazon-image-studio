@@ -22,6 +22,7 @@ export function buildStandardSixViewPrompt(workspace: Pick<ProductWorkspace, 'dr
     'Use orthographic product documentation style. Keep the product centered and upright in every panel.',
     'Do not simplify the product into a generic box, cylinder, appliance, bottle, or placeholder shape. Do not make the body taller, deeper, wider, rounder, squarer, or more symmetrical than the visual evidence supports.',
     'For products with movable or openable parts, document the permanent body structure and the movable part geometry clearly. If the source images show an important open/use state, preserve that state in the most relevant front or top view without changing the permanent body proportions.',
+    'For products with a curved smoked transparent lid, rounded lid corners, raised cover, arched cover, hinge curve, or translucent lid lip, preserve the exact lid curvature, corner radius, thickness, hinge geometry, opening angle, and smoky transparency shown in the source images. Do not flatten, straighten, square off, or turn the lid into a flat rectangular sheet.',
     'Preserve authentic on-product brand logos, wordmarks, model labels, printed marks, decals, and control-panel marks exactly where they appear in the supplied product images.',
     'Keep real wordmarks visible in every panel where that product surface is visible, especially the front view and top/control-panel view.',
     'Never output a blank or generic front-facing control panel when the supplied product images show a brand wordmark.',

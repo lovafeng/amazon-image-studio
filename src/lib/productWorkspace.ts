@@ -18,6 +18,8 @@ export function buildStandardSixViewPrompt(workspace: Pick<ProductWorkspace, 'dr
     'Use the supplied images as the primary source of truth for the permanent product structure. Use product facts only to clarify identity, color, materials, included permanent parts, and visible details.',
     'The output must be one clean 2x3 grid on a plain white or light neutral background.',
     'Grid order, left to right, top row first: front view, back view, left side view, right side view, top view, bottom view.',
+    'The top view must be a true vertical overhead orthographic view looking straight down at the product top/control-panel surface, not a front-top, three-quarter, angled, or perspective view.',
+    'The bottom view must be a true vertical underside view looking straight up at the base/feet/underside, not a rear-bottom or angled perspective view.',
     'Each panel must show the same exact product with consistent proportions, dimensions, color, material, permanent accessories, openings, handles, vents, control panels, seams, feet, and distinctive structural details.',
     'Treat original product reference photos as authoritative for true color, material finish, brand marks, and permanent geometry.',
     'If a previous six-view candidate is supplied, use it only as a draft layout to correct; never let it override the original product references when color, material, logo, shape, or structure conflict.',

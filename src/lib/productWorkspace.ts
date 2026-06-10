@@ -19,6 +19,8 @@ export function buildStandardSixViewPrompt(workspace: Pick<ProductWorkspace, 'dr
     'The output must be one clean 2x3 grid on a plain white or light neutral background.',
     'Grid order, left to right, top row first: front view, back view, left side view, right side view, top view, bottom view.',
     'Each panel must show the same exact product with consistent proportions, dimensions, color, material, permanent accessories, openings, handles, vents, control panels, seams, feet, and distinctive structural details.',
+    'Treat original product reference photos as authoritative for true color, material finish, brand marks, and permanent geometry.',
+    'If a previous six-view candidate is supplied, use it only as a draft layout to correct; never let it override the original product references when color, material, logo, shape, or structure conflict.',
     'Use orthographic product documentation style. Keep the product centered and upright in every panel.',
     'Do not simplify the product into a generic box, cylinder, appliance, bottle, or placeholder shape. Do not make the body taller, deeper, wider, rounder, squarer, or more symmetrical than the visual evidence supports.',
     'For products with movable or openable parts, document the permanent body structure and the movable part geometry clearly. If the source images show an important open/use state, preserve that state in the most relevant front or top view without changing the permanent body proportions.',
@@ -58,8 +60,8 @@ export function getStandardSixViewSourceImageIds(workspace: Pick<ProductWorkspac
     ? workspace.sixViewVersions[workspace.sixViewVersions.length - 1].imageId
     : null
   return [
-    latestSixViewImageId,
     ...(workspace.referenceImageIds || []),
+    latestSixViewImageId,
   ].filter((id, index, ids): id is string => (
     typeof id === 'string' &&
     Boolean(id.trim()) &&

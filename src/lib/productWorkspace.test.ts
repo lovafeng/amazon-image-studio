@@ -98,6 +98,8 @@ describe('product workspace six-view helpers', () => {
     expect(prompt).toContain('lids, covers, doors, flaps, panels, hinges, latches, handles')
     expect(prompt).toContain('curved edges, rounded corners, bevels, lips, thickness, transparency, and opening angle')
     expect(prompt).toContain('Do not flatten, straighten, square off, simplify, or replace these parts')
+    expect(prompt).toContain('Treat original product reference photos as authoritative for true color, material finish, brand marks, and permanent geometry')
+    expect(prompt).toContain('If a previous six-view candidate is supplied, use it only as a draft layout to correct')
     expect(prompt).not.toContain('badges, logos')
   })
 
@@ -137,16 +139,16 @@ describe('product workspace six-view helpers', () => {
 
   it('selects six-view source images only from the current workspace', () => {
     expect(getStandardSixViewSourceImageIds(workspace())).toEqual([
-      'six-view-image-b',
       'ref-a',
       'ref-b',
+      'six-view-image-b',
     ])
 
     expect(getStandardSixViewSourceImageIds(workspace({
       referenceImageIds: ['ref-a', 'six-view-image-b', 'ref-a'],
     }))).toEqual([
-      'six-view-image-b',
       'ref-a',
+      'six-view-image-b',
     ])
   })
 })

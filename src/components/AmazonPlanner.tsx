@@ -2014,10 +2014,11 @@ export default function AmazonPlanner() {
       showToast('请输入工作区 ID', 'error')
       return
     }
+    const referenceImageIds = useStore.getState().inputImages.map((image) => image.id)
     const workspace = createPlannerSessionSnapshot({
       id: workspaceId,
       title: newWorkspaceTitle.trim() || workspaceId,
-      referenceImageIds: [],
+      referenceImageIds,
       sixViewVersions: [],
       confirmedSixViewVersionId: null,
       createdAt: Date.now(),

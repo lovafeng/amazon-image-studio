@@ -93,9 +93,10 @@ describe('product workspace six-view helpers', () => {
     expect(prompt).toContain('Do not remove, blur, replace, or relocate real on-product brand marks')
     expect(prompt).toContain('Keep real wordmarks visible in every panel where that product surface is visible, especially the front view and top/control-panel view')
     expect(prompt).toContain('Never output a blank or generic front-facing control panel when the supplied product images show a brand wordmark')
-    expect(prompt).toContain('curved smoked transparent lid')
-    expect(prompt).toContain('rounded lid corners')
-    expect(prompt).toContain('hinge curve')
+    expect(prompt).toContain('movable or openable structural parts')
+    expect(prompt).toContain('lids, covers, doors, flaps, panels, hinges, latches, handles')
+    expect(prompt).toContain('curved edges, rounded corners, bevels, lips, thickness, transparency, and opening angle')
+    expect(prompt).toContain('Do not flatten, straighten, square off, simplify, or replace these parts')
     expect(prompt).not.toContain('badges, logos')
   })
 

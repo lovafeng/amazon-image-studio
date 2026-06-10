@@ -89,10 +89,10 @@ describe('Amazon prompt builders', () => {
       expect(prompt).toContain('remove only floating logo overlays')
       expect(prompt).toContain('When the generated image shows a front or top control-panel surface')
       expect(prompt).toContain('keep the real brand wordmark visible on that surface')
-      expect(prompt).toContain('curved smoked transparent lid')
-      expect(prompt).toContain('rounded lid corners')
-      expect(prompt).toContain('hinge curve')
-      expect(prompt).toContain('Do not flatten, straighten, square off, or turn the lid into a flat rectangular sheet')
+      expect(prompt).toContain('movable or openable structural parts')
+      expect(prompt).toContain('lids, covers, doors, flaps, panels, hinges, latches, handles')
+      expect(prompt).toContain('curved edges, rounded corners, bevels, lips, thickness, transparency, and opening angle')
+      expect(prompt).toContain('Do not flatten, straighten, square off, simplify, or replace these parts')
     }
   })
 

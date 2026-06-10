@@ -81,8 +81,13 @@ describe('Amazon prompt builders', () => {
 
     for (const prompt of [listingPrompt, aPlusPrompt, dspPrompt]) {
       expect(prompt).toContain('confirmed standardized six-view product reference')
+      expect(prompt).toContain('product geometry blueprint')
+      expect(prompt).toContain('Do not render the six-panel grid in the final image')
+      expect(prompt).toContain('Use the front, back, left, right, top, and bottom cells together')
       expect(prompt).toContain('Preserve the exact product geometry')
+      expect(prompt).toContain('Keep body depth, side profile, top footprint, top curvature')
       expect(prompt).toContain('Do not invent, bend, warp, tilt, or redesign the product')
+      expect(prompt).toContain('Do not lean, twist, skew, stretch, compress, bend, flatten')
       expect(prompt).toContain('If the image task asks for a movable or temporary state')
       expect(prompt).toContain('Treat every other input image as style-only')
       expect(prompt).toContain('Preserve real on-product brand logos')

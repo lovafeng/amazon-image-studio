@@ -14,6 +14,7 @@ import type {
   TaskParams,
   InputImage,
   MaskDraft,
+  ProductWorkspace,
   TaskRecord,
   ExportData,
   ResponsesApiResponse,
@@ -36,6 +37,9 @@ import {
   getAllAmazonPlannerSessions,
   putAmazonPlannerSession,
   clearAmazonPlannerSessions as dbClearAmazonPlannerSessions,
+  getAllProductWorkspaces,
+  putProductWorkspace,
+  clearProductWorkspaces as dbClearProductWorkspaces,
   getImage,
   getImageBlob,
   getImageThumbnail,
@@ -60,6 +64,7 @@ import { getChangedParams, normalizeParamsForSettings } from './lib/paramCompati
 import { prepareReferenceImageAndMaskPayload } from './lib/referenceImagePayload'
 import { getTaskHistoryCategory } from './lib/taskHistory'
 import { isAmazonListingMainSlot } from './lib/listingPlanner'
+import { collectProductWorkspaceImageIds } from './lib/productWorkspace'
 import { createImageObjectUrlCache } from './lib/imageObjectUrlCache'
 import {
   AMAZON_FINAL_QUALITY,
@@ -966,6 +971,16 @@ async function addStoredAmazonPlannerSessionReferencedImageIds(target: Set<strin
   addAmazonPlannerSessionReferencedImageIds(target, await getAllAmazonPlannerSessions())
 }
 
+function addProductWorkspaceReferencedImageIds(target: Set<string>, workspaces: ProductWorkspace[]) {
+  for (const workspace of workspaces) {
+    for (const id of collectProductWorkspaceImageIds(workspace)) target.add(id)
+  }
+}
+
+async function addStoredProductWorkspaceReferencedImageIds(target: Set<string>) {
+  addProductWorkspaceReferencedImageIds(target, await getAllProductWorkspaces())
+}
+
 export async function deleteImageIfUnreferenced(imageId: string) {
   clearImageMemoryCache(imageId)
   thumbnailBackfillIds.delete(imageId)
@@ -974,6 +989,7 @@ export async function deleteImageIfUnreferenced(imageId: string) {
   if (isImageReferencedByState(useStore.getState(), imageId)) return
   const plannerImageIds = new Set<string>()
   await addStoredAmazonPlannerSessionReferencedImageIds(plannerImageIds)
+  await addStoredProductWorkspaceReferencedImageIds(plannerImageIds)
   if (plannerImageIds.has(imageId)) return
   try {
     await deleteImage(imageId)
@@ -2072,6 +2088,7 @@ export async function initStore() {
     addTaskReferencedImageIds(referencedIds, t)
   }
   addAmazonPlannerSessionReferencedImageIds(referencedIds, await getAllAmazonPlannerSessions())
+  addProductWorkspaceReferencedImageIds(referencedIds, await getAllProductWorkspaces())
   if (stateVersion !== userScopedStateVersion) return
 
   // 只枚举 key 清理孤立图片，避免启动时把所有 4K 原图读进内存。
@@ -2627,6 +2644,7 @@ async function deleteUnreferencedImageIds(imageIds: Iterable<string>) {
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
   await addStoredAmazonPlannerSessionReferencedImageIds(stillUsed)
+  await addStoredProductWorkspaceReferencedImageIds(stillUsed)
 
   for (const imgId of candidates) {
     if (stillUsed.has(imgId)) continue
@@ -4321,6 +4339,7 @@ export async function removeMultipleTasks(taskIds: string[]) {
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
   await addStoredAmazonPlannerSessionReferencedImageIds(stillUsed)
+  await addStoredProductWorkspaceReferencedImageIds(stillUsed)
 
   // 删除孤立图片
   for (const imgId of deletedImageIds) {
@@ -4365,6 +4384,7 @@ export async function removeTask(task: TaskRecord) {
   addInputDraftReferencedImageIds(stillUsed, galleryInputDraft)
   for (const img of inputImages) stillUsed.add(img.id)
   await addStoredAmazonPlannerSessionReferencedImageIds(stillUsed)
+  await addStoredProductWorkspaceReferencedImageIds(stillUsed)
 
   // 删除孤立图片
   for (const imgId of taskImageIds) {
@@ -4393,6 +4413,7 @@ export async function clearData(options: ClearOptions = { clearConfig: true, cle
     await dbClearAgentConversations()
     if (options.clearPlannerSessions !== false) {
       await dbClearAmazonPlannerSessions()
+      await dbClearProductWorkspaces()
     }
     await clearImages()
     clearAllImageMemoryCaches()
@@ -4531,6 +4552,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
   try {
     const tasks = options.exportTasks ? await getAllTasks() : []
     const amazonPlannerSessions = options.exportTasks ? await getAllAmazonPlannerSessions() : []
+    const productWorkspaces = options.exportTasks ? await getAllProductWorkspaces() : []
     const { settings, agentConversations } = useStore.getState()
     const exportedAt = Date.now()
     const imageCreatedAtFallback = new Map<string, number>()
@@ -4558,6 +4580,15 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
           const prev = imageCreatedAtFallback.get(id)
           if (prev == null || session.createdAt < prev) {
             imageCreatedAtFallback.set(id, session.createdAt)
+          }
+        }
+      }
+      for (const workspace of productWorkspaces) {
+        for (const id of collectProductWorkspaceImageIds(workspace)) {
+          exportImageIds.add(id)
+          const prev = imageCreatedAtFallback.get(id)
+          if (prev == null || workspace.createdAt < prev) {
+            imageCreatedAtFallback.set(id, workspace.createdAt)
           }
         }
       }
@@ -4608,7 +4639,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
     }
 
     const manifest: ExportData = {
-      version: 4,
+      version: 5,
       exportedAt: new Date(exportedAt).toISOString(),
     }
 
@@ -4617,6 +4648,7 @@ export async function exportData(options: ExportOptions = { exportConfig: true, 
       manifest.tasks = tasks
       manifest.agentConversations = agentConversations
       manifest.amazonPlannerSessions = amazonPlannerSessions
+      manifest.productWorkspaces = productWorkspaces
       manifest.imageFiles = imageFiles
       manifest.thumbnailFiles = thumbnailFiles
     }
@@ -4703,6 +4735,9 @@ export async function importData(file: File, options: ImportOptions = { importCo
       for (const session of data.amazonPlannerSessions ?? []) {
         await putAmazonPlannerSession(session)
       }
+      for (const workspace of data.productWorkspaces ?? []) {
+        await putProductWorkspace(workspace)
+      }
 
       const tasks = await getAllTasks()
       useStore.getState().setTasks(tasks)
@@ -4731,7 +4766,10 @@ export async function importData(file: File, options: ImportOptions = { importCo
     let msg = '数据已成功导入'
     if (options.importTasks && data.tasks) {
       const plannerSessionCount = data.amazonPlannerSessions?.length ?? 0
-      msg = plannerSessionCount
+      const workspaceCount = data.productWorkspaces?.length ?? 0
+      msg = workspaceCount
+        ? `已导入 ${data.tasks.length} 条记录和 ${workspaceCount} 个工作区`
+        : plannerSessionCount
         ? `已导入 ${data.tasks.length} 条记录和 ${plannerSessionCount} 条策划历史`
         : `已导入 ${data.tasks.length} 条记录`
     } else if (options.importConfig && data.settings) {

@@ -39,9 +39,10 @@ import { deriveProductionGuideState, getProductionEstimate, summarizePlannerBatc
 import { buildStyleReferenceLibrary, type StyleReferenceLibraryItem } from '../lib/styleReferenceLibrary'
 import { callImageApi } from '../lib/api'
 import { AMAZON_DRAFT_QUALITY } from '../lib/amazonGeneration'
-import { deleteAmazonPlannerSession, getAllAmazonPlannerSessions, putAmazonPlannerSession, storeImage } from '../lib/db'
+import { deleteProductWorkspace, getAllProductWorkspaces, putProductWorkspace, storeImage } from '../lib/db'
 import { normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { prepareReferenceImagePayload, type PlannerReferenceImagePayload } from '../lib/referenceImagePayload'
+import { buildStandardSixViewPrompt, createProductWorkspaceSixViewVersion, getConfirmedSixViewVersion } from '../lib/productWorkspace'
 import {
   AMAZON_DOM_TRANSFER_EVENT,
   AMAZON_DOM_TRANSFER_STORAGE_KEY,
@@ -54,7 +55,7 @@ import {
   type AmazonDomImportResult,
 } from '../lib/amazonDomImport'
 import { DEFAULT_PARAMS } from '../types'
-import type { AmazonPlannerSelectedStyleReference, AmazonPlannerSession, ApiProfile, TaskRecord } from '../types'
+import type { AmazonPlannerSelectedStyleReference, ApiProfile, InputImage, ProductWorkspace, ProductWorkspaceSixViewVersion, TaskRecord } from '../types'
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, DownloadIcon, EyeIcon, HistoryIcon, ImportIcon, PhotoIcon, PlusIcon, TrashIcon } from './icons'
 import PlannerProductionGuide from './PlannerProductionGuide'
 import StyleReferenceLibrary from './StyleReferenceLibrary'
@@ -71,6 +72,32 @@ const AMAZON_IMPORT_EXTENSION_ZIP = 'amazon-image-studio-amazon-importer.zip'
 const STYLE_DENSITY_OPTIONS: Array<{ value: AmazonStyleDensityMode; label: string }> = [
   { value: 'rich', label: '信息丰富' },
   { value: 'minimal', label: '简约' },
+]
+const SIX_VIEW_REFERENCE_GUIDANCE = [
+  '建议上传 3-6 张同一产品多视角参考图',
+  '正面、背面、左右侧、俯视控制面板',
+  'logo/文字区域清晰无遮挡',
+  '同一颜色和同一型号，不混用竞品或旧版结构',
+]
+const SIX_VIEW_CONFIRMATION_CHECKS = [
+  '正视图 logo/品牌字样可见',
+  '俯视/控制面板 logo、图标、文字可见',
+  '机身比例、侧面把手、通风口、脚垫一致',
+  '开盖、冰篮等使用状态不改变永久结构',
+]
+const SIX_VIEW_REPAIR_PRESETS = [
+  {
+    label: '补回 logo',
+    prompt: '补回正视图和控制面板上的真实品牌 logo/wordmark，不要把它画成浮动 logo 或额外贴纸。',
+  },
+  {
+    label: '锁定结构',
+    prompt: '锁定机身比例、侧面把手、通风口、脚垫，保持与参考图一致，禁止方盒化、拉伸、歪斜或结构变形。',
+  },
+  {
+    label: '修正使用状态',
+    prompt: '修正开盖、冰篮、托盘等使用状态，只调整临时状态，不改变产品永久结构和外壳轮廓。',
+  },
 ]
 type ComplianceStatus = 'ready' | 'warning' | 'missing'
 type WorkflowStepStatus = 'done' | 'current' | 'todo'
@@ -364,7 +391,7 @@ function formatPlannerSessionTime(value: number) {
   })
 }
 
-function toSessionDraft(draft: AmazonPromptDraft): AmazonPlannerSession['draft'] {
+function toSessionDraft(draft: AmazonPromptDraft): ProductWorkspace['draft'] {
   return {
     kind: draft.kind,
     productTitle: draft.productTitle,
@@ -380,7 +407,7 @@ function toSessionDraft(draft: AmazonPromptDraft): AmazonPlannerSession['draft']
   }
 }
 
-function fromSessionDraft(draft: AmazonPlannerSession['draft']): AmazonPromptDraft {
+function fromSessionDraft(draft: ProductWorkspace['draft']): AmazonPromptDraft {
   return {
     ...DEFAULT_AMAZON_PROMPT_DRAFT,
     ...draft,
@@ -388,13 +415,13 @@ function fromSessionDraft(draft: AmazonPlannerSession['draft']): AmazonPromptDra
   }
 }
 
-function getSessionStyleImages(styleImages: StyleImageState[]): AmazonPlannerSession['styleImages'] {
+function getSessionStyleImages(styleImages: StyleImageState[]): ProductWorkspace['styleImages'] {
   return styleImages
     .filter((image): image is StyleImageState & { imageId: string } => image.status === 'done' && Boolean(image.imageId))
     .map((image) => ({ candidateIndex: image.candidateIndex, imageId: image.imageId }))
 }
 
-function sortPlannerSessions(sessions: AmazonPlannerSession[]) {
+function sortPlannerSessions(sessions: ProductWorkspace[]) {
   return [...sessions].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, PLANNER_HISTORY_LIMIT)
 }
 
@@ -656,9 +683,15 @@ export default function AmazonPlanner() {
   const [selectedPlanIndex, setSelectedPlanIndex] = useState<number | null>(null)
   const [selectedAPlusPlanIndex, setSelectedAPlusPlanIndex] = useState<number | null>(null)
   const [selectedDspPlanIndex, setSelectedDspPlanIndex] = useState<number | null>(null)
-  const [plannerSessions, setPlannerSessions] = useState<AmazonPlannerSession[]>([])
+  const [plannerSessions, setPlannerSessions] = useState<ProductWorkspace[]>([])
   const [currentPlannerSessionId, setCurrentPlannerSessionId] = useState<string | null>(null)
   const [showPlannerHistory, setShowPlannerHistory] = useState(false)
+  const [newWorkspaceId, setNewWorkspaceId] = useState('')
+  const [newWorkspaceTitle, setNewWorkspaceTitle] = useState('')
+  const [sixViewInstruction, setSixViewInstruction] = useState('')
+  const [isGeneratingSixView, setIsGeneratingSixView] = useState(false)
+  const [sixViewError, setSixViewError] = useState('')
+  const [sixViewImageSrcById, setSixViewImageSrcById] = useState<Record<string, string>>({})
   const [isPlanning, setIsPlanning] = useState(false)
   const [plannerRunStage, setPlannerRunStage] = useState<PlannerRunStage>('idle')
   const [planningStartedAt, setPlanningStartedAt] = useState<number | null>(null)
@@ -699,6 +732,9 @@ export default function AmazonPlanner() {
     ...styleLightboxImageIds,
     ...styleReferenceLibraryItems.map((item) => item.imageId),
   ])), [styleLightboxImageIds, styleReferenceLibraryItems])
+  const currentWorkspace = currentPlannerSessionId ? plannerSessions.find((session) => session.id === currentPlannerSessionId) ?? null : null
+  const confirmedSixViewVersion = currentWorkspace ? getConfirmedSixViewVersion(currentWorkspace) : null
+  const latestSixViewVersion = currentWorkspace?.sixViewVersions.length ? currentWorkspace.sixViewVersions[currentWorkspace.sixViewVersions.length - 1] : null
   const selectedStyleReferenceImageId = selectedStyleReference?.imageId ?? selectedStyleImage?.imageId
   const selectedStyleReferenceLabel = selectedStyleReference?.label ?? selectedStyleCandidate?.label
   const selectedStyleReferenceCategory = selectedStyleReferenceImageId
@@ -715,13 +751,14 @@ export default function AmazonPlanner() {
   const effectiveReferenceCount = inputImages.length + (usesStyleReferenceForActivePlan && selectedStyleReferenceImageId && !inputImages.some((image) => image.id === selectedStyleReferenceImageId) ? 1 : 0)
   const styleReferenceLimitExceeded = usesStyleReferenceForActivePlan && effectiveReferenceCount > API_MAX_IMAGES
   const activePrompt = plannerMode === 'aplus'
-    ? selectedAPlusPlan ? buildAmazonAPlusPlanPrompt({ ...selectedAPlusPlan, seriesStyleGuide: activeSeriesStyleGuide, styleReferenceAttached: usesStyleReferenceForActivePlan, styleDensityMode }) : ''
+    ? selectedAPlusPlan ? buildAmazonAPlusPlanPrompt({ ...selectedAPlusPlan, seriesStyleGuide: activeSeriesStyleGuide, styleReferenceAttached: usesStyleReferenceForActivePlan, sixViewReferenceAttached: Boolean(confirmedSixViewVersion), styleDensityMode }) : ''
     : plannerMode === 'dsp'
-      ? selectedDspPlan ? buildAmazonDspPlanPrompt({ ...selectedDspPlan, seriesStyleGuide: activeSeriesStyleGuide, styleReferenceAttached: usesStyleReferenceForActivePlan, styleDensityMode }) : ''
+      ? selectedDspPlan ? buildAmazonDspPlanPrompt({ ...selectedDspPlan, seriesStyleGuide: activeSeriesStyleGuide, styleReferenceAttached: usesStyleReferenceForActivePlan, sixViewReferenceAttached: Boolean(confirmedSixViewVersion), styleDensityMode }) : ''
       : selectedPlan ? buildAmazonPlanPrompt({
         ...selectedPlan,
         seriesStyleGuide: isMainListingPlan ? null : activeSeriesStyleGuide,
         styleReferenceAttached: usesStyleReferenceForActivePlan,
+        sixViewReferenceAttached: Boolean(confirmedSixViewVersion),
         styleDensityMode,
       }) : ''
   const activePlanMarkdown = plannerMode === 'aplus'
@@ -757,7 +794,7 @@ export default function AmazonPlanner() {
   const showStickyActions = visiblePlanCount > 0
   const actionDisabled = plannerMode === 'aplus' ? !selectedAPlusPlan : plannerMode === 'dsp' ? !selectedDspPlan : !activePrompt.trim()
   const submitNeedsStyleReference = styleReferenceRequired && !hasStyleReference
-  const submitDisabled = actionDisabled || styleReferenceLimitExceeded
+  const submitDisabled = actionDisabled || styleReferenceLimitExceeded || !confirmedSixViewVersion
   const hasPlanOptions = visiblePlanCount > 0
   const hasSelectedPlan = plannerMode === 'aplus' ? Boolean(selectedAPlusPlan) : plannerMode === 'dsp' ? Boolean(selectedDspPlan) : Boolean(selectedPlan)
   const canGoPrev = visiblePlanCount > 0 && visiblePlanIndex != null && visiblePlanIndex > 0
@@ -788,6 +825,7 @@ export default function AmazonPlanner() {
     effectiveReferenceCount,
     apiMaxImages: API_MAX_IMAGES,
   })
+  const gatedActionGuidance = !confirmedSixViewVersion ? '请先确认标准 6 视图，后续生图默认只使用已确认 6 视图作为产品结构参考' : actionGuidance
   const mainStyleGuidance = isMainListingPlan
     ? hasStyleReference
       ? 'MAIN 主图不附加风格板；附图、A+ 和 DSP 会使用已选风格。'
@@ -844,7 +882,7 @@ export default function AmazonPlanner() {
     hasStyleReference,
   })
   const submitButtonLabel = currentActionSubmitted ? '草稿已提交' : '生成草稿'
-  const batchSubmitDisabled = isBatchSubmitting || !hasPlanOptions || isPlanning || isGeneratingStyleImages || (seriesStyleReferenceNeeded && !hasStyleReference) || batchStyleReferenceLimitExceeded
+  const batchSubmitDisabled = isBatchSubmitting || !hasPlanOptions || isPlanning || isGeneratingStyleImages || !confirmedSixViewVersion || (seriesStyleReferenceNeeded && !hasStyleReference) || batchStyleReferenceLimitExceeded
     || visibleUnsubmittedPlanCount === 0
   const guideState: PlannerGuideState = !hasUsablePlannerProfile
     ? {
@@ -972,12 +1010,12 @@ export default function AmazonPlanner() {
 
   useEffect(() => {
     let cancelled = false
-    getAllAmazonPlannerSessions()
+    getAllProductWorkspaces()
       .then((sessions) => {
         if (!cancelled) setPlannerSessions(sortPlannerSessions(sessions))
       })
       .catch((err) => {
-        if (!cancelled) showToast(`策划历史加载失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+        if (!cancelled) showToast(`工作区加载失败：${err instanceof Error ? err.message : String(err)}`, 'error')
       })
     return () => {
       cancelled = true
@@ -1002,6 +1040,25 @@ export default function AmazonPlanner() {
   useEffect(() => {
     setReferencePayloadNotice('')
   }, [inputImages])
+
+  useEffect(() => {
+    const versions = currentWorkspace?.sixViewVersions ?? []
+    if (versions.length === 0) {
+      setSixViewImageSrcById({})
+      return
+    }
+    let cancelled = false
+    for (const version of versions) {
+      void ensureImageThumbnailCached(version.imageId).then((thumbnail) => {
+        if (!cancelled && thumbnail?.dataUrl) {
+          setSixViewImageSrcById((current) => ({ ...current, [version.imageId]: thumbnail.dataUrl }))
+        }
+      })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [currentWorkspace?.id, currentWorkspace?.sixViewVersions])
 
   useEffect(() => {
     const missingPreviewImages = styleImages.filter((image) => image.status === 'done' && image.imageId && !image.dataUrl)
@@ -1073,14 +1130,14 @@ export default function AmazonPlanner() {
     }
   }, [styleReferenceImageSrcById, styleReferenceLibraryItems])
 
-  const upsertPlannerSessionList = (session: AmazonPlannerSession) => {
+  const upsertPlannerSessionList = (session: ProductWorkspace) => {
     setPlannerSessions((current) => sortPlannerSessions([
       session,
       ...current.filter((item) => item.id !== session.id),
     ]))
   }
 
-  const createPlannerSessionSnapshot = (overrides: Partial<AmazonPlannerSession> = {}): AmazonPlannerSession => {
+  const createPlannerSessionSnapshot = (overrides: Partial<ProductWorkspace> = {}): ProductWorkspace => {
     const now = Date.now()
     const existing = !overrides.id && currentPlannerSessionId ? plannerSessions.find((session) => session.id === currentPlannerSessionId) : null
     const snapshotDraft = overrides.draft ? fromSessionDraft(overrides.draft) : draft
@@ -1096,6 +1153,8 @@ export default function AmazonPlanner() {
       listingText: snapshotListingText,
       referenceImageIds: overrides.referenceImageIds ?? inputImages.map((image) => image.id),
       draft: overrides.draft ?? toSessionDraft(draft),
+      sixViewVersions: overrides.sixViewVersions ?? existing?.sixViewVersions ?? [],
+      confirmedSixViewVersionId: overrides.confirmedSixViewVersionId ?? existing?.confirmedSixViewVersionId ?? null,
       seriesStyleGuides: normalizeSeriesStyleGuides(overrides.seriesStyleGuides ?? seriesStyleGuides),
       styleCandidates: overrides.styleCandidates ?? styleCandidates,
       styleImages: overrides.styleImages ?? getSessionStyleImages(styleImages),
@@ -1114,18 +1173,18 @@ export default function AmazonPlanner() {
     }
   }
 
-  const savePlannerSession = async (overrides: Partial<AmazonPlannerSession> = {}) => {
+  const savePlannerSession = async (overrides: Partial<ProductWorkspace> = {}) => {
     const session = createPlannerSessionSnapshot(overrides)
-    await putAmazonPlannerSession(session)
+    await putProductWorkspace(session)
     setCurrentPlannerSessionId(session.id)
     upsertPlannerSessionList(session)
     return session
   }
 
-  const updateCurrentPlannerSession = (overrides: Partial<AmazonPlannerSession>) => {
+  const updateCurrentPlannerSession = (overrides: Partial<ProductWorkspace>) => {
     if (!currentPlannerSessionId) return
     void savePlannerSession(overrides).catch((err) => {
-      showToast(`策划历史保存失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+      showToast(`工作区保存失败：${err instanceof Error ? err.message : String(err)}`, 'error')
     })
   }
 
@@ -1179,6 +1238,7 @@ export default function AmazonPlanner() {
           ...plan,
           seriesStyleGuide: activeSeriesStyleGuide,
           styleReferenceAttached: hasStyleReference,
+          sixViewReferenceAttached: Boolean(confirmedSixViewVersion),
           styleDensityMode,
         })
         return {
@@ -1192,6 +1252,8 @@ export default function AmazonPlanner() {
             amazonSlot: plan.slot,
             aPlusType,
             plannerSessionId: currentPlannerSessionId ?? undefined,
+            productWorkspaceId: currentPlannerSessionId ?? undefined,
+            sixViewVersionId: confirmedSixViewVersion?.id,
             generationStage: 'draft',
             ...(plannerBatchId ? { plannerBatchId } : {}),
             ...selectedStyleReferenceCategory,
@@ -1205,6 +1267,7 @@ export default function AmazonPlanner() {
           ...plan,
           seriesStyleGuide: activeSeriesStyleGuide,
           styleReferenceAttached: hasStyleReference,
+          sixViewReferenceAttached: Boolean(confirmedSixViewVersion),
           styleDensityMode,
         })
         return {
@@ -1217,6 +1280,8 @@ export default function AmazonPlanner() {
             workflow: 'amazon-dsp',
             amazonSlot: plan.slot,
             plannerSessionId: currentPlannerSessionId ?? undefined,
+            productWorkspaceId: currentPlannerSessionId ?? undefined,
+            sixViewVersionId: confirmedSixViewVersion?.id,
             generationStage: 'draft',
             ...(plannerBatchId ? { plannerBatchId } : {}),
             ...selectedStyleReferenceCategory,
@@ -1231,6 +1296,7 @@ export default function AmazonPlanner() {
         ...plan,
         seriesStyleGuide: requiresStyle ? activeSeriesStyleGuide : null,
         styleReferenceAttached: requiresStyle && hasStyleReference,
+        sixViewReferenceAttached: Boolean(confirmedSixViewVersion),
         styleDensityMode,
       })
       return {
@@ -1243,6 +1309,8 @@ export default function AmazonPlanner() {
           workflow: 'amazon-listing',
           amazonSlot: plan.slot,
           plannerSessionId: currentPlannerSessionId ?? undefined,
+          productWorkspaceId: currentPlannerSessionId ?? undefined,
+          sixViewVersionId: confirmedSixViewVersion?.id,
           generationStage: 'draft',
           ...(plannerBatchId ? { plannerBatchId } : {}),
           ...(requiresStyle ? selectedStyleReferenceCategory : {}),
@@ -1283,6 +1351,8 @@ export default function AmazonPlanner() {
         workflow: plannerMode === 'aplus' ? 'amazon-aplus' : plannerMode === 'dsp' ? 'amazon-dsp' : 'amazon-listing',
         amazonSlot: plannerMode === 'aplus' ? selectedAPlusPlan?.slot : plannerMode === 'dsp' ? selectedDspPlan?.slot : selectedPlan?.slot,
         plannerSessionId: currentPlannerSessionId ?? undefined,
+        productWorkspaceId: currentPlannerSessionId ?? undefined,
+        sixViewVersionId: confirmedSixViewVersion?.id,
         generationStage: 'draft',
         ...(plannerMode === 'aplus' ? { aPlusType } : {}),
         ...(usesStyleReferenceForActivePlan ? selectedStyleReferenceCategory : {}),
@@ -1300,13 +1370,103 @@ export default function AmazonPlanner() {
     return true
   }
 
+  const getConfirmedSixViewInputImage = async () => {
+    if (!confirmedSixViewVersion) return null
+    const dataUrl = await ensureImageCached(confirmedSixViewVersion.imageId)
+    if (!dataUrl) return null
+    return { id: confirmedSixViewVersion.imageId, dataUrl }
+  }
+
+  const useSixViewRepairPreset = (preset: (typeof SIX_VIEW_REPAIR_PRESETS)[number]) => {
+    setSixViewInstruction((current) => current.trim() ? `${current.trim()}\n${preset.prompt}` : preset.prompt)
+  }
+
+  const generateSixViewVersion = async () => {
+    if (!currentWorkspace) return
+    if (!inputImages.length && !latestSixViewVersion) {
+      showToast('请先上传产品参考图', 'error')
+      return
+    }
+
+    const imageProfile = getImageProfileForSubmit()
+    if (!imageProfile) return
+
+    const styleImageProfile = createOpenAIInputImageProfile(imageProfile)
+    const imageRequestSettings = createImageRequestSettings(styleImageProfile)
+    const sourceImages: InputImage[] = []
+    if (latestSixViewVersion) {
+      const dataUrl = await ensureImageCached(latestSixViewVersion.imageId)
+      if (dataUrl) sourceImages.push({ id: latestSixViewVersion.imageId, dataUrl })
+    }
+    sourceImages.push(...inputImages.filter((image) => !sourceImages.some((source) => source.id === image.id)))
+
+    setIsGeneratingSixView(true)
+    setSixViewError('')
+    const prompt = buildStandardSixViewPrompt(createPlannerSessionSnapshot(), sixViewInstruction)
+    const sixViewParams = normalizeParamsForSettings({
+      size: '1024x1024',
+      quality: AMAZON_DRAFT_QUALITY,
+      output_format: DEFAULT_PARAMS.output_format,
+      output_compression: DEFAULT_PARAMS.output_compression,
+      moderation: params.moderation,
+      n: 1,
+    }, imageRequestSettings, { hasInputImages: sourceImages.length > 0 })
+    try {
+      const result = await callImageApi({
+        settings: imageRequestSettings,
+        prompt,
+        params: sixViewParams,
+        inputImageDataUrls: sourceImages.map((image) => image.dataUrl),
+      })
+      const dataUrl = result.images[0]
+      if (!dataUrl) throw new Error('标准 6 视图接口没有返回图片')
+      const imageId = await storeImage(dataUrl, 'generated')
+      const version: ProductWorkspaceSixViewVersion = createProductWorkspaceSixViewVersion({
+        id: `six-view-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        imageId,
+        prompt,
+        inputImageIds: sourceImages.map((image) => image.id),
+        createdAt: Date.now(),
+      })
+      await savePlannerSession({
+        sixViewVersions: [...(currentWorkspace.sixViewVersions ?? []), version],
+      })
+      setSixViewInstruction('')
+      showToast('标准 6 视图已生成，请检查后设为已确认 6 视图', 'success')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setSixViewError(message)
+      showToast('标准 6 视图生成失败', 'error')
+    } finally {
+      setIsGeneratingSixView(false)
+    }
+  }
+
+  const confirmSixViewVersion = (version: ProductWorkspaceSixViewVersion) => {
+    updateCurrentPlannerSession({ confirmedSixViewVersionId: version.id })
+    showToast('已确认标准 6 视图', 'success')
+  }
+
   const applyAndSubmit = () => {
+    if (!confirmedSixViewVersion) {
+      showToast('请先确认标准 6 视图', 'error')
+      return
+    }
     if (!applyPrompt({ requireStyle: true })) return
     const imageProfile = getImageProfileForSubmit()
     if (!imageProfile) return
     const submittedActionKey = currentActionKey
     queueMicrotask(() => {
-      void submitTask({ apiProfileId: imageProfile.id }).then((submitted) => {
+      const originalInputImages = useStore.getState().inputImages
+      void getConfirmedSixViewInputImage().then((sixViewInput) => {
+        if (!sixViewInput) {
+          showToast('已确认的标准 6 视图不存在，请重新生成', 'error')
+          return false
+        }
+        setInputImages([sixViewInput])
+        return submitTask({ apiProfileId: imageProfile.id })
+      }).then((submitted) => {
+        setInputImages(originalInputImages)
         if (submitted) markActionProgress(submittedActionKey, 'submitted')
       })
     })
@@ -1332,6 +1492,10 @@ export default function AmazonPlanner() {
       showToast('请先完成 AI 策划', 'error')
       return
     }
+    if (!confirmedSixViewVersion) {
+      showToast('请先确认标准 6 视图', 'error')
+      return
+    }
     if (seriesStyleReferenceNeeded && !selectedStyleReferenceImageId) {
       showToast('请先生成并选择一张风格参考板', 'error')
       return
@@ -1343,6 +1507,11 @@ export default function AmazonPlanner() {
 
     const imageProfile = getImageProfileForSubmit()
     if (!imageProfile) return
+    const sixViewInput = await getConfirmedSixViewInputImage()
+    if (!sixViewInput) {
+      showToast('已确认的标准 6 视图不存在，请重新生成', 'error')
+      return
+    }
 
     const plannerBatchId = createPlannerBatchId()
     const batchStartedAt = Date.now()
@@ -1357,7 +1526,7 @@ export default function AmazonPlanner() {
     setIsBatchSubmitting(true)
     setBatchSubmittedCount(0)
     for (const job of jobs) {
-      setInputImages(batchInputImages)
+      setInputImages([sixViewInput])
       setPrompt(job.prompt)
       setPendingTaskCategory({
         mode: 'prompt-match',
@@ -1576,7 +1745,6 @@ export default function AmazonPlanner() {
     setPlannerError('')
     resetActionProgress()
     void savePlannerSession({
-      id: createPlannerSessionId(),
       mode: result.mode,
       draft: toSessionDraft(nextDraft),
       seriesStyleGuides: nextSeriesStyleGuides,
@@ -1593,7 +1761,7 @@ export default function AmazonPlanner() {
       selectedDspPlanIndex: nextSelectedDspPlanIndex,
       actionProgress: {},
     }).catch((err) => {
-      showToast(`策划历史保存失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+      showToast(`工作区保存失败：${err instanceof Error ? err.message : String(err)}`, 'error')
     })
     showToast(`${sourceLabel}已生成 ${result.mode === 'aplus' ? result.aPlusPlans.length : result.mode === 'dsp' ? result.dspPlans.length : result.plans.length} 张图片策划`, 'success')
   }
@@ -1824,6 +1992,28 @@ export default function AmazonPlanner() {
     setLightboxImageId(imageId, styleReferenceLightboxImageIds.length ? styleReferenceLightboxImageIds : [imageId])
   }
 
+  const createProductWorkspace = async () => {
+    const workspaceId = newWorkspaceId.trim()
+    if (!workspaceId) {
+      showToast('请输入工作区 ID', 'error')
+      return
+    }
+    const workspace = createPlannerSessionSnapshot({
+      id: workspaceId,
+      title: newWorkspaceTitle.trim() || workspaceId,
+      referenceImageIds: [],
+      sixViewVersions: [],
+      confirmedSixViewVersionId: null,
+      createdAt: Date.now(),
+    })
+    await putProductWorkspace(workspace)
+    upsertPlannerSessionList(workspace)
+    setCurrentPlannerSessionId(workspace.id)
+    setNewWorkspaceId('')
+    setNewWorkspaceTitle('')
+    showToast('工作区已新建', 'success')
+  }
+
   const selectPlan = (index: number) => {
     const plan = imagePlans[index]
     setSelectedPlanIndex(plan ? index : null)
@@ -1907,7 +2097,7 @@ export default function AmazonPlanner() {
     resetActionProgress()
   }
 
-  const restorePlannerSession = async (session: AmazonPlannerSession) => {
+  const restorePlannerSession = async (session: ProductWorkspace) => {
     const restoredReferences = []
     for (const imageId of session.referenceImageIds) {
       const dataUrl = await ensureImageCached(imageId)
@@ -1968,22 +2158,22 @@ export default function AmazonPlanner() {
     setSelectedDspPlanIndex(session.selectedDspPlanIndex != null && session.dspPlans?.[session.selectedDspPlanIndex] ? session.selectedDspPlanIndex : null)
     setPlannerError('')
     setStyleError(session.selectedStyleIndex != null && !selectedStyleRestored
-      ? '历史中的风格板图片不存在，请重新生成并选择风格板。策划文本已恢复。'
+      ? '工作区中的风格板图片不存在，请重新生成并选择风格板。策划文本已恢复。'
       : '')
     setCurrentPlannerSessionId(session.id)
     setShowPlannerHistory(false)
     resetActionProgress(session.actionProgress ?? {})
-    showToast('策划历史已恢复', 'success')
+    showToast('工作区已打开', 'success')
   }
 
   const removePlannerSession = async (sessionId: string) => {
     try {
-      await deleteAmazonPlannerSession(sessionId)
+      await deleteProductWorkspace(sessionId)
       setPlannerSessions((current) => current.filter((session) => session.id !== sessionId))
       if (currentPlannerSessionId === sessionId) setCurrentPlannerSessionId(null)
-      showToast('策划历史已删除', 'success')
+      showToast('工作区已删除', 'success')
     } catch (err) {
-      showToast(`策划历史删除失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+      showToast(`工作区删除失败：${err instanceof Error ? err.message : String(err)}`, 'error')
     }
   }
 
@@ -2112,6 +2302,84 @@ export default function AmazonPlanner() {
     handlePrimarySubmitAction()
   }
 
+  if (!currentPlannerSessionId) {
+    return (
+      <section className="mt-4 overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-white/[0.08] dark:bg-gray-900">
+        <div className="border-b border-gray-200 p-4 dark:border-white/[0.08] sm:p-5">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">商品工作区</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            先新建或打开工作区，再生产 Listing 图 / A+ 图 / DSP 图。标准 6 视图确认前，后续生图会保持禁用。
+          </p>
+        </div>
+        <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(320px,1.1fr)]">
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/[0.08] dark:bg-gray-950">
+            <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">新建工作区</div>
+            <div className="mt-3 grid gap-3">
+              <label>
+                <span className={LABEL_CLASS}>工作区 ID</span>
+                <input
+                  value={newWorkspaceId}
+                  onChange={(event) => setNewWorkspaceId(event.target.value)}
+                  className={FIELD_CLASS}
+                  placeholder="例如 ASIN、型号或任意字符串"
+                />
+              </label>
+              <label>
+                <span className={LABEL_CLASS}>工作区标题</span>
+                <input
+                  value={newWorkspaceTitle}
+                  onChange={(event) => setNewWorkspaceTitle(event.target.value)}
+                  className={FIELD_CLASS}
+                  placeholder="可选，默认使用工作区 ID"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void createProductWorkspace()}
+                className="inline-flex h-10 items-center justify-center rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white transition hover:bg-blue-500"
+              >
+                新建工作区
+              </button>
+            </div>
+          </div>
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/[0.08] dark:bg-gray-950">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div>
+                <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">打开工作区</div>
+                <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">工作区保存商品信息、原始参考图、标准 6 视图版本和策划进度。</div>
+              </div>
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
+                {plannerSessions.length}
+              </span>
+            </div>
+            {plannerSessions.length > 0 ? (
+              <div className="grid gap-2">
+                {plannerSessions.map((session) => (
+                  <button
+                    key={session.id}
+                    type="button"
+                    onClick={() => void restorePlannerSession(session)}
+                    className="rounded-lg border border-gray-200 bg-white p-3 text-left transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-900 dark:hover:bg-white/[0.05]"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="min-w-0 truncate text-sm font-semibold text-gray-900 dark:text-gray-100">{session.title}</span>
+                      <span className="shrink-0 text-[11px] text-gray-400">{formatPlannerSessionTime(session.updatedAt)}</span>
+                    </div>
+                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{session.id}</div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed border-gray-200 bg-white px-3 py-6 text-center text-xs text-gray-500 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-400">
+                暂无工作区，请先新建。
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    )
+  }
+
   return (
     <section data-no-drag-select data-onboarding-target="planner-panel" className="mt-6 rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-white/[0.08] dark:bg-gray-900">
       <div className="border-b border-gray-200 px-4 py-4 dark:border-white/[0.08] sm:px-5">
@@ -2119,6 +2387,8 @@ export default function AmazonPlanner() {
           <div>
             <h2 className="text-lg font-bold tracking-tight text-gray-900 dark:text-gray-50">亚马逊图片工作台</h2>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+              <span>商品工作区：{currentWorkspace?.id ?? currentPlannerSessionId}</span>
+              <span className="h-1 w-1 rounded-full bg-gray-300 dark:bg-gray-600" />
               <span>OpenAI gpt-image-2</span>
               <span className="h-1 w-1 rounded-full bg-gray-300 dark:bg-gray-600" />
               <span>2K / 4K</span>
@@ -2143,6 +2413,20 @@ export default function AmazonPlanner() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void savePlannerSession().then(() => showToast('工作区已保存', 'success'))}
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-white/[0.06]"
+            >
+              保存工作区
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentPlannerSessionId(null)}
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 transition hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-white/[0.06]"
+            >
+              关闭工作区
+            </button>
             <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">最终清晰度</span>
             <div className="inline-flex rounded-xl border border-gray-200 bg-gray-100 p-1 dark:border-white/[0.08] dark:bg-white/[0.04]">
               {(['1k', '2k', '4k'] as const).map((item) => (
@@ -2162,7 +2446,7 @@ export default function AmazonPlanner() {
               className={`inline-flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-medium transition ${showPlannerHistory ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50 dark:border-white/[0.08] dark:bg-gray-950 dark:text-gray-200 dark:hover:bg-white/[0.06]'}`}
             >
               <HistoryIcon className="h-4 w-4" />
-              策划历史
+              工作区
               {plannerSessions.length > 0 && (
                 <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
                   {plannerSessions.length}
@@ -2184,9 +2468,9 @@ export default function AmazonPlanner() {
           <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/[0.08] dark:bg-gray-950">
             <div className="mb-2 flex items-center justify-between gap-2">
               <div>
-                <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">策划历史</div>
+                <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">工作区</div>
                 <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                  保存在当前账号中，旧版浏览器历史会自动导入；恢复后会带回 Listing、策划卡片、风格候选和已选风格板。
+                  保存在当前账号中；打开后会带回商品信息、原始参考图、标准 6 视图、策划卡片、风格候选和已选风格板。
                 </div>
               </div>
               <button
@@ -2224,12 +2508,12 @@ export default function AmazonPlanner() {
                         type="button"
                         onClick={() => {
                           void restorePlannerSession(session).catch((err) => {
-                            showToast(`策划历史恢复失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+                            showToast(`工作区打开失败：${err instanceof Error ? err.message : String(err)}`, 'error')
                           })
                         }}
                         className="inline-flex h-8 items-center rounded-lg bg-gray-900 px-3 text-xs font-semibold text-white transition hover:bg-gray-700 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200"
                       >
-                        恢复
+                        打开
                       </button>
                       <button
                         type="button"
@@ -2244,7 +2528,7 @@ export default function AmazonPlanner() {
               </div>
             ) : (
               <div className="rounded-lg border border-dashed border-gray-200 bg-white px-3 py-4 text-center text-xs text-gray-500 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-400">
-                暂无策划历史。AI 策划成功后会自动保存。
+                暂无工作区，请先新建。
               </div>
             )}
           </div>
@@ -2506,9 +2790,9 @@ export default function AmazonPlanner() {
                 <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">参考图</div>
                 <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
                   {inputImages.length > 0
-                    ? `${inputImages.length}/${API_MAX_IMAGES} 张产品参考图${usesStyleReferenceForActivePlan ? `；正式生成时另附 1 张隐藏风格板（实际 ${effectiveReferenceCount}/${API_MAX_IMAGES}）` : '，将随生成请求一起发送'}`
+                    ? `${inputImages.length}/${API_MAX_IMAGES} 张原始参考图，保存在工作区；后续生图默认只发送已确认 6 视图${usesStyleReferenceForActivePlan ? `，并另附 1 张隐藏风格板（实际 ${effectiveReferenceCount}/${API_MAX_IMAGES}）` : ''}`
                     : usesStyleReferenceForActivePlan
-                      ? `未上传产品参考图；正式生成时会附 1 张隐藏风格板`
+                      ? `未上传原始参考图；正式生成时会附 1 张隐藏风格板`
                       : '建议上传产品实拍、包装或结构参考图'}
                 </div>
               </div>
@@ -2544,6 +2828,18 @@ export default function AmazonPlanner() {
                     清空
                   </button>
                 )}
+              </div>
+            </div>
+
+            <div className="mt-3 rounded-lg border border-blue-100 bg-white px-3 py-2 dark:border-blue-400/20 dark:bg-gray-900">
+              <div className="text-xs font-semibold text-blue-700 dark:text-blue-200">一次性成功参考图</div>
+              <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                {SIX_VIEW_REFERENCE_GUIDANCE.map((item) => (
+                  <div key={item} className="flex gap-2 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />
+                    <span>{item}</span>
+                  </div>
+                ))}
               </div>
             </div>
 
@@ -2598,6 +2894,106 @@ export default function AmazonPlanner() {
 
             <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFileUpload} />
             <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFileUpload} />
+          </div>
+
+          <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/[0.08] dark:bg-gray-950">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">标准 6 视图</div>
+                <div className="mt-0.5 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                  后续生图默认只使用已确认 6 视图作为产品结构参考；原始参考图保存在工作区，不默认发送给生图接口。
+                </div>
+              </div>
+              <div className={`rounded-lg px-2 py-1 text-xs font-semibold ${confirmedSixViewVersion ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-400/10 dark:text-amber-200'}`}>
+                {confirmedSixViewVersion ? '已确认' : '未确认'}
+              </div>
+            </div>
+            <div className="mt-3 rounded-lg border border-amber-100 bg-white px-3 py-2 dark:border-amber-400/20 dark:bg-gray-900">
+              <div className="text-xs font-semibold text-amber-700 dark:text-amber-200">确认前检查</div>
+              <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                {SIX_VIEW_CONFIRMATION_CHECKS.map((item) => (
+                  <div key={item} className="flex gap-2 text-xs leading-relaxed text-gray-600 dark:text-gray-300">
+                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                    <span>{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-xs font-medium text-gray-500 dark:text-gray-400">快捷修正</span>
+              {SIX_VIEW_REPAIR_PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() => useSixViewRepairPreset(preset)}
+                  className="inline-flex h-8 items-center rounded-lg border border-gray-200 bg-white px-2.5 text-xs font-medium text-gray-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-200 dark:hover:border-blue-400/40 dark:hover:bg-blue-400/10 dark:hover:text-blue-100"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <textarea
+                value={sixViewInstruction}
+                onChange={(event) => setSixViewInstruction(event.target.value)}
+                className={`${FIELD_CLASS} min-h-[82px] resize-y`}
+                placeholder={latestSixViewVersion ? '如产品有变形、角度错误或细节缺失，在这里写修正要求后重新生成版本' : '可选：补充标准 6 视图生成要求'}
+              />
+              <button
+                type="button"
+                onClick={() => void generateSixViewVersion()}
+                disabled={isGeneratingSixView || (!inputImages.length && !latestSixViewVersion)}
+                className={`inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition ${isGeneratingSixView || (!inputImages.length && !latestSixViewVersion) ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-white/[0.06] dark:text-gray-600' : 'bg-gray-900 text-white hover:bg-gray-700 dark:bg-white dark:text-gray-950 dark:hover:bg-gray-200'}`}
+              >
+                <PhotoIcon className="h-4 w-4" />
+                {isGeneratingSixView ? '生成中...' : latestSixViewVersion ? '提示词编辑 6 视图' : '生成标准 6 视图'}
+              </button>
+            </div>
+            {sixViewError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs leading-relaxed text-red-800 dark:border-red-400/20 dark:bg-red-400/10 dark:text-red-200">
+                {sixViewError}
+              </div>
+            )}
+            {currentWorkspace?.sixViewVersions.length ? (
+              <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {currentWorkspace.sixViewVersions.map((version, index) => {
+                  const isConfirmed = confirmedSixViewVersion?.id === version.id
+                  return (
+                    <div key={version.id} className={`overflow-hidden rounded-xl border bg-white shadow-sm dark:bg-gray-900 ${isConfirmed ? 'border-emerald-400 ring-2 ring-emerald-500/15' : 'border-gray-200 dark:border-white/[0.08]'}`}>
+                      <button
+                        type="button"
+                        onClick={() => setLightboxImageId(version.imageId, currentWorkspace.sixViewVersions.map((item) => item.imageId))}
+                        className="block aspect-square w-full bg-gray-100 dark:bg-white/[0.04]"
+                      >
+                        {sixViewImageSrcById[version.imageId] ? (
+                          <img src={sixViewImageSrcById[version.imageId]} alt={`标准 6 视图版本 ${index + 1}`} className="h-full w-full object-contain" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">缩略图加载中...</div>
+                        )}
+                      </button>
+                      <div className="p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-gray-700 dark:text-gray-200">版本 {index + 1}</span>
+                          {isConfirmed && <span className="rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">已确认</span>}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => confirmSixViewVersion(version)}
+                          disabled={isConfirmed}
+                          className={`mt-2 inline-flex h-8 w-full items-center justify-center rounded-lg text-xs font-semibold transition ${isConfirmed ? 'cursor-default bg-emerald-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-500'}`}
+                        >
+                          {isConfirmed ? '已设为确认版本' : '设为已确认 6 视图'}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="mt-3 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-4 text-center text-xs text-gray-500 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-400">
+                请先根据原始参考图生成标准 6 视图。确认前，生成草稿和提交未提交草稿保持禁用。
+              </div>
+            )}
           </div>
 
           <div className="mt-5 grid gap-4 md:grid-cols-2">
@@ -2811,7 +3207,7 @@ export default function AmazonPlanner() {
                   const session = plannerSessions.find((item) => item.id === plannerSessionId)
                   if (session) {
                     void restorePlannerSession(session).catch((err) => {
-                      showToast(`策划历史恢复失败：${err instanceof Error ? err.message : String(err)}`, 'error')
+                      showToast(`工作区打开失败：${err instanceof Error ? err.message : String(err)}`, 'error')
                     })
                   }
                 }}
@@ -2894,7 +3290,7 @@ export default function AmazonPlanner() {
 
                   <div className={`rounded-lg border px-3 py-2 text-xs font-medium ${currentActionSubmitted ? 'border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-400/20 dark:bg-emerald-400/10 dark:text-emerald-200' : currentActionFilled ? 'border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200' : 'border-gray-200 bg-gray-50 text-gray-700 dark:border-white/[0.08] dark:bg-white/[0.04] dark:text-gray-200'}`}>
                     <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-blue-600 dark:text-blue-300">当前下一步</div>
-                    <div>{actionGuidance}</div>
+                    <div>{gatedActionGuidance}</div>
                     {mainStyleGuidance && (
                       <span className="mt-1 block text-[11px] font-normal opacity-80">{mainStyleGuidance}</span>
                     )}

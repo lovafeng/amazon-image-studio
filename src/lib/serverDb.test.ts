@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { clearAgentConversations, clearTasks, deleteAgentConversation, getAllAgentConversations, getAllAmazonPlannerSessions, getAllTasks, getImageThumbnail, putAgentConversation, putTask } from './db'
-import { DEFAULT_PARAMS, type AgentConversation, type AmazonPlannerSession, type StoredImageThumbnail, type TaskRecord } from '../types'
+import { clearAgentConversations, clearTasks, deleteAgentConversation, getAllAgentConversations, getAllAmazonPlannerSessions, getAllProductWorkspaces, getAllTasks, getImageThumbnail, putAgentConversation, putProductWorkspace, putTask } from './db'
+import { DEFAULT_PARAMS, type AgentConversation, type AmazonPlannerSession, type ProductWorkspace, type StoredImageThumbnail, type TaskRecord } from '../types'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -62,6 +62,59 @@ function amazonPlannerSession(overrides: Partial<AmazonPlannerSession> = {}): Am
     selectedDspPlanIndex: null,
     createdAt: 1,
     updatedAt: 2,
+    ...overrides,
+  }
+}
+
+function productWorkspace(overrides: Partial<ProductWorkspace> = {}): ProductWorkspace {
+  return {
+    id: 'B0WORKSPACE',
+    title: 'Tumbler Workspace',
+    mode: 'listing',
+    aPlusType: 'standard-large',
+    resolution: '2k',
+    listingText: 'Title: Tumbler',
+    referenceImageIds: ['ref-a'],
+    draft: {
+      kind: 'main',
+      productTitle: 'Tumbler',
+      category: 'Kitchen',
+      brand: '',
+      color: '',
+      material: '',
+      audience: '',
+      sellingPoints: '',
+      packageIncludes: '',
+      scene: '',
+      forbidden: '',
+    },
+    sixViewVersions: [{
+      id: 'six-view-a',
+      imageId: 'six-view-image-a',
+      prompt: 'standard six view',
+      inputImageIds: ['ref-a'],
+      createdAt: 2,
+    }],
+    confirmedSixViewVersionId: 'six-view-a',
+    seriesStyleGuides: {
+      listing: '',
+      aplus: '',
+      dsp: '',
+    },
+    styleCandidates: [],
+    styleImages: [],
+    selectedStyleIndex: null,
+    selectedStyleReference: null,
+    styleDensityMode: 'rich',
+    imagePlans: [],
+    aPlusPlans: [],
+    dspPlans: [],
+    selectedPlanIndex: null,
+    selectedAPlusPlanIndex: null,
+    selectedDspPlanIndex: null,
+    actionProgress: {},
+    createdAt: 1,
+    updatedAt: 3,
     ...overrides,
   }
 }
@@ -235,6 +288,35 @@ describe('server backed db client', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/agent-conversations', {
       method: 'DELETE',
       credentials: 'same-origin',
+    })
+  })
+
+  it('loads product workspaces from the server API', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify([productWorkspace()]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    await expect(getAllProductWorkspaces()).resolves.toEqual([productWorkspace()])
+    expect(fetch).toHaveBeenCalledWith('/api/product-workspaces', { credentials: 'same-origin' })
+  })
+
+  it('stores a product workspace through the server API', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ id: 'B0WORKSPACE' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    await expect(putProductWorkspace(productWorkspace())).resolves.toBe('B0WORKSPACE')
+    expect(fetchMock).toHaveBeenCalledWith('/api/product-workspaces/B0WORKSPACE', {
+      method: 'PUT',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(productWorkspace()),
     })
   })
 

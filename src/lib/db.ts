@@ -1,4 +1,4 @@
-import type { AgentConversation, AmazonPlannerSession, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
+import type { AgentConversation, AmazonPlannerSession, ProductWorkspace, TaskRecord, StoredImage, StoredImageThumbnail } from '../types'
 
 const DB_NAME = 'amazon-image-studio'
 const DB_VERSION = 3
@@ -170,6 +170,24 @@ export function deleteAmazonPlannerSession(id: string): Promise<undefined> {
 
 export function clearAmazonPlannerSessions(): Promise<undefined> {
   return apiDelete('/amazon-planner-sessions')
+}
+
+// ===== Product workspaces =====
+
+export function getAllProductWorkspaces(): Promise<ProductWorkspace[]> {
+  return apiJson('/product-workspaces')
+}
+
+export function putProductWorkspace(workspace: ProductWorkspace): Promise<IDBValidKey> {
+  return apiPut<{ id: string }>(`/product-workspaces/${encodeURIComponent(workspace.id)}`, workspace).then((result) => result.id)
+}
+
+export function deleteProductWorkspace(id: string): Promise<undefined> {
+  return apiDelete(`/product-workspaces/${encodeURIComponent(id)}`)
+}
+
+export function clearProductWorkspaces(): Promise<undefined> {
+  return apiDelete('/product-workspaces')
 }
 
 // ===== Images =====

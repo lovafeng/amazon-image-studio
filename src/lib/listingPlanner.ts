@@ -312,7 +312,9 @@ const CJK_ON_IMAGE_TEXT_RE = /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud
 const STYLE_REFERENCE_GUARD = [
   'Style reference rule:',
   '- Use the Series style guide text for color palette, lighting, contrast, material finish, typography feel, and overall visual polish.',
+  '- Treat every other input image as style-only unless it is explicitly identified as the six-view product reference.',
   '- Do not copy any placeholder words, fixed layout, color swatch positions, exact composition, product arrangement, product count, props, scene, or information density from the style reference board.',
+  '- If a style board contains a product or product-like object, ignore its product geometry, silhouette, handles, controls, vents, lid, proportions, and accessories.',
   '- Follow the image task, layout density, and negative prompt sections for the actual content and arrangement.',
 ].join('\n')
 
@@ -336,7 +338,20 @@ const STYLE_REFERENCE_BOARD_REQUIREMENTS = [
   '- The board must visibly include typography samples: a large headline, a smaller subheading, numeric callout samples, short label/caption samples, and icon/callout treatment.',
   '- Use generic English placeholder typography only, such as PRODUCT TITLE, KEY BENEFIT, DETAIL CALLOUT, 01, 02, 03. Do not use Chinese characters, real product claims, brand logos, Amazon marks, prices, promotions, QR codes, contact details, or external URLs.',
   '- The board must visibly include color palette swatches, background/material texture samples, lighting/material samples, and a small product-finish or product-detail style sample derived from the uploaded product references.',
+  '- Do not include a full product hero render, full product silhouette, final product composition, or product-count example. Use only cropped material/detail samples when product evidence is needed.',
   '- Keep this as a reusable style guide image for later generations, with clear examples of font feeling, color tone, lighting, material finish, icon/callout language, and visual polish.',
+].join('\n')
+
+const SIX_VIEW_REFERENCE_GUARD = [
+  'Product reference guard:',
+  '- The first input image is the confirmed standardized six-view product reference for this workspace.',
+  '- Preserve the exact product geometry, proportions, silhouette, color, material finish, openings, handles, buttons, seams, and accessories shown in the six-view reference.',
+  '- Preserve real on-product brand logos, wordmarks, model labels, printed marks, decals, and control-panel marks exactly as shown in the six-view reference.',
+  '- When the generated image shows a front or top control-panel surface, keep the real brand wordmark visible on that surface.',
+  '- If the image task asks for a movable or temporary state such as open lid, ice inside, liquid, contents, accessories, hand-free use, or a lifestyle scene, change only that movable/temporary state. Keep the permanent body shape, depth, width, height, side panels, vents, feet, control panel, lid hardware, handles, and seams locked to the six-view reference.',
+  '- Do not invent, bend, warp, tilt, or redesign the product. Do not mix product shapes from other references.',
+  '- Treat every other input image as style-only. Never use a style board or scene reference to alter the product geometry.',
+  '- If a negative prompt mentions logos, remove only floating logo overlays, platform logos, third-party logos, extra marketing badges, and added corner marks. Do not remove real on-product brand marks.',
 ].join('\n')
 
 export function isAmazonListingMainSlot(slot?: string | null): boolean {
@@ -357,6 +372,7 @@ function formatPromptBlock(options: {
   negativePrompt?: string
   seriesStyleGuide?: string | null
   styleReferenceAttached?: boolean
+  sixViewReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
 }) {
   const sections = [
@@ -368,6 +384,7 @@ function formatPromptBlock(options: {
     options.negativePrompt?.trim()
       ? `Negative prompt:\n${options.negativePrompt.trim()}`
       : '',
+    options.sixViewReferenceAttached ? SIX_VIEW_REFERENCE_GUARD : '',
     options.styleReferenceAttached ? STYLE_REFERENCE_GUARD : '',
   ].filter(Boolean)
 
@@ -377,6 +394,7 @@ function formatPromptBlock(options: {
 export function buildAmazonPlanPrompt(plan: Pick<AmazonImagePlan, 'prompt' | 'negativePrompt'> & {
   seriesStyleGuide?: string | null
   styleReferenceAttached?: boolean
+  sixViewReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
 }): string {
   return formatPromptBlock(plan)
@@ -550,6 +568,7 @@ export function withDspGenerationSizes(plans: AmazonDspPlan[], tier: SizeTier): 
 export function buildAmazonAPlusPlanPrompt(plan: Pick<AmazonAPlusPlan, 'prompt' | 'negativePrompt'> & {
   seriesStyleGuide?: string | null
   styleReferenceAttached?: boolean
+  sixViewReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
 }): string {
   return formatPromptBlock(plan)
@@ -558,6 +577,7 @@ export function buildAmazonAPlusPlanPrompt(plan: Pick<AmazonAPlusPlan, 'prompt' 
 export function buildAmazonDspPlanPrompt(plan: Pick<AmazonDspPlan, 'prompt' | 'negativePrompt'> & {
   seriesStyleGuide?: string | null
   styleReferenceAttached?: boolean
+  sixViewReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
 }): string {
   return formatPromptBlock(plan)

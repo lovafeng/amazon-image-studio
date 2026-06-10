@@ -48,6 +48,21 @@ function session(overrides: Partial<AmazonPlannerSession>): AmazonPlannerSession
 }
 
 describe('style reference library', () => {
+  it('only includes references from the same product and planner mode', () => {
+    const items = buildStyleReferenceLibrary({
+      sessions: [
+        session({ id: 'other-product', mode: 'listing', draft: draft('Other Product'), updatedAt: 10, styleImages: [{ candidateIndex: 0, imageId: 'style-other-product' }] }),
+        session({ id: 'other-mode', mode: 'dsp', draft: draft('ThermoMaven Probe'), updatedAt: 9, styleImages: [{ candidateIndex: 0, imageId: 'style-other-mode' }] }),
+        session({ id: 'same-product-mode', mode: 'listing', draft: draft('ThermoMaven Probe'), updatedAt: 8, styleImages: [{ candidateIndex: 1, imageId: 'style-same' }] }),
+      ],
+      currentMode: 'listing',
+      productTitle: 'ThermoMaven Probe',
+    })
+
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({ imageId: 'style-same', plannerSessionId: 'same-product-mode' })
+  })
+
   it('prioritizes same product and mode references', () => {
     const items = buildStyleReferenceLibrary({
       sessions: [

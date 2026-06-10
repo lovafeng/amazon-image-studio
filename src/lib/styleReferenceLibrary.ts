@@ -41,6 +41,10 @@ export function buildStyleReferenceLibrary(options: {
 
   for (const session of options.sessions) {
     const productTitle = session.draft.productTitle.trim() || session.title
+    const productRank = getProductRank(productTitle, options.productTitle)
+    const modeRank = getModeRank(session.mode, options.currentMode)
+    if (productRank !== 0 || modeRank !== 0) continue
+
     for (const styleImage of session.styleImages) {
       const imageId = styleImage.imageId?.trim()
       const candidate = getStyleCandidate(session, styleImage.candidateIndex)
@@ -56,7 +60,7 @@ export function buildStyleReferenceLibrary(options: {
         productTitle,
         mode: session.mode,
         updatedAt: session.updatedAt,
-        rank: getProductRank(productTitle, options.productTitle) * 10 + getModeRank(session.mode, options.currentMode),
+        rank: 0,
       })
     }
   }

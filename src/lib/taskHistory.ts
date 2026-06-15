@@ -1,4 +1,4 @@
-import { DEFAULT_PARAMS, type HistoryAspectFilter, type HistoryWorkflowFilter, type TaskAspect, type TaskRecord, type TaskWorkflow } from '../types'
+import { DEFAULT_PARAMS, type HistoryAspectFilter, type HistoryImageCategoryFilter, type HistoryWorkflowFilter, type TaskAspect, type TaskRecord, type TaskWorkflow } from '../types'
 
 export const ALL_PRODUCT_FILTER = ''
 export const UNCATEGORIZED_PRODUCT_FILTER = '__uncategorized_product__'
@@ -25,6 +25,7 @@ export interface TaskHistoryFilters {
   filterProductTitle: string
   filterWorkflow: HistoryWorkflowFilter
   filterAspect: HistoryAspectFilter
+  filterImageCategory: HistoryImageCategoryFilter
   filterProductWorkspaceId?: string
 }
 
@@ -108,6 +109,18 @@ function inferWorkflow(task: TaskRecord): TaskWorkflow {
   return 'gallery'
 }
 
+function getBaseTaskImageCategory(task: TaskRecord): Exclude<HistoryImageCategoryFilter, 'all' | 'draft' | 'final'> {
+  const category = getTaskHistoryCategory(task)
+  if (category.workflow === 'amazon-listing') {
+    return category.amazonSlot.trim().toUpperCase() === 'MAIN' ? 'main' : 'listing-secondary'
+  }
+  if (category.workflow === 'amazon-aplus') return 'aplus'
+  if (category.workflow === 'amazon-dsp') return 'dsp'
+  if (category.workflow === 'agent') return 'agent'
+  if (category.workflow === 'gallery') return 'gallery'
+  return 'unknown'
+}
+
 export function getTaskHistoryCategory(task: TaskRecord): TaskHistoryCategory {
   const hasExplicitProductTitle = Boolean(
     task.category && Object.prototype.hasOwnProperty.call(task.category, 'productTitle'),
@@ -144,6 +157,35 @@ export function getTaskGenerationStageLabel(task: Pick<TaskRecord, 'category'>) 
   if (task.category?.generationStage === 'draft') return '草稿'
   if (task.category?.generationStage === 'final') return '高清'
   return ''
+}
+
+export function getImageCategoryFilterLabel(category: HistoryImageCategoryFilter) {
+  switch (category) {
+    case 'main':
+      return '主图'
+    case 'listing-secondary':
+      return 'Listing 附图'
+    case 'aplus':
+      return 'A+ 模块'
+    case 'dsp':
+      return 'DSP 素材'
+    case 'draft':
+      return '草稿'
+    case 'final':
+      return '高清'
+    case 'gallery':
+      return '普通生图'
+    case 'agent':
+      return 'Agent 图片'
+    case 'unknown':
+      return '未知类别'
+    default:
+      return '全部类别'
+  }
+}
+
+export function getTaskImageCategoryLabel(task: TaskRecord) {
+  return getImageCategoryFilterLabel(getBaseTaskImageCategory(task))
 }
 
 export function getAspectLabel(aspect: TaskAspect) {
@@ -205,6 +247,11 @@ export function matchesTaskHistoryFilters(task: TaskRecord, filters: TaskHistory
 
   if (filters.filterWorkflow !== 'all' && category.workflow !== filters.filterWorkflow) return false
   if (filters.filterAspect !== 'all' && category.aspect !== filters.filterAspect) return false
+  if (filters.filterImageCategory === 'draft' || filters.filterImageCategory === 'final') {
+    if (task.category?.generationStage !== filters.filterImageCategory) return false
+  } else if (filters.filterImageCategory !== 'all' && getBaseTaskImageCategory(task) !== filters.filterImageCategory) {
+    return false
+  }
 
   const query = filters.searchQuery.trim().toLowerCase()
   if (!query) return true
@@ -215,6 +262,7 @@ export function matchesTaskHistoryFilters(task: TaskRecord, filters: TaskHistory
     JSON.stringify(task.actualParams ?? {}),
     category.productTitle,
     getWorkflowLabel(category.workflow),
+    getTaskImageCategoryLabel(task),
     getTaskGenerationStageLabel(task),
     getAspectLabel(category.aspect),
     category.amazonSlot,

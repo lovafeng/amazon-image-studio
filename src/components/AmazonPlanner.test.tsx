@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import amazonPlannerSource from './AmazonPlanner.tsx?raw'
-import AmazonPlanner, { formatPlannerElapsedLabel, getPlannerRunningMessage, getStyleGenerationStatusText } from './AmazonPlanner'
+import AmazonPlanner, { formatPlannerElapsedLabel, getPlannerRunningMessage, getSubmittedReferenceImageCount, getStyleGenerationStatusText } from './AmazonPlanner'
 
 describe('AmazonPlanner', () => {
   it('renders DSP as a first-class planner mode', () => {
@@ -195,11 +195,12 @@ describe('AmazonPlanner', () => {
     expect(amazonPlannerSource).not.toContain('策划历史')
   })
 
-  it('renders the mandatory standard six-view step', () => {
-    expect(amazonPlannerSource).toContain('标准 6 视图')
-    expect(amazonPlannerSource).toContain('生成标准 6 视图')
-    expect(amazonPlannerSource).toContain('设为已确认 6 视图')
-    expect(amazonPlannerSource).toContain('后续生图默认只使用已确认 6 视图作为产品结构参考')
+  it('uses product structure references instead of a mandatory six-view step', () => {
+    expect(amazonPlannerSource).toContain('结构参考图')
+    expect(amazonPlannerSource).toContain('后续生图直接发送这些参考图')
+    expect(amazonPlannerSource).toContain('只能复用用户提供的视角或对称反转视角')
+    expect(amazonPlannerSource).toContain('hasStructureReferences')
+    expect(amazonPlannerSource).not.toContain('标准 6 视图确认前，后续生图会保持禁用')
   })
 
   it('surfaces six-view upload guidance, confirmation checks and quick repair prompts', () => {
@@ -220,11 +221,55 @@ describe('AmazonPlanner', () => {
     expect(amazonPlannerSource).toContain('锁定可动结构')
   })
 
-  it('gates draft generation on a confirmed six-view reference', () => {
-    expect(amazonPlannerSource).toContain('confirmedSixViewVersion')
-    expect(amazonPlannerSource).toContain('请先确认标准 6 视图')
-    expect(amazonPlannerSource).toContain('!confirmedSixViewVersion')
-    expect(amazonPlannerSource).toContain('sixViewReferenceAttached: Boolean(confirmedSixViewVersion)')
+  it('shows enlarged side, top and bottom crops for every six-view version before confirmation', () => {
+    expect(amazonPlannerSource).toContain('第 3 格左侧视放大')
+    expect(amazonPlannerSource).toContain('第 4 格右侧视放大')
+    expect(amazonPlannerSource).toContain('第 5 格俯视放大')
+    expect(amazonPlannerSource).toContain('第 6 格底视放大')
+    expect(amazonPlannerSource).toContain('objectPosition: SIX_VIEW_CELL_CROP_STYLES.leftSide')
+    expect(amazonPlannerSource).toContain('objectPosition: SIX_VIEW_CELL_CROP_STYLES.rightSide')
+    expect(amazonPlannerSource).toContain('objectPosition: SIX_VIEW_CELL_CROP_STYLES.top')
+    expect(amazonPlannerSource).toContain('objectPosition: SIX_VIEW_CELL_CROP_STYLES.bottom')
+    expect(amazonPlannerSource).not.toContain('mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3')
+  })
+
+  it('gates draft generation on uploaded structure references instead of confirmed six-view versions', () => {
+    expect(amazonPlannerSource).toContain('const structureReferenceImageIds = currentWorkspaceReferenceImageIds.length ? currentWorkspaceReferenceImageIds : inputImageIds')
+    expect(amazonPlannerSource).toContain('const hasStructureReferences = structureReferenceImageIds.length > 0')
+    expect(amazonPlannerSource).toContain('structureReferenceAttached: hasStructureReferences')
+    expect(amazonPlannerSource).toContain('const getStructureImagesForSubmit = async () => {')
+    expect(amazonPlannerSource).toContain('submitTask({ apiProfileId: imageProfile.id, inputImages: structureInputImages })')
+    expect(amazonPlannerSource).toContain('submitDisabled = actionDisabled || styleReferenceLimitExceeded || !hasStructureReferences')
+    expect(amazonPlannerSource).toContain('batchSubmitDisabled = isBatchSubmitting || !hasPlanOptions || isPlanning || isGeneratingStyleImages || !hasStructureReferences')
+    expect(amazonPlannerSource).toContain('请先上传产品结构参考图')
+    expect(amazonPlannerSource).not.toContain('submitDisabled = actionDisabled || styleReferenceLimitExceeded || !confirmedSixViewVersion')
+    expect(amazonPlannerSource).not.toContain('setInputImages([sixViewInput])')
+  })
+
+  it('counts submitted structure and style references', () => {
+    expect(getSubmittedReferenceImageCount({
+      sourceImageIds: ['ref-a', 'ref-b'],
+      usesStyleReference: true,
+      styleReferenceImageId: 'style-board',
+    })).toBe(3)
+
+    expect(getSubmittedReferenceImageCount({
+      sourceImageIds: ['ref-a', 'style-board'],
+      usesStyleReference: true,
+      styleReferenceImageId: 'style-board',
+    })).toBe(2)
+  })
+
+  it('clears optional six-view confirmation when structure references change without blocking draft generation', () => {
+    expect(amazonPlannerSource).toContain("const hasConfirmedSixViewVersionIdOverride = Object.prototype.hasOwnProperty.call(overrides, 'confirmedSixViewVersionId')")
+    expect(amazonPlannerSource).toContain('confirmedSixViewVersionId: hasConfirmedSixViewVersionIdOverride ? overrides.confirmedSixViewVersionId ?? null : existing?.confirmedSixViewVersionId ?? null')
+    expect(amazonPlannerSource).toContain('const changedReferenceWorkspacePatch = (referenceImageIds: string[]): Partial<ProductWorkspace> => ({')
+    expect(amazonPlannerSource).toContain('confirmedSixViewVersionId: null')
+    expect(amazonPlannerSource).toContain('updateCurrentPlannerSession(changedReferenceWorkspacePatch(nextReferenceImageIds))')
+    expect(amazonPlannerSource).toContain('updateCurrentPlannerSession(changedReferenceWorkspacePatch([]))')
+    expect(amazonPlannerSource).toContain('updateCurrentPlannerSession(changedReferenceWorkspacePatch(useStore.getState().inputImages.map((image) => image.id)))')
+    expect(amazonPlannerSource).toContain('不影响后续草稿生成')
+    expect(amazonPlannerSource).not.toContain('请重新生成或重新确认标准 6 视图后再生图')
   })
 
   it('builds six-view generation inputs from the current workspace instead of global input images', () => {

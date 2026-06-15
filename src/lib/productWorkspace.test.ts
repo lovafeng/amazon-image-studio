@@ -122,6 +122,10 @@ describe('product workspace six-view helpers', () => {
     expect(prompt).toContain('right side view')
     expect(prompt).toContain('top view')
     expect(prompt).toContain('bottom view')
+    expect(prompt).toContain('Cell 3, the top-right left side view, must be a true orthographic side profile')
+    expect(prompt).toContain('Cell 4, the bottom-left right side view, must be the opposite true orthographic side profile')
+    expect(prompt).toContain('Do not turn either side view into a front-side, rear-side, top-side, or three-quarter perspective')
+    expect(prompt).toContain('handle-side details, hinges, knobs, side panels, vents, seams, feet, lips, and protruding parts')
     expect(prompt).toContain('Cell 5, the bottom-center top view, must be a true vertical overhead orthographic view')
     expect(prompt).toContain('front face height, rear face height, side wall height')
     expect(prompt).toContain('not a front-top, three-quarter, angled, or perspective view')
@@ -145,6 +149,24 @@ describe('product workspace six-view helpers', () => {
     expect(prompt).toContain('Treat original product reference photos as authoritative for true color, material finish, brand marks, and permanent geometry')
     expect(prompt).toContain('If a previous six-view candidate is supplied, use it only as a draft layout to correct')
     expect(prompt).not.toContain('badges, logos')
+  })
+
+  it('sanitizes non-product generation notes from six-view product facts', () => {
+    const prompt = buildStandardSixViewPrompt(workspace({
+      draft: {
+        ...workspace().draft,
+        sellingPoints: [
+          'Low, wide body ratio: length 49.95cm, width 39.4cm, height 25.7cm.',
+          '15 cooking functions including air fry and pizza. typhur dome advertisement featuring crispy food - DSP ad image plan "quiet 51db" Need final JSON no weird inserted text.',
+        ].join('\n'),
+      },
+    }))
+
+    expect(prompt).toContain('Low, wide body ratio: length 49.95cm, width 39.4cm, height 25.7cm.')
+    expect(prompt).toContain('15 cooking functions including air fry and pizza.')
+    expect(prompt).not.toContain('advertisement featuring')
+    expect(prompt).not.toContain('DSP ad image plan')
+    expect(prompt).not.toContain('Need final JSON')
   })
 
   it('creates immutable six-view versions', () => {
@@ -181,11 +203,10 @@ describe('product workspace six-view helpers', () => {
     ])
   })
 
-  it('selects six-view source images only from the current workspace', () => {
+  it('selects six-view source images only from original workspace references', () => {
     expect(getStandardSixViewSourceImageIds(workspace())).toEqual([
       'ref-a',
       'ref-b',
-      'six-view-image-b',
     ])
 
     expect(getStandardSixViewSourceImageIds(workspace({

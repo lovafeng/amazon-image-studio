@@ -312,7 +312,7 @@ const CJK_ON_IMAGE_TEXT_RE = /[\u3400-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud
 const STYLE_REFERENCE_GUARD = [
   'Style reference rule:',
   '- Use the Series style guide text for color palette, lighting, contrast, material finish, typography feel, and overall visual polish.',
-  '- Treat every other input image as style-only unless it is explicitly identified as the six-view product reference.',
+  '- Treat style reference boards as style-only; use product structure reference images, not style boards, for product geometry.',
   '- Do not copy any placeholder words, fixed layout, color swatch positions, exact composition, product arrangement, product count, props, scene, or information density from the style reference board.',
   '- If a style board contains a product or product-like object, ignore its product geometry, silhouette, handles, controls, vents, lid, proportions, and accessories.',
   '- Follow the image task, layout density, and negative prompt sections for the actual content and arrangement.',
@@ -342,19 +342,31 @@ const STYLE_REFERENCE_BOARD_REQUIREMENTS = [
   '- Keep this as a reusable style guide image for later generations, with clear examples of font feeling, color tone, lighting, material finish, icon/callout language, and visual polish.',
 ].join('\n')
 
-const SIX_VIEW_REFERENCE_GUARD = [
-  'Product reference guard:',
-  '- The first input image is the confirmed standardized six-view product reference for this workspace.',
-  '- Interpret the six-view reference as a product geometry blueprint, not as a scene or layout to copy. Do not render the six-panel grid in the final image.',
-  '- Use the front, back, left, right, top, and bottom cells together to reconstruct one physically consistent product. Preserve the exact product geometry, proportions, silhouette, color, material finish, openings, handles, buttons, seams, and accessories shown in the six-view reference.',
-  '- Keep body depth, side profile, top footprint, top curvature, rim/lip, bottom footprint, feet, vents, and handle projection consistent with the matching six-view cells.',
-  '- Preserve real on-product brand logos, wordmarks, model labels, printed marks, decals, and control-panel marks exactly as shown in the six-view reference.',
+const STRUCTURE_REFERENCE_GUARD = [
+  'Product structure reference guard:',
+  '- The input images include user-provided product structure reference images for this workspace.',
+  '- Highest priority: preserve product shape before following any composition, scene, style, text, crop, or prop instruction.',
+  '- Before building the image, choose exactly one supplied product reference image as the primary structure reference for the final product viewpoint.',
+  '- Keep the primary structure reference camera angle, visible side, silhouette, width-to-height ratio, top/rim curvature, side-wall depth, handle position, door/drawer/control-panel positions, logo position, and bottom footprint.',
+  '- Use other product structure references only as secondary evidence for material, color, logos, markings, vents, seams, feet, controls, and hidden-side details.',
+  '- Do not average, blend, or merge multiple viewpoints into a new shape. Do not synthesize a new front, side, top, or three-quarter view from several references.',
+  '- Change only background, lighting, props, text, crop, and canvas layout around the locked product. Never resize, recenter, straighten, symmetrize, or redraw the product to satisfy composition.',
+  '- Composition words such as centered, hero, lifestyle, foreground props, banner crop, or dramatic angle must not change the selected reference viewpoint or product silhouette.',
+  '- If the locked product does not fit the requested composition, keep the product shape and adjust surrounding layout, text placement, props, or crop instead.',
+  '- Build the product appearance from those references. For the final camera, reuse a supplied reference viewpoint whenever possible; when the opposite side is required and not directly supplied, use a conservative mirrored view from the closest supplied viewpoint.',
+  '- If the task asks for a view that is not directly supported by the attached product references, keep the nearest supplied view instead of rotating the product into a new imagined view.',
+  '- Match the nearest reference image silhouette and aspect ratio before styling: do not make the product taller, narrower, wider, deeper, more upright, more symmetrical, or more front-facing than the matching reference.',
+  '- Keep handles, control panels, doors, drawers, lids, seams, logos, vents, feet, and openings in the same relative positions as the matching reference view; do not recenter, resize, or redesign them for composition.',
+  '- Do not invent a new camera angle, freely rotate the product, hallucinate unseen sides, or create a new product form.',
+  '- Preserve the exact product geometry, proportions, silhouette, color, material finish, openings, handles, buttons, seams, and accessories shown in the references.',
+  '- Keep body depth, side profile, top footprint, top curvature, rim/lip, bottom footprint, feet, vents, and handle projection consistent with the matching reference viewpoints.',
+  '- Preserve real on-product brand logos, wordmarks, model labels, printed marks, decals, and control-panel marks exactly as shown in the references.',
   '- When the generated image shows a front or top control-panel surface, keep the real brand wordmark visible on that surface.',
-  '- Preserve movable or openable structural parts exactly as shown in the six-view reference: lids, covers, doors, flaps, panels, hinges, latches, handles, baskets, trays, lips, rims, joints, and brackets. Keep curved edges, rounded corners, bevels, lips, thickness, transparency, and opening angle locked to the reference. Do not flatten, straighten, square off, simplify, or replace these parts with generic flat panels or rectangular sheets.',
-  '- If the image task asks for a movable or temporary state such as open lid, open door, ice inside, liquid, contents, accessories, hand-free use, or a lifestyle scene, change only that movable/temporary state. Keep the permanent body shape, depth, width, height, side panels, vents, feet, control panel, movable-part geometry, handles, and seams locked to the six-view reference.',
+  '- Preserve movable or openable structural parts exactly as shown in the references: lids, covers, doors, flaps, panels, hinges, latches, handles, baskets, trays, lips, rims, joints, and brackets. Keep curved edges, rounded corners, bevels, lips, thickness, transparency, and opening angle locked to the reference. Do not flatten, straighten, square off, simplify, or replace these parts with generic flat panels or rectangular sheets.',
+  '- If the image task asks for a movable or temporary state such as open lid, open door, ice inside, liquid, contents, accessories, hand-free use, or a lifestyle scene, change only that movable/temporary state. Keep the permanent body shape, depth, width, height, side panels, vents, feet, control panel, movable-part geometry, handles, and seams locked to the references.',
   '- The product must remain upright and structurally aligned. Do not lean, twist, skew, stretch, compress, bend, flatten, or asymmetrically warp the body, lid/top, base, side panels, handles, hinges, feet, or vents.',
   '- Do not invent, bend, warp, tilt, or redesign the product. Do not mix product shapes from other references.',
-  '- Treat every other input image as style-only. Never use a style board or scene reference to alter the product geometry.',
+  '- Treat style boards as style-only. Never use a style board or scene reference to alter the product geometry.',
   '- If a negative prompt mentions logos, remove only floating logo overlays, platform logos, third-party logos, extra marketing badges, and added corner marks. Do not remove real on-product brand marks.',
 ].join('\n')
 
@@ -376,10 +388,13 @@ function formatPromptBlock(options: {
   negativePrompt?: string
   seriesStyleGuide?: string | null
   styleReferenceAttached?: boolean
+  structureReferenceAttached?: boolean
   sixViewReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
 }) {
+  const hasStructureReference = options.structureReferenceAttached || options.sixViewReferenceAttached
   const sections = [
+    hasStructureReference ? STRUCTURE_REFERENCE_GUARD : '',
     options.prompt.trim(),
     options.seriesStyleGuide?.trim()
       ? `Series style guide:\n${options.seriesStyleGuide.trim()}`
@@ -388,7 +403,6 @@ function formatPromptBlock(options: {
     options.negativePrompt?.trim()
       ? `Negative prompt:\n${options.negativePrompt.trim()}`
       : '',
-    options.sixViewReferenceAttached ? SIX_VIEW_REFERENCE_GUARD : '',
     options.styleReferenceAttached ? STYLE_REFERENCE_GUARD : '',
   ].filter(Boolean)
 
@@ -398,6 +412,7 @@ function formatPromptBlock(options: {
 export function buildAmazonPlanPrompt(plan: Pick<AmazonImagePlan, 'prompt' | 'negativePrompt'> & {
   seriesStyleGuide?: string | null
   styleReferenceAttached?: boolean
+  structureReferenceAttached?: boolean
   sixViewReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
 }): string {
@@ -572,6 +587,7 @@ export function withDspGenerationSizes(plans: AmazonDspPlan[], tier: SizeTier): 
 export function buildAmazonAPlusPlanPrompt(plan: Pick<AmazonAPlusPlan, 'prompt' | 'negativePrompt'> & {
   seriesStyleGuide?: string | null
   styleReferenceAttached?: boolean
+  structureReferenceAttached?: boolean
   sixViewReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
 }): string {
@@ -581,6 +597,7 @@ export function buildAmazonAPlusPlanPrompt(plan: Pick<AmazonAPlusPlan, 'prompt' 
 export function buildAmazonDspPlanPrompt(plan: Pick<AmazonDspPlan, 'prompt' | 'negativePrompt'> & {
   seriesStyleGuide?: string | null
   styleReferenceAttached?: boolean
+  structureReferenceAttached?: boolean
   sixViewReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
 }): string {

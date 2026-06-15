@@ -13,6 +13,7 @@ import { collectAgentRoundOutputImageSlots } from '../lib/agentImageReferences'
 import { matchesTaskHistoryFilters } from '../lib/taskHistory'
 import { useHintTooltip } from '../hooks/useHintTooltip'
 import { downloadImageIds, formatExportFileTime } from '../lib/downloadImages'
+import { ACTIVE_PRODUCT_WORKSPACE_REFERENCES_CLEAR_EVENT } from '../lib/productWorkspaceEvents'
 import Select from './Select'
 import SizePickerModal from './SizePickerModal'
 import ViewportTooltip from './ViewportTooltip'
@@ -422,7 +423,9 @@ export default function InputBar() {
   const filterProductTitle = useStore((s) => s.filterProductTitle)
   const filterWorkflow = useStore((s) => s.filterWorkflow)
   const filterAspect = useStore((s) => s.filterAspect)
+  const filterImageCategory = useStore((s) => s.filterImageCategory)
   const activeProductWorkspaceId = useStore((s) => s.activeProductWorkspaceId)
+  const clearActiveProductWorkspaceReferences = useStore((s) => s.clearActiveProductWorkspaceReferences)
 
   const filteredTasks = useMemo(() => {
     const sorted = [...tasks].sort((a, b) => b.createdAt - a.createdAt)
@@ -434,9 +437,10 @@ export default function InputBar() {
       filterProductTitle,
       filterWorkflow,
       filterAspect,
+      filterImageCategory,
       filterProductWorkspaceId: activeProductWorkspaceId ?? undefined,
     }))
-  }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect, activeProductWorkspaceId])
+  }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect, filterImageCategory, activeProductWorkspaceId])
 
   const handleSelectAllToggle = useCallback(() => {
     if (selectedTaskIds.length === filteredTasks.length && filteredTasks.length > 0) {
@@ -1733,8 +1737,18 @@ export default function InputBar() {
           title: maskTargetImage ? '清空全部输入图' : '清空参考图',
           message: maskTargetImage
             ? `确定要清空遮罩主图、${referenceImages.length} 张参考图和当前遮罩吗？`
-            : `确定要清空全部 ${inputImages.length} 张参考图吗？`,
-          action: () => clearInputImages(),
+            : activeProductWorkspaceId
+              ? `确定要清空全部 ${inputImages.length} 张参考图吗？当前工作区保存的结构参考图也会一起清空。`
+              : `确定要清空全部 ${inputImages.length} 张参考图吗？`,
+          action: () => {
+            clearInputImages()
+            if (activeProductWorkspaceId) {
+              window.dispatchEvent(new CustomEvent(ACTIVE_PRODUCT_WORKSPACE_REFERENCES_CLEAR_EVENT, {
+                detail: { workspaceId: activeProductWorkspaceId },
+              }))
+              void clearActiveProductWorkspaceReferences()
+            }
+          },
         })
       }
       className="w-[52px] h-[52px] rounded-xl border border-dashed border-gray-300 dark:border-white/[0.08] flex flex-col items-center justify-center gap-0.5 text-gray-400 dark:text-gray-500 hover:text-red-500 hover:border-red-300 hover:bg-red-50/50 dark:hover:bg-red-950/30 transition-all cursor-pointer flex-shrink-0"

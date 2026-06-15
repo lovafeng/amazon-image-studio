@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  getAdminOperations,
   getAdminTasks,
   getAdminSummary,
   getAdminUsage,
@@ -48,6 +49,19 @@ describe('frontend admin api', () => {
 
     await expect(getAdminTasks()).resolves.toEqual([{ userId: 'user-a', task: { id: 'task-a' } }])
     expect(fetchMock).toHaveBeenCalledWith('/api/admin/tasks', { credentials: 'same-origin' })
+  })
+
+  it('loads admin operations statistics', async () => {
+    const payload = { northStar: { completedImageSets: 1 }, funnel: { workspaces: 2 } }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    )
+
+    await expect(getAdminOperations()).resolves.toEqual(payload)
+    expect(fetchMock).toHaveBeenCalledWith('/api/admin/operations', { credentials: 'same-origin' })
   })
 
   it('updates user status', async () => {

@@ -4,6 +4,7 @@ import {
   UNCATEGORIZED_PRODUCT_FILTER,
   getTaskGenerationStageLabel,
   getTaskHistoryCategory,
+  getTaskImageCategoryLabel,
   getTaskProductFilterOptions,
   getWorkflowLabel,
   matchesTaskHistoryFilters,
@@ -102,6 +103,7 @@ describe('task history categories', () => {
       filterProductTitle: '',
       filterWorkflow: 'all',
       filterAspect: 'all',
+      filterImageCategory: 'all',
     })).toBe(true)
   })
 
@@ -132,6 +134,7 @@ describe('task history categories', () => {
       filterProductTitle: UNCATEGORIZED_PRODUCT_FILTER,
       filterWorkflow: 'all',
       filterAspect: 'all',
+      filterImageCategory: 'all',
     })).toBe(true)
   })
 
@@ -155,6 +158,7 @@ describe('task history categories', () => {
       filterProductTitle: 'LED Desk Lamp',
       filterWorkflow: 'amazon-aplus',
       filterAspect: 'landscape',
+      filterImageCategory: 'aplus',
     })).toBe(true)
 
     expect(matchesTaskHistoryFilters(record, {
@@ -164,6 +168,7 @@ describe('task history categories', () => {
       filterProductTitle: 'LED Desk Lamp',
       filterWorkflow: 'amazon-listing',
       filterAspect: 'landscape',
+      filterImageCategory: 'all',
     })).toBe(false)
 
     expect(matchesTaskHistoryFilters(task({
@@ -180,7 +185,57 @@ describe('task history categories', () => {
       filterProductTitle: 'LED Desk Lamp',
       filterWorkflow: 'amazon-dsp',
       filterAspect: 'all',
+      filterImageCategory: 'dsp',
     })).toBe(true)
+  })
+
+  it('classifies Amazon image history into business image categories', () => {
+    expect(getTaskImageCategoryLabel(task({
+      category: { workflow: 'amazon-listing', amazonSlot: 'MAIN' },
+    }))).toBe('主图')
+    expect(getTaskImageCategoryLabel(task({
+      category: { workflow: 'amazon-listing', amazonSlot: 'PT02' },
+    }))).toBe('Listing 附图')
+    expect(getTaskImageCategoryLabel(task({
+      category: { workflow: 'amazon-aplus', amazonSlot: 'A+S01' },
+    }))).toBe('A+ 模块')
+    expect(getTaskImageCategoryLabel(task({
+      category: { workflow: 'amazon-dsp', amazonSlot: 'DSP-REC-600x600' },
+    }))).toBe('DSP 素材')
+    expect(getTaskImageCategoryLabel(task({
+      category: { workflow: 'gallery' },
+    }))).toBe('普通生图')
+  })
+
+  it('filters history by image category including draft and final stages', () => {
+    const listingMain = task({
+      id: 'listing-main',
+      category: { workflow: 'amazon-listing', amazonSlot: 'MAIN', generationStage: 'draft' },
+    })
+    const listingSecondary = task({
+      id: 'listing-secondary',
+      category: { workflow: 'amazon-listing', amazonSlot: 'PT02', generationStage: 'final' },
+    })
+    const dsp = task({
+      id: 'dsp',
+      category: { workflow: 'amazon-dsp', amazonSlot: 'DSP-REC-600x600' },
+    })
+
+    const baseFilters = {
+      searchQuery: '',
+      filterStatus: 'all' as const,
+      filterFavorite: false,
+      filterProductTitle: '',
+      filterWorkflow: 'all' as const,
+      filterAspect: 'all' as const,
+    }
+
+    expect(matchesTaskHistoryFilters(listingMain, { ...baseFilters, filterImageCategory: 'main' })).toBe(true)
+    expect(matchesTaskHistoryFilters(listingSecondary, { ...baseFilters, filterImageCategory: 'listing-secondary' })).toBe(true)
+    expect(matchesTaskHistoryFilters(dsp, { ...baseFilters, filterImageCategory: 'dsp' })).toBe(true)
+    expect(matchesTaskHistoryFilters(listingMain, { ...baseFilters, filterImageCategory: 'draft' })).toBe(true)
+    expect(matchesTaskHistoryFilters(listingSecondary, { ...baseFilters, filterImageCategory: 'final' })).toBe(true)
+    expect(matchesTaskHistoryFilters(listingSecondary, { ...baseFilters, filterImageCategory: 'main' })).toBe(false)
   })
 
   it('limits history matches to the current product workspace when provided', () => {
@@ -219,6 +274,7 @@ describe('task history categories', () => {
       filterProductTitle: '',
       filterWorkflow: 'all' as const,
       filterAspect: 'all' as const,
+      filterImageCategory: 'all' as const,
       filterProductWorkspaceId: 'B0CURRENT',
     }
 

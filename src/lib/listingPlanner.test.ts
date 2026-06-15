@@ -62,34 +62,39 @@ describe('Amazon prompt builders', () => {
     expect(prompt).not.toContain('A+ module requirements:')
   })
 
-  it('adds a confirmed six-view product reference guard for downstream generation', () => {
+  it('adds a structure-reference guard that reuses supplied or mirrored viewpoints', () => {
     const listingPrompt = buildAmazonPlanPrompt({
       prompt: 'Create an Amazon secondary image.',
       negativePrompt: 'wrong product shape',
-      sixViewReferenceAttached: true,
+      structureReferenceAttached: true,
     })
     const aPlusPrompt = buildAmazonAPlusPlanPrompt({
       prompt: 'Create an A+ module image.',
       negativePrompt: 'wrong product shape',
-      sixViewReferenceAttached: true,
+      structureReferenceAttached: true,
     })
     const dspPrompt = buildAmazonDspPlanPrompt({
       prompt: 'Create a DSP image.',
       negativePrompt: 'wrong product shape',
-      sixViewReferenceAttached: true,
+      structureReferenceAttached: true,
     })
 
     for (const prompt of [listingPrompt, aPlusPrompt, dspPrompt]) {
-      expect(prompt).toContain('confirmed standardized six-view product reference')
-      expect(prompt).toContain('product geometry blueprint')
-      expect(prompt).toContain('Do not render the six-panel grid in the final image')
-      expect(prompt).toContain('Use the front, back, left, right, top, and bottom cells together')
+      expect(prompt).toContain('user-provided product structure reference images')
+      expect(prompt).toContain('reuse a supplied reference viewpoint')
+      expect(prompt).toContain('use a conservative mirrored view')
+      expect(prompt).toContain('keep the nearest supplied view instead of rotating')
+      expect(prompt).toContain('Match the nearest reference image silhouette and aspect ratio')
+      expect(prompt).toContain('do not make the product taller, narrower, wider, deeper')
+      expect(prompt).toContain('Keep handles, control panels, doors, drawers, lids, seams, logos, vents, feet, and openings')
+      expect(prompt).toContain('do not recenter, resize, or redesign them for composition')
+      expect(prompt).toContain('Do not invent a new camera angle')
       expect(prompt).toContain('Preserve the exact product geometry')
-      expect(prompt).toContain('Keep body depth, side profile, top footprint, top curvature')
+      expect(prompt).toContain('body depth, side profile, top footprint, top curvature')
       expect(prompt).toContain('Do not invent, bend, warp, tilt, or redesign the product')
       expect(prompt).toContain('Do not lean, twist, skew, stretch, compress, bend, flatten')
       expect(prompt).toContain('If the image task asks for a movable or temporary state')
-      expect(prompt).toContain('Treat every other input image as style-only')
+      expect(prompt).toContain('Treat style boards as style-only')
       expect(prompt).toContain('Preserve real on-product brand logos')
       expect(prompt).toContain('remove only floating logo overlays')
       expect(prompt).toContain('When the generated image shows a front or top control-panel surface')
@@ -98,7 +103,27 @@ describe('Amazon prompt builders', () => {
       expect(prompt).toContain('lids, covers, doors, flaps, panels, hinges, latches, handles')
       expect(prompt).toContain('curved edges, rounded corners, bevels, lips, thickness, transparency, and opening angle')
       expect(prompt).toContain('Do not flatten, straighten, square off, simplify, or replace these parts')
+      expect(prompt).not.toContain('six-view')
+      expect(prompt).not.toContain('six-panel')
     }
+  })
+
+  it('puts the structure-reference guard before composition instructions and locks to one primary viewpoint', () => {
+    const prompt = buildAmazonDspPlanPrompt({
+      prompt: 'Create a centered lifestyle hero product image with foreground props.',
+      negativePrompt: 'wrong product shape',
+      seriesStyleGuide: 'Use premium kitchen lighting.',
+      styleReferenceAttached: true,
+      structureReferenceAttached: true,
+      styleDensityMode: 'minimal',
+    })
+
+    expect(prompt.indexOf('Product structure reference guard:')).toBeLessThan(prompt.indexOf('Create a centered lifestyle hero product image'))
+    expect(prompt).toContain('choose exactly one supplied product reference image as the primary structure reference')
+    expect(prompt).toContain('Use other product structure references only as secondary evidence')
+    expect(prompt).toContain('Do not average, blend, or merge multiple viewpoints into a new shape')
+    expect(prompt).toContain('Change only background, lighting, props, text, crop, and canvas layout around the locked product')
+    expect(prompt).toContain('Composition words such as centered, hero, lifestyle, foreground props, banner crop, or dramatic angle must not change')
   })
 
   it('builds minimal density guidance when requested', () => {
@@ -425,6 +450,12 @@ describe('callAmazonPlannerApi', () => {
     expect(body.instructions).toContain('icon/callout treatment')
     expect(body.instructions).toContain('fully plan the finished Amazon image')
     expect(body.instructions).toContain('complete information design')
+    expect(body.instructions).toContain('preserve the nearest supplied product view')
+    expect(body.instructions).toContain('Do not ask the image model to freely rotate')
+    expect(body.instructions).toContain('Choose one primary product reference image per final image prompt')
+    expect(body.instructions).toContain('Use other product references only as secondary detail evidence')
+    expect(body.instructions).toContain('Do not write prompts that average, blend, or merge multiple reference viewpoints')
+    expect(body.instructions).toContain('adjust layout, props, crop, and text instead of changing product shape')
     expect(body.instructions).not.toContain('sparse copy')
     expect(body.instructions).not.toContain('leave enough whitespace')
     expect(body.instructions).not.toContain('Embedded Amazon Listing knowledge rules')
@@ -589,6 +620,12 @@ describe('callAmazonPlannerApi', () => {
     expect(body.instructions).toContain('lighting/material samples')
     expect(body.instructions).toContain('fully plan the finished Amazon image')
     expect(body.instructions).toContain('complete information design')
+    expect(body.instructions).toContain('preserve the nearest supplied product view')
+    expect(body.instructions).toContain('Do not ask the image model to freely rotate')
+    expect(body.instructions).toContain('Choose one primary product reference image per final image prompt')
+    expect(body.instructions).toContain('Use other product references only as secondary detail evidence')
+    expect(body.instructions).toContain('Do not write prompts that average, blend, or merge multiple reference viewpoints')
+    expect(body.instructions).toContain('adjust layout, props, crop, and text instead of changing product shape')
     expect(body.instructions).toContain('Known brand/model: ExampleBrand')
     expect(body.instructions).toContain('small brand line, headline prefix, or subline')
     expect(body.instructions).toContain('Do not invent logo artwork')
@@ -700,6 +737,12 @@ describe('callAmazonPlannerApi', () => {
     expect(body.instructions).toContain('Do not mimic Amazon website content')
     expect(body.instructions).toContain('concise Simplified Chinese')
     expect(body.instructions).toContain('2-4 bullets')
+    expect(body.instructions).toContain('preserve the nearest supplied product view')
+    expect(body.instructions).toContain('Do not ask the image model to freely rotate')
+    expect(body.instructions).toContain('Choose one primary product reference image per final image prompt')
+    expect(body.instructions).toContain('Use other product references only as secondary detail evidence')
+    expect(body.instructions).toContain('Do not write prompts that average, blend, or merge multiple reference viewpoints')
+    expect(body.instructions).toContain('adjust layout, props, crop, and text instead of changing product shape')
     expect(body.instructions).not.toContain('detailed agent-style plan similar to a ChatGPT web response')
     expect(body.input[0].content[0].text).toContain('produce the Amazon DSP advertising asset plan')
 

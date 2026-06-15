@@ -55,6 +55,14 @@ export interface PlannerApiResult {
 const AMAZON_PLANNER_REASONING_EFFORT = 'xhigh'
 const LISTING_IMAGE_SLOTS = ['MAIN', 'PT01', 'PT02', 'PT03', 'PT04', 'PT05', 'PT06'] as const
 
+const PRODUCT_REFERENCE_PLANNING_RULES = [
+  'Product reference planning rules:',
+  '- Choose one primary product reference image per final image prompt and explicitly preserve that primary viewpoint.',
+  '- Use other product references only as secondary detail evidence for color, material, markings, controls, vents, seams, feet, and hidden-side details.',
+  '- Do not write prompts that average, blend, or merge multiple reference viewpoints into a new product shape.',
+  '- If the requested composition would require a new camera angle, adjusted proportions, centered symmetry, or a cleaner generic silhouette, adjust layout, props, crop, and text instead of changing product shape.',
+].join('\n')
+
 const PRODUCT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -638,6 +646,8 @@ function buildListingPlannerInstructions(baseDraft: AmazonPromptDraft) {
     formatAmazonListingReferenceMaterial(),
     'For each slot, write planMarkdown in Simplified Chinese as a detailed agent-style plan similar to a ChatGPT web response, then write a professional English image prompt and English negative prompt.',
     'Each image prompt should fully plan the finished Amazon image: composition, product evidence, on-image US-English copy when useful, callouts or information areas when useful, visual hierarchy, and rendering style.',
+    'When product reference images are attached, write prompts that preserve the nearest supplied product view. Do not ask the image model to freely rotate, redesign, make the product more front-facing, or invent a new unsupported camera angle; if a different side is needed, request a conservative mirrored view only.',
+    PRODUCT_REFERENCE_PLANNING_RULES,
     'For secondary information images, prefer complete information design with clear hierarchy and useful product evidence; lifestyle or beauty slots should still have purposeful composition and visible product support.',
     'Return one seriesStyleGuide string in English that can keep separately generated images visually coherent.',
     'Return exactly 3 styleCandidates for low-resolution visual style reference board generation. Each candidate should represent a distinct coherent visual style choice for this same product, not a finished Amazon listing image.',
@@ -672,6 +682,8 @@ function buildAPlusPlannerInstructions(baseDraft: AmazonPromptDraft, aPlusType: 
     formatAmazonAPlusReferenceMaterial(),
     'For each module, write planMarkdown in Simplified Chinese as a detailed agent-style plan similar to a ChatGPT web response, then write a professional English image prompt and English negative prompt.',
     'Each module prompt should fully plan the finished Amazon image: composition, product evidence, on-image US-English copy when useful, callouts or information areas when useful, visual hierarchy, and rendering style.',
+    'When product reference images are attached, write prompts that preserve the nearest supplied product view. Do not ask the image model to freely rotate, redesign, make the product more front-facing, or invent a new unsupported camera angle; if a different side is needed, request a conservative mirrored view only.',
+    PRODUCT_REFERENCE_PLANNING_RULES,
     'For A+ information modules, prefer complete information design with clear hierarchy and useful product evidence; lifestyle or brand modules should still have purposeful composition and visible product support.',
     baseDraft.brand
       ? `Known brand/model: ${baseDraft.brand}. For header-banner and hero-banner modules, naturally include this real brand/model as a small brand line, headline prefix, or subline when it improves the composition. For brand-story modules, use this brand/model to frame the brand tone or promise only when supported by the provided listing or brand notes.`
@@ -720,6 +732,8 @@ function buildDspPlannerInstructions(baseDraft: AmazonPromptDraft) {
     'Use brand names as text only unless the user provides a real logo reference image.',
     'For each DSP asset, write planMarkdown as a concise Simplified Chinese plan with 2-4 bullets, then write a professional English image prompt and English negative prompt.',
     'Each image prompt should fully plan the finished DSP ad creative: composition, product evidence, brand/logo treatment, CTA policy, short on-image US-English copy, border/background treatment, visual hierarchy, and rendering style.',
+    'When product reference images are attached, write prompts that preserve the nearest supplied product view. Do not ask the image model to freely rotate, redesign, make the product more front-facing, or invent a new unsupported camera angle; if a different side is needed, request a conservative mirrored view only.',
+    PRODUCT_REFERENCE_PLANNING_RULES,
     'Return one seriesStyleGuide string in English that can keep separately generated DSP assets visually coherent.',
     'Return exactly 3 styleCandidates for low-resolution visual style reference board generation. Each candidate should represent a distinct coherent visual style choice for this same product and DSP ad set, not a finished DSP ad.',
     'For each styleCandidates.prompt, briefly describe a visual style reference board focused on typography samples, color swatches, lighting/material samples, and icon/callout/CTA treatment.',

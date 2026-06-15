@@ -138,6 +138,18 @@ function parseAdminTask(row) {
   }
 }
 
+function parseAdminProductWorkspace(row) {
+  return {
+    owner: row.owner,
+    userId: row.user_id ?? row.owner,
+    email: row.email ?? '',
+    phone: row.phone ?? '',
+    role: row.role ?? '',
+    status: row.user_status ?? '',
+    workspace: JSON.parse(row.record_json),
+  }
+}
+
 const DEFAULT_LEGACY_OWNER = 'admin'
 
 function normalizeOwner(owner) {
@@ -389,6 +401,21 @@ export function createStorage(sqlitePath, options = {}) {
       order by tasks.created_at desc, tasks.id desc
       limit ?
     `),
+    getAllUserProductWorkspaces: db.prepare(`
+      select
+        product_workspaces.owner,
+        users.id as user_id,
+        users.email,
+        users.phone,
+        users.role,
+        users.status as user_status,
+        product_workspaces.record_json,
+        product_workspaces.updated_at
+      from product_workspaces
+      left join users on users.id = product_workspaces.owner
+      order by product_workspaces.updated_at desc, product_workspaces.id desc
+      limit ?
+    `),
     recordUsageEvent: db.prepare('insert into usage_events (id, user_id, event_type, status, endpoint, model, generated_images, prompt_tokens, completion_tokens, total_tokens, created_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
     getUsageSummary: db.prepare(`
       select
@@ -478,6 +505,9 @@ export function createStorage(sqlitePath, options = {}) {
     },
     getAllUserTasks(limit = 100) {
       return statements.getAllUserTasks.all(limit).map(parseAdminTask)
+    },
+    getAllUserProductWorkspaces(limit = 1000) {
+      return statements.getAllUserProductWorkspaces.all(limit).map(parseAdminProductWorkspace)
     },
     ensureAdminUser(user) {
       const identifier = user.email || user.phone

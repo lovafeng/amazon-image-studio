@@ -6,6 +6,7 @@ export type TaskWorkflow = 'amazon-listing' | 'amazon-aplus' | 'amazon-dsp' | 'g
 export type TaskAspect = 'square' | 'landscape' | 'portrait'
 export type HistoryWorkflowFilter = 'all' | TaskWorkflow
 export type HistoryAspectFilter = 'all' | TaskAspect
+export type HistoryImageCategoryFilter = 'all' | 'main' | 'listing-secondary' | 'aplus' | 'dsp' | 'draft' | 'final' | 'gallery' | 'agent' | 'unknown'
 export type ReferenceImageEditAction = 'ask' | 'replace-reference' | 'add-mask'
 export type BuiltInApiProvider = 'openai' | 'fal'
 export type ApiProvider = BuiltInApiProvider | string

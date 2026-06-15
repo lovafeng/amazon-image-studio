@@ -892,6 +892,132 @@ describe('http app', () => {
     ]))
   })
 
+  it('returns admin operations statistics', async () => {
+    const userRegister = await postJson('/api/auth/register', { email: 'operator@example.com', password: 'secret' })
+    const userId = userRegister.json().user.id
+    const adminLogin = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const adminCookie = adminLogin.headers['set-cookie'][0]
+    appStorage.putProductWorkspace(userId, {
+      id: 'B0SETDONE',
+      title: 'Completed Listing Set',
+      mode: 'listing',
+      aPlusType: 'standard-large',
+      updatedAt: 100,
+      referenceImageIds: ['ref-a'],
+      sixViewVersions: [{ id: 'six-a', imageId: 'six-img-a', prompt: '', inputImageIds: ['ref-a'], createdAt: 101 }],
+      confirmedSixViewVersionId: 'six-a',
+      styleImages: [
+        { candidateIndex: 0, imageId: 'style-img-a' },
+        { candidateIndex: 1, imageId: 'style-img-b' },
+      ],
+      imagePlans: [
+        { slot: 'MAIN' },
+        { slot: 'PT01' },
+        { slot: 'PT02' },
+        { slot: 'PT03' },
+        { slot: 'PT04' },
+        { slot: 'PT05' },
+        { slot: 'PT06' },
+      ],
+    })
+    appStorage.putProductWorkspace(userId, {
+      id: 'B0DRAFT',
+      title: 'Draft Workspace',
+      mode: 'aplus',
+      aPlusType: 'standard-large',
+      updatedAt: 200,
+      referenceImageIds: [],
+      sixViewVersions: [],
+      confirmedSixViewVersionId: null,
+      aPlusPlans: [],
+    })
+    for (const [index, slot] of ['MAIN', 'PT01', 'PT02', 'PT03', 'PT04', 'PT05', 'PT06'].entries()) {
+      appStorage.putTask(userId, {
+        id: `task-${slot}`,
+        prompt: slot,
+        createdAt: 300 + index,
+        finishedAt: 1300 + index,
+        elapsed: 1000,
+        status: 'done',
+        inputImageIds: [],
+        outputImages: [`img-${slot}`],
+        isFavorite: slot === 'MAIN',
+        category: {
+          workflow: 'amazon-listing',
+          amazonSlot: slot,
+          productWorkspaceId: 'B0SETDONE',
+        },
+      })
+    }
+    appStorage.putTask(userId, {
+      id: 'task-error',
+      prompt: 'failed',
+      createdAt: 400,
+      finishedAt: 500,
+      elapsed: 100,
+      status: 'error',
+      inputImageIds: [],
+      outputImages: [],
+      category: {
+        workflow: 'amazon-listing',
+        amazonSlot: 'PT07',
+        productWorkspaceId: 'B0SETDONE',
+      },
+    })
+    appStorage.recordUsageEvent({
+      userId,
+      eventType: 'ai_proxy',
+      status: 'ok',
+      endpoint: '/api-proxy/v1/images/generations',
+      model: 'gpt-image-1',
+      generatedImages: 7,
+      totalTokens: 70,
+      createdAt: 600,
+    })
+    appStorage.recordUsageEvent({
+      userId,
+      eventType: 'ai_proxy',
+      status: 'error',
+      endpoint: '/api-proxy/v1/images/generations',
+      model: 'gpt-image-1',
+      generatedImages: 0,
+      totalTokens: 5,
+      createdAt: 601,
+    })
+
+    const response = await request('/api/admin/operations', { headers: { cookie: adminCookie } })
+
+    expect(response.status).toBe(200)
+    expect(response.json()).toMatchObject({
+      northStar: { completedImageSets: 1 },
+      funnel: {
+        workspaces: 2,
+        preparedWorkspaces: 1,
+        sixViewGeneratedWorkspaces: 1,
+        sixViewConfirmedWorkspaces: 1,
+        styleGeneratedWorkspaces: 1,
+        styleGeneratedImages: 2,
+        imageStartedWorkspaces: 1,
+        completedImageSets: 1,
+      },
+      stability: {
+        imageTasks: 8,
+        imageTaskSuccesses: 7,
+        imageTaskFailures: 1,
+        imageTaskSuccessRate: 0.875,
+      },
+      cost: {
+        calls: 2,
+        totalTokens: 75,
+        callsPerCompletedImageSet: 2,
+      },
+      quality: {
+        favoriteTasks: 1,
+        favoriteRate: 0.125,
+      },
+    })
+  })
+
   it('blocks proxied AI requests when the user reaches the token limit', async () => {
     let upstreamCalls = 0
     const upstream = await createUpstreamServer((req, res) => {

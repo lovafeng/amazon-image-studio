@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import { removeMultipleTasks, useStore } from '../store'
 import { ALL_PRODUCT_FILTER, UNCATEGORIZED_PRODUCT_FILTER, getTaskProductFilterOptions, getTaskProductWorkspaceId, matchesTaskHistoryFilters } from '../lib/taskHistory'
-import type { HistoryAspectFilter, HistoryWorkflowFilter } from '../types'
+import type { HistoryAspectFilter, HistoryImageCategoryFilter, HistoryWorkflowFilter } from '../types'
 import Select from './Select'
 import { TrashIcon } from './icons'
 
@@ -19,6 +19,8 @@ export default function SearchBar() {
   const setFilterWorkflow = useStore((s) => s.setFilterWorkflow)
   const filterAspect = useStore((s) => s.filterAspect)
   const setFilterAspect = useStore((s) => s.setFilterAspect)
+  const filterImageCategory = useStore((s) => s.filterImageCategory)
+  const setFilterImageCategory = useStore((s) => s.setFilterImageCategory)
   const activeProductWorkspaceId = useStore((s) => s.activeProductWorkspaceId)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
 
@@ -55,9 +57,10 @@ export default function SearchBar() {
       filterProductTitle,
       filterWorkflow,
       filterAspect,
+      filterImageCategory,
       filterProductWorkspaceId: activeProductWorkspaceId ?? undefined,
     }))
-  }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect, activeProductWorkspaceId])
+  }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect, filterImageCategory, activeProductWorkspaceId])
 
   const hasUserFilters = Boolean(
     searchQuery.trim() ||
@@ -65,7 +68,8 @@ export default function SearchBar() {
     filterStatus !== 'all' ||
     filterProductTitle ||
     filterWorkflow !== 'all' ||
-    filterAspect !== 'all',
+    filterAspect !== 'all' ||
+    filterImageCategory !== 'all',
   )
   const workspaceFilterActive = Boolean(activeProductWorkspaceId)
   const productFilterActive = Boolean(filterProductTitle)
@@ -135,6 +139,7 @@ export default function SearchBar() {
               { label: '全部来源', value: 'all' },
               { label: 'Listing 图', value: 'amazon-listing' },
               { label: 'A+ 图', value: 'amazon-aplus' },
+              { label: 'DSP 图', value: 'amazon-dsp' },
               { label: '普通生图', value: 'gallery' },
               { label: 'Agent', value: 'agent' },
             ]}
@@ -150,6 +155,24 @@ export default function SearchBar() {
               { label: '方图', value: 'square' },
               { label: '横幅图', value: 'landscape' },
               { label: '竖图', value: 'portrait' },
+            ]}
+            className="px-3 py-2.5 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-white/[0.06] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition"
+          />
+        </div>
+        <div className="relative w-32">
+          <Select
+            value={filterImageCategory}
+            onChange={(val) => setFilterImageCategory(val as HistoryImageCategoryFilter)}
+            options={[
+              { label: '全部类别', value: 'all' },
+              { label: '主图', value: 'main' },
+              { label: 'Listing 附图', value: 'listing-secondary' },
+              { label: 'A+ 模块', value: 'aplus' },
+              { label: 'DSP 素材', value: 'dsp' },
+              { label: '草稿', value: 'draft' },
+              { label: '高清', value: 'final' },
+              { label: '普通生图', value: 'gallery' },
+              { label: 'Agent 图片', value: 'agent' },
             ]}
             className="px-3 py-2.5 rounded-xl border border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-white/[0.06] text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 transition"
           />

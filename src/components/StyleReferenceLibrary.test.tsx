@@ -25,7 +25,7 @@ describe('StyleReferenceLibrary', () => {
     )
 
     expect(html).toContain('复用已生成风格板')
-    expect(html).toContain('仅展示同商品、同入口的历史风格。')
+    expect(html).toContain('同一工作区内 Listing、A+、DSP 可复用。')
     expect(html).toContain('Clean Retail')
     expect(html).toContain('用作当前风格')
     expect(html).toContain('已使用')

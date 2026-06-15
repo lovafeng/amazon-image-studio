@@ -48,7 +48,7 @@ function session(overrides: Partial<AmazonPlannerSession>): AmazonPlannerSession
 }
 
 describe('style reference library', () => {
-  it('only includes references from the same product and planner mode', () => {
+  it('includes same-product references across Listing, A+ and DSP modes', () => {
     const items = buildStyleReferenceLibrary({
       sessions: [
         session({ id: 'other-product', mode: 'listing', draft: draft('Other Product'), updatedAt: 10, styleImages: [{ candidateIndex: 0, imageId: 'style-other-product' }] }),
@@ -59,14 +59,13 @@ describe('style reference library', () => {
       productTitle: 'ThermoMaven Probe',
     })
 
-    expect(items).toHaveLength(1)
-    expect(items[0]).toMatchObject({ imageId: 'style-same', plannerSessionId: 'same-product-mode' })
+    expect(items.map((item) => item.imageId)).toEqual(['style-same', 'style-other-mode'])
   })
 
-  it('prioritizes same product and mode references', () => {
+  it('prioritizes current mode before cross-mode workspace references', () => {
     const items = buildStyleReferenceLibrary({
       sessions: [
-        session({ id: 'old', mode: 'dsp', draft: draft('Other'), updatedAt: 10, styleImages: [{ candidateIndex: 0, imageId: 'style-old' }] }),
+        session({ id: 'cross-mode-newer', mode: 'dsp', updatedAt: 10, styleImages: [{ candidateIndex: 0, imageId: 'style-cross-mode' }] }),
         session({ id: 'match', mode: 'listing', updatedAt: 2, styleImages: [{ candidateIndex: 1, imageId: 'style-match' }] }),
       ],
       currentMode: 'listing',
@@ -74,6 +73,20 @@ describe('style reference library', () => {
     })
 
     expect(items[0]).toMatchObject({ imageId: 'style-match', label: 'Dark Tech', plannerSessionId: 'match' })
+  })
+
+  it('limits reusable style references to the current workspace when a workspace is active', () => {
+    const items = buildStyleReferenceLibrary({
+      sessions: [
+        session({ id: 'same-workspace', mode: 'listing', draft: draft('ThermoMaven Probe'), updatedAt: 2, styleImages: [{ candidateIndex: 0, imageId: 'style-current' }] }),
+        session({ id: 'other-workspace', mode: 'listing', draft: draft('ThermoMaven Probe'), updatedAt: 10, styleImages: [{ candidateIndex: 1, imageId: 'style-other-workspace' }] }),
+      ],
+      currentMode: 'aplus',
+      productTitle: 'ThermoMaven Probe',
+      currentWorkspaceId: 'same-workspace',
+    })
+
+    expect(items.map((item) => item.imageId)).toEqual(['style-current'])
   })
 
   it('dedupes by image id and limits the list', () => {

@@ -40,7 +40,7 @@ export default function StyleReferenceLibrary({
       <div className="mb-2 flex items-center justify-between gap-2">
         <div>
           <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">复用已生成风格板</div>
-          <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">仅展示同商品、同入口的历史风格。</div>
+          <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">同一工作区内 Listing、A+、DSP 可复用。</div>
         </div>
         <span className="shrink-0 rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500 dark:bg-white/[0.08] dark:text-gray-300">
           {items.length} 张

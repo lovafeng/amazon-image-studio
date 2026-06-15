@@ -800,22 +800,28 @@ describe('mask draft lifecycle in store actions', () => {
     })
   })
 
-  it('skips missing input image and mask reads for Amazon draft task submissions', async () => {
+  it('reads input image and mask payloads for Amazon draft task submissions', async () => {
     const referencePayload = await import('./lib/referenceImagePayload')
-    const prepareSpy = vi.spyOn(referencePayload, 'prepareReferenceImageAndMaskPayload')
+    const prepareSpy = vi.spyOn(referencePayload, 'prepareReferenceImageAndMaskPayload').mockResolvedValue({
+      dataUrls: ['data:image/webp;base64,compressed-input'],
+      maskDataUrl: 'data:image/png;base64,compressed-mask',
+      originalBytes: 2,
+      payloadBytes: 2,
+      compressedCount: 1,
+      pass: 'primary',
+      notice: '',
+    })
     const maskSpy = vi.spyOn(canvasImage, 'validateMaskMatchesImage').mockResolvedValue('partial')
-    const storeSpy = vi.spyOn(db, 'storeImage')
-      .mockResolvedValueOnce('missing-mask-image')
-      .mockResolvedValueOnce('stored-unrelated-input-image')
+    await putImage(imageA)
     useStore.setState({
       prompt: 'Amazon draft prompt',
-      inputImages: [{ id: 'missing-input-image', dataUrl: 'data:image/png;base64,YQ==' }],
+      inputImages: [imageA],
       maskDraft: {
-        targetImageId: 'missing-input-image',
+        targetImageId: imageA.id,
         maskDataUrl: 'data:image/png;base64,bWFzaw==',
         updatedAt: 1,
       },
-      maskEditorImageId: 'missing-input-image',
+      maskEditorImageId: imageA.id,
       params: { ...DEFAULT_PARAMS, size: '1024x1024', quality: 'medium' },
       pendingTaskCategory: {
         mode: 'prompt-match',
@@ -834,26 +840,36 @@ describe('mask draft lifecycle in store actions', () => {
 
       const task = useStore.getState().tasks[0]
       const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
-      expect(task?.inputImageIds).toEqual(['missing-input-image'])
-      expect(task?.maskImageId).toBe('missing-mask-image')
+      expect(task?.inputImageIds).toEqual([imageA.id])
+      expect(task?.maskImageId).toBeTruthy()
       expect(task?.category).toMatchObject({
         workflow: 'amazon-listing',
         amazonSlot: 'PT01',
         generationStage: 'draft',
       })
-      expect(callOptions.inputImageDataUrls).toEqual([])
-      expect(callOptions.maskDataUrl).toBeUndefined()
-      expect(task?.error).not.toBe('输入图片已不存在')
-      expect(task?.error).not.toBe('遮罩图片已不存在')
-      expect(prepareSpy).not.toHaveBeenCalled()
+      expect(callOptions.inputImageDataUrls).toEqual(['data:image/webp;base64,compressed-input'])
+      expect(callOptions.maskDataUrl).toBe('data:image/png;base64,compressed-mask')
+      expect(prepareSpy).toHaveBeenCalledWith(
+        [imageA.dataUrl],
+        'data:image/png;base64,bWFzaw==',
+        expect.objectContaining({ stage: 'draft' }),
+      )
     } finally {
       prepareSpy.mockRestore()
       maskSpy.mockRestore()
-      storeSpy.mockRestore()
     }
   })
 
-  it('executes Amazon draft tasks through non-streaming Images API generations without input image payloads', async () => {
+  it('executes Amazon draft tasks through non-streaming Images API with reference image payloads', async () => {
+    const referencePayload = await import('./lib/referenceImagePayload')
+    const prepareSpy = vi.spyOn(referencePayload, 'prepareReferenceImageAndMaskPayload').mockResolvedValue({
+      dataUrls: ['data:image/webp;base64,compressed-reference', 'data:image/webp;base64,compressed-style'],
+      originalBytes: 2,
+      payloadBytes: 2,
+      compressedCount: 2,
+      pass: 'primary',
+      notice: '',
+    })
     const responseProfile = createDefaultOpenAIProfile({
       id: DEFAULT_OPENAI_PROFILE_ID,
       name: '生图',
@@ -884,25 +900,34 @@ describe('mask draft lifecycle in store actions', () => {
       },
     })
 
-    const submitted = await submitTask()
+    try {
+      const submitted = await submitTask()
 
-    await vi.waitFor(() => expect(callImageApi).toHaveBeenCalled())
-    const task = useStore.getState().tasks[0]
-    const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
-    expect(submitted).toBe(true)
-    expect(task?.inputImageIds).toEqual([imageA.id, styleImage.id])
-    expect(task?.category).toMatchObject({
-      workflow: 'amazon-listing',
-      styleReferenceImageId: styleImage.id,
-      generationStage: 'draft',
-    })
-    expect(callOptions.inputImageDataUrls).toEqual([])
-    expect(callOptions.maskDataUrl).toBeUndefined()
-    expect(callOptions.settings).toMatchObject({
-      model: DEFAULT_IMAGES_MODEL,
-      apiMode: 'images',
-      streamImages: false,
-    })
+      await vi.waitFor(() => expect(callImageApi).toHaveBeenCalled())
+      const task = useStore.getState().tasks[0]
+      const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
+      expect(submitted).toBe(true)
+      expect(task?.inputImageIds).toEqual([imageA.id, styleImage.id])
+      expect(task?.category).toMatchObject({
+        workflow: 'amazon-listing',
+        styleReferenceImageId: styleImage.id,
+        generationStage: 'draft',
+      })
+      expect(callOptions.inputImageDataUrls).toEqual(['data:image/webp;base64,compressed-reference', 'data:image/webp;base64,compressed-style'])
+      expect(callOptions.maskDataUrl).toBeUndefined()
+      expect(callOptions.settings).toMatchObject({
+        model: DEFAULT_IMAGES_MODEL,
+        apiMode: 'images',
+        streamImages: false,
+      })
+      expect(prepareSpy).toHaveBeenCalledWith(
+        [imageA.dataUrl, styleImage.dataUrl],
+        undefined,
+        expect.objectContaining({ stage: 'draft' }),
+      )
+    } finally {
+      prepareSpy.mockRestore()
+    }
   })
 
   it('keeps default OpenAI Images draft retries on the virtual Images profile after settings normalization', async () => {
@@ -933,22 +958,50 @@ describe('mask draft lifecycle in store actions', () => {
       },
     })
 
-    const submitted = await submitTask()
-
-    await vi.waitFor(() => expect(callImageApi).toHaveBeenCalled())
-    const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
-    const activeProfile = getActiveApiProfile(callOptions.settings)
-    expect(submitted).toBe(true)
-    expect(callOptions.inputImageDataUrls).toEqual([])
-    expect(activeProfile).toMatchObject({
-      id: `${DEFAULT_OPENAI_PROFILE_ID}-input-images`,
-      apiMode: 'images',
-      model: DEFAULT_IMAGES_MODEL,
-      streamImages: false,
+    const referencePayload = await import('./lib/referenceImagePayload')
+    const prepareSpy = vi.spyOn(referencePayload, 'prepareReferenceImageAndMaskPayload').mockResolvedValue({
+      dataUrls: ['data:image/webp;base64,compressed-reference'],
+      originalBytes: 1,
+      payloadBytes: 1,
+      compressedCount: 1,
+      pass: 'primary',
+      notice: '',
     })
+
+    try {
+      const submitted = await submitTask()
+
+      await vi.waitFor(() => expect(callImageApi).toHaveBeenCalled())
+      const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
+      const activeProfile = getActiveApiProfile(callOptions.settings)
+      expect(submitted).toBe(true)
+      expect(callOptions.inputImageDataUrls).toEqual(['data:image/webp;base64,compressed-reference'])
+      expect(activeProfile).toMatchObject({
+        id: `${DEFAULT_OPENAI_PROFILE_ID}-input-images`,
+        apiMode: 'images',
+        model: DEFAULT_IMAGES_MODEL,
+        streamImages: false,
+      })
+      expect(prepareSpy).toHaveBeenCalledWith(
+        [imageA.dataUrl],
+        undefined,
+        expect.objectContaining({ stage: 'draft' }),
+      )
+    } finally {
+      prepareSpy.mockRestore()
+    }
   })
 
   it('executes Amazon draft tasks from a custom OpenAI Responses profile with the Images API model', async () => {
+    const referencePayload = await import('./lib/referenceImagePayload')
+    const prepareSpy = vi.spyOn(referencePayload, 'prepareReferenceImageAndMaskPayload').mockResolvedValue({
+      dataUrls: ['data:image/webp;base64,compressed-reference'],
+      originalBytes: 1,
+      payloadBytes: 1,
+      compressedCount: 1,
+      pass: 'primary',
+      notice: '',
+    })
     const responseProfile = createDefaultOpenAIProfile({
       id: 'custom-responses-image-profile',
       name: '自定义生图',
@@ -976,18 +1029,27 @@ describe('mask draft lifecycle in store actions', () => {
       },
     })
 
-    const submitted = await submitTask()
+    try {
+      const submitted = await submitTask()
 
-    await vi.waitFor(() => expect(callImageApi).toHaveBeenCalled())
-    const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
-    expect(submitted).toBe(true)
-    expect(callOptions.inputImageDataUrls).toEqual([])
-    expect(callOptions.maskDataUrl).toBeUndefined()
-    expect(callOptions.settings).toMatchObject({
-      apiMode: 'images',
-      model: DEFAULT_IMAGES_MODEL,
-      streamImages: false,
-    })
+      await vi.waitFor(() => expect(callImageApi).toHaveBeenCalled())
+      const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
+      expect(submitted).toBe(true)
+      expect(callOptions.inputImageDataUrls).toEqual(['data:image/webp;base64,compressed-reference'])
+      expect(callOptions.maskDataUrl).toBeUndefined()
+      expect(callOptions.settings).toMatchObject({
+        apiMode: 'images',
+        model: DEFAULT_IMAGES_MODEL,
+        streamImages: false,
+      })
+      expect(prepareSpy).toHaveBeenCalledWith(
+        [imageA.dataUrl],
+        undefined,
+        expect.objectContaining({ stage: 'draft' }),
+      )
+    } finally {
+      prepareSpy.mockRestore()
+    }
   })
 
   it('keeps fal Amazon draft task submissions on the reference image payload path', async () => {
@@ -1733,6 +1795,45 @@ describe('data import', () => {
     expect(imported).toBe(true)
     expect(await getAllProductWorkspaces()).toEqual([workspace])
     expect(useStore.getState().showToast).toHaveBeenCalledWith('已导入 0 条记录和 1 个工作区', 'success')
+  })
+})
+
+describe('product workspace reference clearing', () => {
+  beforeEach(async () => {
+    await clearProductWorkspaces()
+    useStore.setState({
+      activeProductWorkspaceId: null,
+      showToast: vi.fn(),
+    })
+  })
+
+  it('clears the active workspace structure references and six-view confirmation', async () => {
+    const workspace = productWorkspace({
+      id: 'active-workspace',
+      referenceImageIds: ['reference-a', 'reference-b'],
+      sixViewVersions: [{
+        id: 'six-view-a',
+        imageId: 'six-view-image-a',
+        prompt: 'standard six view',
+        inputImageIds: ['reference-a'],
+        createdAt: 1,
+      }],
+      confirmedSixViewVersionId: 'six-view-a',
+      updatedAt: 2,
+    })
+    await putProductWorkspace(workspace)
+    useStore.setState({ activeProductWorkspaceId: 'active-workspace' })
+
+    await useStore.getState().clearActiveProductWorkspaceReferences()
+
+    const [saved] = await getAllProductWorkspaces()
+    expect(saved).toMatchObject({
+      id: 'active-workspace',
+      referenceImageIds: [],
+      confirmedSixViewVersionId: null,
+      sixViewVersions: workspace.sixViewVersions,
+    })
+    expect(saved?.updatedAt).toBeGreaterThan(2)
   })
 })
 

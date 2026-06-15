@@ -34,16 +34,22 @@ export function buildStyleReferenceLibrary(options: {
   sessions: AmazonPlannerSession[]
   currentMode: AmazonPlannerMode
   productTitle: string
+  currentWorkspaceId?: string | null
   limit?: number
 }): StyleReferenceLibraryItem[] {
   const limit = options.limit ?? 12
+  const currentWorkspaceId = options.currentWorkspaceId?.trim() ?? ''
   const items: RankedStyleReference[] = []
 
   for (const session of options.sessions) {
     const productTitle = session.draft.productTitle.trim() || session.title
-    const productRank = getProductRank(productTitle, options.productTitle)
     const modeRank = getModeRank(session.mode, options.currentMode)
-    if (productRank !== 0 || modeRank !== 0) continue
+    const productRank = getProductRank(productTitle, options.productTitle)
+    if (currentWorkspaceId) {
+      if (session.id !== currentWorkspaceId) continue
+    } else if (productRank !== 0) {
+      continue
+    }
 
     for (const styleImage of session.styleImages) {
       const imageId = styleImage.imageId?.trim()
@@ -60,7 +66,7 @@ export function buildStyleReferenceLibrary(options: {
         productTitle,
         mode: session.mode,
         updatedAt: session.updatedAt,
-        rank: 0,
+        rank: modeRank,
       })
     }
   }

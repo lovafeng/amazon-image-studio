@@ -61,4 +61,18 @@ describe('TaskGrid virtualization', () => {
     expect(searchBarSource).toContain('filterProductWorkspaceId: activeProductWorkspaceId ?? undefined')
     expect(inputBarSource).toContain('filterProductWorkspaceId: activeProductWorkspaceId ?? undefined')
   })
+
+  it('clears active workspace references when the bottom input images are cleared', () => {
+    expect(inputBarSource).toContain('clearActiveProductWorkspaceReferences')
+    expect(inputBarSource).toContain('ACTIVE_PRODUCT_WORKSPACE_REFERENCES_CLEAR_EVENT')
+  })
+
+  it('wires image category filtering through every bottom history surface', () => {
+    expect(taskGridSource).toContain('filterImageCategory')
+    expect(searchBarSource).toContain('filterImageCategory')
+    expect(inputBarSource).toContain('filterImageCategory')
+    expect(searchBarSource).toContain('全部类别')
+    expect(searchBarSource).toContain('DSP 素材')
+    expect(searchBarSource).toContain('高清')
+  })
 })

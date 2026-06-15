@@ -56,6 +56,44 @@ export interface AdminSummary {
   totalTokens: number
 }
 
+export interface AdminOperationsSummary {
+  northStar: {
+    completedImageSets: number
+  }
+  funnel: {
+    workspaces: number
+    preparedWorkspaces: number
+    sixViewGeneratedWorkspaces: number
+    sixViewConfirmedWorkspaces: number
+    styleGeneratedWorkspaces: number
+    styleGeneratedImages: number
+    plannedWorkspaces: number
+    imageStartedWorkspaces: number
+    completedImageSets: number
+  }
+  efficiency: {
+    imageTaskP80Seconds: number
+    imageTaskAverageSeconds: number
+  }
+  stability: {
+    imageTasks: number
+    imageTaskSuccesses: number
+    imageTaskFailures: number
+    imageTaskSuccessRate: number
+    imageTaskFailureRate: number
+  }
+  cost: {
+    calls: number
+    totalTokens: number
+    generatedImages: number
+    callsPerCompletedImageSet: number
+  }
+  quality: {
+    favoriteTasks: number
+    favoriteRate: number
+  }
+}
+
 export interface UsagePayload {
   summary?: UsageSummary
   summaries?: UsageSummary[]
@@ -92,6 +130,12 @@ export async function getAdminTasks(): Promise<AdminTask[]> {
     credentials: 'same-origin',
   }))
   return body.items
+}
+
+export async function getAdminOperations(): Promise<AdminOperationsSummary> {
+  return readJsonResponse(await fetch('/api/admin/operations', {
+    credentials: 'same-origin',
+  }))
 }
 
 export async function getMyUsage(): Promise<UsagePayload> {

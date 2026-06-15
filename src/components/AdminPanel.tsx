@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  getAdminOperations,
   getAdminSummary,
   getAdminTasks,
   getAdminUsage,
@@ -10,11 +11,12 @@ import {
   type AdminSummary,
   type AdminTask,
   type AdminUser,
+  type AdminOperationsSummary,
   type UsageEvent,
   type UsageSummary,
 } from '../lib/admin'
 
-type AdminTab = 'summary' | 'users' | 'usage' | 'tasks'
+type AdminTab = 'summary' | 'users' | 'usage' | 'operations' | 'tasks'
 
 function formatNumber(value?: number) {
   return Number(value ?? 0).toLocaleString()
@@ -26,6 +28,16 @@ function formatDate(value?: number) {
 
 function formatTokenLimit(value?: number | null) {
   return value == null ? '不限' : formatNumber(value)
+}
+
+function formatPercent(value?: number) {
+  return `${Math.round(Number(value ?? 0) * 100)}%`
+}
+
+function formatSeconds(value?: number) {
+  const seconds = Number(value ?? 0)
+  if (seconds < 60) return `${formatNumber(seconds)} 秒`
+  return `${formatNumber(Math.round(seconds / 60))} 分钟`
 }
 
 function userLabel(user: Pick<AdminUser, 'email' | 'phone' | 'id'>) {
@@ -43,9 +55,78 @@ function taskStatusLabel(status?: string) {
   return status || '未知'
 }
 
+function metricCard(label: string, value: string | number, note?: string) {
+  return (
+    <article key={label} className="rounded-lg border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-900">
+      <span className="text-xs text-gray-500 dark:text-gray-400">{label}</span>
+      <strong className="mt-2 block text-xl text-gray-900 dark:text-gray-100">{typeof value === 'number' ? formatNumber(value) : value}</strong>
+      {note && <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">{note}</span>}
+    </article>
+  )
+}
+
+export function AdminOperationsStats({ operations }: { operations: AdminOperationsSummary | null }) {
+  return (
+    <section className="space-y-5">
+      <div>
+        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">北极星指标</h2>
+        <div className="mt-3 grid gap-3 md:grid-cols-4">
+          {metricCard('可上架商品图套', operations?.northStar.completedImageSets ?? 0, '已确认 6 视图且目标图片位生成完成')}
+          {metricCard('套图完成率', formatPercent(operations?.funnel.workspaces ? (operations.funnel.completedImageSets / operations.funnel.workspaces) : 0), '完成套图 / 商品工作区')}
+          {metricCard('单图成功率', formatPercent(operations?.stability.imageTaskSuccessRate), '成功输出图任务 / 全部任务')}
+          {metricCard('每套调用', operations?.cost.callsPerCompletedImageSet.toFixed(1) ?? '0.0', 'AI 调用次数 / 完成套图')}
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">生产漏斗</h2>
+        <div className="mt-3 grid gap-3 md:grid-cols-4">
+          {metricCard('商品工作区', operations?.funnel.workspaces ?? 0)}
+          {metricCard('资料已准备', operations?.funnel.preparedWorkspaces ?? 0)}
+          {metricCard('已生成 6 视图', operations?.funnel.sixViewGeneratedWorkspaces ?? 0)}
+          {metricCard('已确认 6 视图', operations?.funnel.sixViewConfirmedWorkspaces ?? 0)}
+          {metricCard('已生成风格板', operations?.funnel.styleGeneratedWorkspaces ?? 0)}
+          {metricCard('风格板图片', operations?.funnel.styleGeneratedImages ?? 0)}
+          {metricCard('已完成策划', operations?.funnel.plannedWorkspaces ?? 0)}
+          {metricCard('已开始出图', operations?.funnel.imageStartedWorkspaces ?? 0)}
+          {metricCard('套图完成', operations?.funnel.completedImageSets ?? 0)}
+        </div>
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-3">
+        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-900">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">效率</h2>
+          <div className="mt-3 space-y-2 text-sm text-gray-600 dark:text-gray-300">
+            <div>单图 P80：{formatSeconds(operations?.efficiency.imageTaskP80Seconds)}</div>
+            <div>单图平均：{formatSeconds(operations?.efficiency.imageTaskAverageSeconds)}</div>
+          </div>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-900">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">稳定性</h2>
+          <div className="mt-3 space-y-2 text-sm text-gray-600 dark:text-gray-300">
+            <div>图片任务：{formatNumber(operations?.stability.imageTasks)}</div>
+            <div>成功 / 失败：{formatNumber(operations?.stability.imageTaskSuccesses)} / {formatNumber(operations?.stability.imageTaskFailures)}</div>
+            <div>失败率：{formatPercent(operations?.stability.imageTaskFailureRate)}</div>
+          </div>
+        </div>
+        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-white/[0.08] dark:bg-gray-900">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">成本与质量</h2>
+          <div className="mt-3 space-y-2 text-sm text-gray-600 dark:text-gray-300">
+            <div>调用次数：{formatNumber(operations?.cost.calls)}</div>
+            <div>Token：{formatNumber(operations?.cost.totalTokens)}</div>
+            <div>生成图片：{formatNumber(operations?.cost.generatedImages)}</div>
+            <div>收藏率：{formatPercent(operations?.quality.favoriteRate)}，收藏任务 {formatNumber(operations?.quality.favoriteTasks)}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export default function AdminPanel() {
   const [tab, setTab] = useState<AdminTab>('summary')
   const [summary, setSummary] = useState<AdminSummary | null>(null)
+  const [operations, setOperations] = useState<AdminOperationsSummary | null>(null)
   const [users, setUsers] = useState<AdminUser[]>([])
   const [usageSummaries, setUsageSummaries] = useState<UsageSummary[]>([])
   const [events, setEvents] = useState<UsageEvent[]>([])
@@ -58,12 +139,13 @@ export default function AdminPanel() {
   const load = () => {
     setLoading(true)
     setError('')
-    Promise.all([getAdminSummary(), getAdminUsers(), getAdminUsage(), getAdminTasks()])
-      .then(([nextSummary, nextUsers, usage, nextTasks]) => {
+    Promise.all([getAdminSummary(), getAdminUsers(), getAdminUsage(), getAdminOperations(), getAdminTasks()])
+      .then(([nextSummary, nextUsers, usage, nextOperations, nextTasks]) => {
         setSummary(nextSummary)
         setUsers(nextUsers)
         setUsageSummaries(usage.summaries ?? [])
         setEvents(usage.events)
+        setOperations(nextOperations)
         setTasks(nextTasks)
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
@@ -105,6 +187,7 @@ export default function AdminPanel() {
             ['summary', '管理总览'],
             ['users', '用户管理'],
             ['usage', '使用统计'],
+            ['operations', '运营统计'],
             ['tasks', '分析任务'],
           ].map(([value, label]) => (
             <button
@@ -230,6 +313,10 @@ export default function AdminPanel() {
             </div>
           </div>
         </section>
+      )}
+
+      {tab === 'operations' && (
+        <AdminOperationsStats operations={operations} />
       )}
 
       {tab === 'tasks' && (

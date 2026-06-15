@@ -10,6 +10,7 @@ import type {
   AppSettings,
   AppMode,
   HistoryAspectFilter,
+  HistoryImageCategoryFilter,
   HistoryWorkflowFilter,
   TaskParams,
   InputImage,
@@ -879,8 +880,11 @@ interface AppState {
   setFilterWorkflow: (workflow: HistoryWorkflowFilter) => void
   filterAspect: HistoryAspectFilter
   setFilterAspect: (aspect: HistoryAspectFilter) => void
+  filterImageCategory: HistoryImageCategoryFilter
+  setFilterImageCategory: (category: HistoryImageCategoryFilter) => void
   activeProductWorkspaceId: string | null
   setActiveProductWorkspaceId: (id: string | null) => void
+  clearActiveProductWorkspaceReferences: () => Promise<void>
   pendingTaskCategory: PendingTaskCategory | null
   setPendingTaskCategory: (category: PendingTaskCategory | null) => void
   galleryStyleReferenceRequest: { imageId: string; label: string; requestedAt: number } | null
@@ -1495,8 +1499,23 @@ export const useStore = create<AppState>()(
       setFilterWorkflow: (filterWorkflow) => set({ filterWorkflow }),
       filterAspect: 'all',
       setFilterAspect: (filterAspect) => set({ filterAspect }),
+      filterImageCategory: 'all',
+      setFilterImageCategory: (filterImageCategory) => set({ filterImageCategory }),
       activeProductWorkspaceId: null,
       setActiveProductWorkspaceId: (activeProductWorkspaceId) => set({ activeProductWorkspaceId }),
+      clearActiveProductWorkspaceReferences: async () => {
+        const activeProductWorkspaceId = get().activeProductWorkspaceId
+        if (!activeProductWorkspaceId) return
+        const workspaces = await getAllProductWorkspaces()
+        const workspace = workspaces.find((item) => item.id === activeProductWorkspaceId)
+        if (!workspace) return
+        await putProductWorkspace({
+          ...workspace,
+          referenceImageIds: [],
+          confirmedSixViewVersionId: null,
+          updatedAt: Date.now(),
+        })
+      },
       pendingTaskCategory: null,
       setPendingTaskCategory: (pendingTaskCategory) => set({ pendingTaskCategory }),
       galleryStyleReferenceRequest: null,
@@ -1616,6 +1635,7 @@ export function resetUserScopedLocalState() {
     filterProductTitle: '',
     filterWorkflow: 'all',
     filterAspect: 'all',
+    filterImageCategory: 'all',
     activeProductWorkspaceId: null,
   })
 }
@@ -2214,9 +2234,10 @@ export async function initStore() {
 }
 
 /** 提交新任务 */
-export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean; apiProfileId?: string } = {}): Promise<boolean> {
-  const { settings, prompt, inputImages, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, pendingTaskCategory, showToast, setConfirmDialog } =
+export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean; apiProfileId?: string; inputImages?: InputImage[] } = {}): Promise<boolean> {
+  const { settings, prompt, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, pendingTaskCategory, showToast, setConfirmDialog } =
     useStore.getState()
+  const inputImages = options.inputImages ?? useStore.getState().inputImages
 
   const normalizedSettings = normalizeSettings(settings)
   const requestedProfile = options.apiProfileId
@@ -3876,8 +3897,8 @@ async function executeTask(taskId: string) {
   }
   let activeProfile = taskProfile ?? getActiveApiProfile(settings)
   const isAmazonDraftGeneration = isAmazonDraftGenerationTask(task)
-  const useSimpleOpenAIAmazonDraftGeneration = isAmazonDraftGeneration && activeProfile.provider === 'openai'
-  if (useSimpleOpenAIAmazonDraftGeneration) {
+  const useOpenAIAmazonDraftImagesApi = isAmazonDraftGeneration && activeProfile.provider === 'openai'
+  if (useOpenAIAmazonDraftImagesApi) {
     activeProfile = useNonStreamingImagesApiForAmazonDraft(activeProfile)
   }
   const requestSettings = createSettingsForApiProfile(settings, activeProfile)
@@ -3897,24 +3918,22 @@ async function executeTask(taskId: string) {
     let apiInputDataUrls: string[] = []
     let apiMaskDataUrl: string | undefined
     let maskDataUrl: string | undefined
-    if (!useSimpleOpenAIAmazonDraftGeneration) {
-      // 获取输入图片 data URLs
-      const inputDataUrls: string[] = []
-      for (const imgId of task.inputImageIds) {
-        const dataUrl = await ensureImageCached(imgId)
-        if (!dataUrl) throw new Error('输入图片已不存在')
-        inputDataUrls.push(dataUrl)
-      }
-      if (task.maskImageId) {
-        maskDataUrl = await ensureImageCached(task.maskImageId)
-        if (!maskDataUrl) throw new Error('遮罩图片已不存在')
-      }
-      const preparedPayload = await prepareReferenceImageAndMaskPayload(inputDataUrls, maskDataUrl, {
-        stage: getReferencePayloadStageForTask(task),
-      })
-      apiInputDataUrls = preparedPayload.dataUrls
-      apiMaskDataUrl = preparedPayload.maskDataUrl
+    // 获取输入图片 data URLs
+    const inputDataUrls: string[] = []
+    for (const imgId of task.inputImageIds) {
+      const dataUrl = await ensureImageCached(imgId)
+      if (!dataUrl) throw new Error('输入图片已不存在')
+      inputDataUrls.push(dataUrl)
     }
+    if (task.maskImageId) {
+      maskDataUrl = await ensureImageCached(task.maskImageId)
+      if (!maskDataUrl) throw new Error('遮罩图片已不存在')
+    }
+    const preparedPayload = await prepareReferenceImageAndMaskPayload(inputDataUrls, maskDataUrl, {
+      stage: getReferencePayloadStageForTask(task),
+    })
+    apiInputDataUrls = preparedPayload.dataUrls
+    apiMaskDataUrl = preparedPayload.maskDataUrl
 
     const result = await callImageApi({
       settings: requestSettings,

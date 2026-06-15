@@ -72,6 +72,140 @@ function publicUser(user) {
   }
 }
 
+const LISTING_REQUIRED_SLOTS = ['MAIN', 'PT01', 'PT02', 'PT03', 'PT04', 'PT05', 'PT06']
+const APLUS_REQUIRED_SLOTS = {
+  'standard-large': ['A+L01', 'A+L02', 'A+L03', 'A+L04', 'A+L05'],
+  standard: ['A+S01', 'A+S02', 'A+S03', 'A+S04', 'A+S05', 'A+S06', 'A+S07', 'A+S08'],
+  premium: ['A+P01', 'A+P02', 'A+P03', 'A+P04', 'A+P05', 'A+P06'],
+}
+
+function taskWorkspaceId(task) {
+  return task.category?.productWorkspaceId || task.category?.plannerSessionId || ''
+}
+
+function taskWorkflow(task) {
+  return task.category?.workflow || ''
+}
+
+function workflowForWorkspace(workspace) {
+  if (workspace.mode === 'aplus') return 'amazon-aplus'
+  if (workspace.mode === 'dsp') return 'amazon-dsp'
+  return 'amazon-listing'
+}
+
+function plannedSlotsForWorkspace(workspace) {
+  if (workspace.mode === 'aplus') {
+    const planned = (workspace.aPlusPlans || []).map((plan) => plan.slot).filter(Boolean)
+    return planned.length ? planned : APLUS_REQUIRED_SLOTS[workspace.aPlusType] || APLUS_REQUIRED_SLOTS['standard-large']
+  }
+  if (workspace.mode === 'dsp') {
+    return (workspace.dspPlans || []).map((plan) => plan.slot).filter(Boolean)
+  }
+  const planned = (workspace.imagePlans || []).map((plan) => plan.slot).filter(Boolean)
+  return planned.length ? planned : LISTING_REQUIRED_SLOTS
+}
+
+function hasProductPreparation(workspace) {
+  return Boolean(
+    (workspace.referenceImageIds || []).length &&
+    (workspace.listingText || workspace.title || workspace.draft?.productTitle),
+  )
+}
+
+function ratio(numerator, denominator) {
+  return denominator ? numerator / denominator : 0
+}
+
+function percentile(values, percentileValue) {
+  if (!values.length) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const index = Math.ceil((percentileValue / 100) * sorted.length) - 1
+  return sorted[Math.max(0, Math.min(sorted.length - 1, index))]
+}
+
+function buildAdminOperationsSummary(storage) {
+  const workspaces = storage.getAllUserProductWorkspaces(10000).map((item) => item.workspace)
+  const tasks = storage.getAllUserTasks(10000).map((item) => item.task)
+  const usageSummaries = storage.getAllUsageSummaries()
+  const doneTasks = tasks.filter((task) => task.status === 'done' && (task.outputImages || []).length > 0)
+  const failedTasks = tasks.filter((task) => task.status === 'error')
+  const workspaceIdsWithTasks = new Set(tasks.map(taskWorkspaceId).filter(Boolean))
+  const doneSlotsByWorkspaceWorkflow = new Map()
+
+  for (const task of doneTasks) {
+    const workspaceId = taskWorkspaceId(task)
+    const workflow = taskWorkflow(task)
+    const slot = task.category?.amazonSlot
+    if (!workspaceId || !workflow || !slot) continue
+    const key = `${workspaceId}::${workflow}`
+    const slots = doneSlotsByWorkspaceWorkflow.get(key) || new Set()
+    slots.add(slot)
+    doneSlotsByWorkspaceWorkflow.set(key, slots)
+  }
+
+  const completedImageSets = workspaces.filter((workspace) => {
+    if (!workspace.confirmedSixViewVersionId) return false
+    const expectedSlots = plannedSlotsForWorkspace(workspace)
+    if (!expectedSlots.length) return false
+    const doneSlots = doneSlotsByWorkspaceWorkflow.get(`${workspace.id}::${workflowForWorkspace(workspace)}`) || new Set()
+    return expectedSlots.every((slot) => doneSlots.has(slot))
+  }).length
+  const elapsedSeconds = doneTasks
+    .map((task) => task.elapsed)
+    .filter((elapsed) => typeof elapsed === 'number' && elapsed >= 0)
+    .map((elapsed) => Math.round(elapsed / 1000))
+  const totalCalls = usageSummaries.reduce((sum, item) => sum + item.calls, 0)
+  const totalTokens = usageSummaries.reduce((sum, item) => sum + item.totalTokens, 0)
+  const totalGeneratedImages = usageSummaries.reduce((sum, item) => sum + item.generatedImages, 0)
+  const favoriteTasks = tasks.filter((task) => task.isFavorite).length
+  const styleGeneratedWorkspaces = workspaces.filter((workspace) =>
+    (workspace.styleImages || []).some((image) => image.imageId),
+  ).length
+  const styleGeneratedImages = workspaces.reduce((sum, workspace) =>
+    sum + (workspace.styleImages || []).filter((image) => image.imageId).length,
+  0)
+
+  return {
+    northStar: {
+      completedImageSets,
+    },
+    funnel: {
+      workspaces: workspaces.length,
+      preparedWorkspaces: workspaces.filter(hasProductPreparation).length,
+      sixViewGeneratedWorkspaces: workspaces.filter((workspace) => (workspace.sixViewVersions || []).length > 0).length,
+      sixViewConfirmedWorkspaces: workspaces.filter((workspace) => workspace.confirmedSixViewVersionId).length,
+      styleGeneratedWorkspaces,
+      styleGeneratedImages,
+      plannedWorkspaces: workspaces.filter((workspace) => plannedSlotsForWorkspace(workspace).length > 0).length,
+      imageStartedWorkspaces: workspaceIdsWithTasks.size,
+      completedImageSets,
+    },
+    efficiency: {
+      imageTaskP80Seconds: percentile(elapsedSeconds, 80),
+      imageTaskAverageSeconds: elapsedSeconds.length
+        ? Math.round(elapsedSeconds.reduce((sum, item) => sum + item, 0) / elapsedSeconds.length)
+        : 0,
+    },
+    stability: {
+      imageTasks: tasks.length,
+      imageTaskSuccesses: doneTasks.length,
+      imageTaskFailures: failedTasks.length,
+      imageTaskSuccessRate: ratio(doneTasks.length, tasks.length),
+      imageTaskFailureRate: ratio(failedTasks.length, tasks.length),
+    },
+    cost: {
+      calls: totalCalls,
+      totalTokens,
+      generatedImages: totalGeneratedImages,
+      callsPerCompletedImageSet: ratio(totalCalls, completedImageSets),
+    },
+    quality: {
+      favoriteTasks,
+      favoriteRate: ratio(favoriteTasks, tasks.length),
+    },
+  }
+}
+
 function buildAiProxyUrl(baseUrl, pathname, search) {
   const url = new URL(baseUrl)
   const endpoint = pathname.replace(/^\/api-proxy\/+/, '')
@@ -830,6 +964,11 @@ async function handleUsageAndAdmin(req, res, storage, pathname, session) {
     sendOk(res, {
       items: storage.getAllUserTasks(),
     })
+    return true
+  }
+
+  if (req.method === 'GET' && pathname === '/api/admin/operations') {
+    sendOk(res, buildAdminOperationsSummary(storage))
     return true
   }
 

@@ -370,6 +370,14 @@ const STRUCTURE_REFERENCE_GUARD = [
   '- If a negative prompt mentions logos, remove only floating logo overlays, platform logos, third-party logos, extra marketing badges, and added corner marks. Do not remove real on-product brand marks.',
 ].join('\n')
 
+const DSP_PRODUCT_FIT_GUARD = [
+  'DSP product-fit rule:',
+  '- Do not stretch, squeeze, elongate, compress, crop-warp, or redraw the product to fit the DSP canvas.',
+  '- Preserve the product width-to-height ratio and visible silhouette from the chosen product reference view.',
+  '- For narrow banners, show a smaller product, a partial crop, or a reference-view detail crop instead of forcing the full product into the canvas.',
+  '- Use background, typography, CTA, logo placement, props, color blocks, and empty space to fill the remaining canvas; never use product deformation as layout compensation.',
+].join('\n')
+
 export function isAmazonListingMainSlot(slot?: string | null): boolean {
   return slot?.trim().toUpperCase() === 'MAIN'
 }
@@ -391,10 +399,12 @@ function formatPromptBlock(options: {
   structureReferenceAttached?: boolean
   sixViewReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
+  productFitGuard?: string
 }) {
   const hasStructureReference = options.structureReferenceAttached || options.sixViewReferenceAttached
   const sections = [
     hasStructureReference ? STRUCTURE_REFERENCE_GUARD : '',
+    options.productFitGuard?.trim() ?? '',
     options.prompt.trim(),
     options.seriesStyleGuide?.trim()
       ? `Series style guide:\n${options.seriesStyleGuide.trim()}`
@@ -601,5 +611,8 @@ export function buildAmazonDspPlanPrompt(plan: Pick<AmazonDspPlan, 'prompt' | 'n
   sixViewReferenceAttached?: boolean
   styleDensityMode?: AmazonStyleDensityMode
 }): string {
-  return formatPromptBlock(plan)
+  return formatPromptBlock({
+    ...plan,
+    productFitGuard: DSP_PRODUCT_FIT_GUARD,
+  })
 }

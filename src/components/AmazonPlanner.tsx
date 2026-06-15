@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent as ReactMouseEvent } from 'react'
-import { addImageFromFile, addImageFromUrl, ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail, submitTask, useStore } from '../store'
+import { addImageFromFile, addImageFromUrl, ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail, submitTask, submitTaskAndGetTask, useStore } from '../store'
 import { createOpenAIInputImageProfile, getAmazonPlannerProfile, getDefaultImageProfile, normalizeSettings, validateApiProfile } from '../lib/apiProfiles'
 import {
   DEFAULT_AMAZON_PROMPT_DRAFT,
@@ -389,14 +389,6 @@ export function getListingTargetSizeForResolution(resolution: AmazonPlannerResol
   if (resolution === '4k') return '4096x4096'
   if (resolution === '2k') return '2048x2048'
   return '1024x1024'
-}
-
-function findPlannerBatchTask(plannerBatchId: string, slot: string, createdAfter: number) {
-  return useStore.getState().tasks.find((task) =>
-    task.createdAt >= createdAfter &&
-    task.category?.plannerBatchId === plannerBatchId &&
-    task.category?.amazonSlot === slot,
-  )
 }
 
 function waitForPlannerTaskCompletion(taskId: string) {
@@ -1631,7 +1623,6 @@ export default function AmazonPlanner() {
     setInputImages(structureInputImages)
 
     const plannerBatchId = createPlannerBatchId()
-    const batchStartedAt = Date.now()
     const jobs = buildBatchGenerateJobs(plannerBatchId).filter((job) => actionProgress[job.actionKey] !== 'submitted')
     if (!jobs.length) {
       showToast('当前没有未提交的图片方案', 'error')
@@ -1656,16 +1647,15 @@ export default function AmazonPlanner() {
         n: 1,
       })
       markActionProgress(job.actionKey, 'filled')
-      const submitted = await submitTask({ apiProfileId: imageProfile.id, inputImages: structureInputImages })
-      if (!submitted) {
+      const submittedTask = await submitTaskAndGetTask({ apiProfileId: imageProfile.id, inputImages: structureInputImages })
+      if (!submittedTask) {
         setIsBatchSubmitting(false)
         showToast(`批量提交已停止：${job.slot} 未提交`, 'error')
         return
       }
       markActionProgress(job.actionKey, 'submitted')
       setBatchSubmittedCount((count) => count + 1)
-      const submittedTask = findPlannerBatchTask(plannerBatchId, job.slot, batchStartedAt)
-      if (submittedTask) await waitForPlannerTaskCompletion(submittedTask.id)
+      await waitForPlannerTaskCompletion(submittedTask.id)
     }
 
     setIsBatchSubmitting(false)

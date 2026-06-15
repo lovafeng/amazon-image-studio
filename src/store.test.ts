@@ -130,7 +130,7 @@ import * as db from './lib/db'
 import { callImageApi } from './lib/api'
 import { callAgentResponsesApi, callBatchImageSingle } from './lib/agentApi'
 import * as canvasImage from './lib/canvasImage'
-import { cleanStaleAgentInputDrafts, clearData, createAmazonFinalImageFromDraft, editOutputs, ensureImageUrlCached, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, useStore } from './store'
+import { cleanStaleAgentInputDrafts, clearData, createAmazonFinalImageFromDraft, editOutputs, ensureImageUrlCached, exportData, getErrorToastMessage, getPersistedState, getTaskApiProfile, importData, initStore, markInterruptedOpenAIRunningTasks, mergePersistedState, regenerateAgentAssistantMessage, removeMultipleTasks, removeTask, retryTask, reuseConfig, submitAgentMessage, submitTask, submitTaskAndGetTask, useStore } from './store'
 
 const imageA = { id: 'image-a', dataUrl: 'data:image/png;base64,a' }
 const imageB = { id: 'image-b', dataUrl: 'data:image/png;base64,b' }
@@ -420,6 +420,17 @@ describe('mask draft lifecycle in store actions', () => {
     expect(submitted).toBe(true)
     expect(state.tasks).toHaveLength(1)
     expect(state.showToast).toHaveBeenCalledWith('任务已提交', 'success')
+  })
+
+  it('returns the created task record for callers that must wait on a specific submission', async () => {
+    const submittedTask = await submitTaskAndGetTask()
+
+    const state = useStore.getState()
+    expect(submittedTask).toBe(state.tasks[0])
+    expect(submittedTask).toMatchObject({
+      prompt: 'prompt',
+      status: 'running',
+    })
   })
 
   it('blocks gallery submit with a switch-config dialog when the active profile is Chat Completions', async () => {

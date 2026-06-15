@@ -288,6 +288,9 @@ describe('DSP asset helpers', () => {
     })
 
     expect(prompt).toContain('Create a polished DSP custom banner')
+    expect(prompt).toContain('DSP product-fit rule:')
+    expect(prompt).toContain('Do not stretch, squeeze, elongate, compress, crop-warp, or redraw the product to fit the DSP canvas')
+    expect(prompt).toContain('For narrow banners, show a smaller product, a partial crop, or a reference-view detail crop')
     expect(prompt).toContain('Series style guide:')
     expect(prompt).toContain('Negative prompt:')
     expect(prompt).toContain('refined minimal Amazon layout')

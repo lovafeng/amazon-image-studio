@@ -170,7 +170,9 @@ describe('AmazonPlanner', () => {
     expect(amazonPlannerSource).toContain("(['1k', '2k', '4k'] as const)")
     expect(amazonPlannerSource).toContain('const resolutionTier = getAmazonPlannerResolutionTier(resolution)')
     expect(amazonPlannerSource).toContain('const listingTargetSize = getListingTargetSizeForResolution(resolution)')
+    expect(amazonPlannerSource).toContain('const submittedTask = await submitTaskAndGetTask({ apiProfileId: imageProfile.id, inputImages: structureInputImages })')
     expect(amazonPlannerSource).toContain('await waitForPlannerTaskCompletion(submittedTask.id)')
+    expect(amazonPlannerSource).not.toContain('findPlannerBatchTask')
   })
 
   it('uses current-next-step copy for the submit console', () => {

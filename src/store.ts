@@ -2233,8 +2233,19 @@ export async function initStore() {
   }
 }
 
+type SubmitTaskOptions = {
+  allowFullMask?: boolean
+  useCurrentApiProfileWhenReusedMissing?: boolean
+  apiProfileId?: string
+  inputImages?: InputImage[]
+}
+
 /** 提交新任务 */
-export async function submitTask(options: { allowFullMask?: boolean; useCurrentApiProfileWhenReusedMissing?: boolean; apiProfileId?: string; inputImages?: InputImage[] } = {}): Promise<boolean> {
+export async function submitTask(options: SubmitTaskOptions = {}): Promise<boolean> {
+  return Boolean(await submitTaskAndGetTask(options))
+}
+
+export async function submitTaskAndGetTask(options: SubmitTaskOptions = {}): Promise<TaskRecord | null> {
   const { settings, prompt, maskDraft, params, reusedTaskApiProfileId, reusedTaskApiProfileName, reusedTaskApiProfileMissing, pendingTaskCategory, showToast, setConfirmDialog } =
     useStore.getState()
   const inputImages = options.inputImages ?? useStore.getState().inputImages
@@ -2245,7 +2256,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
     : null
   if (options.apiProfileId && !requestedProfile) {
     showToast('指定的生图 API 配置不存在', 'error')
-    return false
+    return null
   }
 
   let activeProfile = requestedProfile ?? getImageGenerationProfile(settings) ?? getActiveApiProfile(settings)
@@ -2265,7 +2276,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
         void submitTask({ ...options, useCurrentApiProfileWhenReusedMissing: true })
       },
         })
-        return false
+        return null
       }
     } else {
       activeProfile = reusedProfile
@@ -2291,19 +2302,19 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
         useStore.getState().setShowSettings(true, 'api')
       },
     })
-    return false
+    return null
   }
 
   if (validateApiProfile(activeProfile)) {
     showToast(`请先完善请求 API 配置：${validateApiProfile(activeProfile)}`, 'error')
     useStore.getState().setShowSettings(true)
-    return false
+    return null
   }
 
   const trimmedPrompt = prompt.trim()
   if (!trimmedPrompt) {
     showToast('请输入提示词', 'error')
-    return false
+    return null
   }
   const category = resolvePendingTaskCategory(pendingTaskCategory, trimmedPrompt)
 
@@ -2325,7 +2336,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
             void submitTask({ ...options, allowFullMask: true })
           },
         })
-        return false
+        return null
       }
       maskImageId = await storeImage(maskDraft.maskDataUrl, 'mask')
       cacheImage(maskImageId, maskDraft.maskDataUrl)
@@ -2335,7 +2346,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
         useStore.getState().clearMaskDraft()
       }
       showToast(err instanceof Error ? err.message : String(err), 'error')
-      return false
+      return null
     }
   }
 
@@ -2343,12 +2354,12 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
   if (styleReferenceImageId && !orderedInputImages.some((img) => img.id === styleReferenceImageId)) {
     if (orderedInputImages.length + 1 > API_MAX_INPUT_IMAGES) {
       showToast(`已选择隐藏风格参考板，实际参考图数量不能超过 ${API_MAX_INPUT_IMAGES} 张；请删除一张产品参考图后再提交。`, 'error')
-      return false
+      return null
     }
     const dataUrl = await ensureImageCached(styleReferenceImageId)
     if (!dataUrl) {
       showToast('已选择的风格参考板不存在，请重新生成并选择风格板。', 'error')
-      return false
+      return null
     }
     orderedInputImages = [...orderedInputImages, { id: styleReferenceImageId, dataUrl }]
   }
@@ -2403,7 +2414,7 @@ export async function submitTask(options: { allowFullMask?: boolean; useCurrentA
 
   // 异步调用 API
   executeTask(taskId)
-  return true
+  return task
 }
 
 function getActiveAgentConversation(): AgentConversation {

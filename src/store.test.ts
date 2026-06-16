@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import storeSource from './store.ts?raw'
 import { DEFAULT_PARAMS } from './types'
-import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_IMAGES_MODEL, DEFAULT_OPENAI_PROFILE_ID, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, getActiveApiProfile, normalizeSettings } from './lib/apiProfiles'
+import { createDefaultFalProfile, createDefaultOpenAIProfile, DEFAULT_IMAGES_MODEL, DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID, DEFAULT_OPENAI_PROFILE_ID, DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, getActiveApiProfile, normalizeSettings } from './lib/apiProfiles'
 import type { AgentConversation, AmazonPlannerSession, ExportData, ProductWorkspace, StoredImage, StoredImageThumbnail, TaskRecord } from './types'
 import { getSelectedImageMentionLabel } from './lib/promptImageMentions'
 vi.mock('./lib/db', () => {
@@ -1216,6 +1216,52 @@ describe('mask draft lifecycle in store actions', () => {
     const state = useStore.getState()
     expect(result).toBe(true)
     expect(state.tasks[0]?.apiProfileId).toBe(currentProfile.id)
+    expect(state.tasks[0]?.inputImageIds).toEqual(['draft-output-a'])
+    expect(state.showToast).not.toHaveBeenCalledWith('指定的生图 API 配置不存在', 'error')
+  })
+
+  it('does not submit the synthetic OpenAI input-image profile id directly for Amazon finals', async () => {
+    const currentProfile = createDefaultOpenAIProfile({
+      id: DEFAULT_OPENAI_PROFILE_ID,
+      name: '默认 Responses 配置',
+      apiKey: 'test-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        profiles: [currentProfile],
+        activeProfileId: currentProfile.id,
+      }),
+    })
+    await putImage({ id: 'draft-output-a', dataUrl: 'data:image/png;base64,ZHJhZnQ=', source: 'generated' })
+    const draftTask = {
+      id: 'draft-task-a',
+      prompt: 'Amazon draft prompt',
+      params: { ...DEFAULT_PARAMS, size: '1024x1024', quality: 'medium' as const },
+      apiProvider: 'openai' as const,
+      apiProfileId: DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID,
+      apiProfileName: '默认输入图生图配置',
+      inputImageIds: ['reference-a'],
+      outputImages: ['draft-output-a'],
+      status: 'done' as const,
+      error: null,
+      createdAt: 1,
+      finishedAt: 2,
+      elapsed: 1,
+      category: {
+        workflow: 'amazon-listing' as const,
+        amazonSlot: 'PT01',
+        generationStage: 'draft' as const,
+      },
+    }
+
+    const result = await createAmazonFinalImageFromDraft(draftTask)
+
+    const state = useStore.getState()
+    expect(result).toBe(true)
+    expect([DEFAULT_OPENAI_PROFILE_ID, DEFAULT_OPENAI_INPUT_IMAGE_PROFILE_ID]).toContain(state.tasks[0]?.apiProfileId)
     expect(state.tasks[0]?.inputImageIds).toEqual(['draft-output-a'])
     expect(state.showToast).not.toHaveBeenCalledWith('指定的生图 API 配置不存在', 'error')
   })

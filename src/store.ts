@@ -4331,7 +4331,10 @@ export async function createAmazonFinalImageFromDraft(task: TaskRecord, selected
 
   const normalizedSettings = normalizeSettings(settings)
   const draftProfile = getTaskApiProfile(normalizedSettings, task)
-  if (draftProfile && draftProfile.apiMode !== 'chat') {
+  const draftProfileStored = draftProfile
+    ? normalizedSettings.profiles.some((profile) => profile.id === draftProfile.id)
+    : false
+  if (draftProfile && draftProfileStored && draftProfile.apiMode !== 'chat') {
     return submitTask({ apiProfileId: draftProfile.id })
   }
 

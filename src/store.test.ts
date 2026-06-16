@@ -1165,7 +1165,13 @@ describe('mask draft lifecycle in store actions', () => {
     expect(finalTask?.prompt).toBe(AMAZON_FINAL_PROMPT)
     expect(finalTask?.prompt).toContain('Use the attached draft image as the single visual source')
     expect(finalTask?.prompt).not.toContain('Amazon draft prompt')
-    expect(finalTask?.params).toMatchObject({ size: '1024x1024', quality: 'high', n: 1 })
+    expect(finalTask?.params).toMatchObject({
+      size: '1024x1024',
+      quality: 'high',
+      output_format: 'jpeg',
+      output_compression: 95,
+      n: 1,
+    })
     expect(finalTask?.category).toMatchObject({
       workflow: 'amazon-listing',
       amazonSlot: 'PT01',

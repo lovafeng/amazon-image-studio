@@ -68,6 +68,8 @@ import { isAmazonListingMainSlot } from './lib/listingPlanner'
 import { collectProductWorkspaceImageIds } from './lib/productWorkspace'
 import { createImageObjectUrlCache } from './lib/imageObjectUrlCache'
 import {
+  AMAZON_FINAL_OUTPUT_COMPRESSION,
+  AMAZON_FINAL_OUTPUT_FORMAT,
   AMAZON_FINAL_QUALITY,
   AMAZON_FINAL_PROMPT,
   createAmazonFinalCategory,
@@ -4321,6 +4323,8 @@ export async function createAmazonFinalImageFromDraft(task: TaskRecord, selected
   setParams({
     ...task.params,
     quality: AMAZON_FINAL_QUALITY,
+    output_format: AMAZON_FINAL_OUTPUT_FORMAT,
+    output_compression: AMAZON_FINAL_OUTPUT_COMPRESSION,
     n: 1,
   })
   setPendingTaskCategory({

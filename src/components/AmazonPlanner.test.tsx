@@ -224,6 +224,10 @@ describe('AmazonPlanner', () => {
   })
 
   it('shows enlarged side, top and bottom crops for every six-view version before confirmation', () => {
+    expect(amazonPlannerSource).toContain('高级辅助视角检查')
+    expect(amazonPlannerSource).toContain('默认不用；后续生图只使用上方结构参考图')
+    expect(amazonPlannerSource).toContain('isSixViewPanelExpanded &&')
+    expect(amazonPlannerSource).toContain('展开辅助检查')
     expect(amazonPlannerSource).toContain('第 3 格左侧视放大')
     expect(amazonPlannerSource).toContain('第 4 格右侧视放大')
     expect(amazonPlannerSource).toContain('第 5 格俯视放大')

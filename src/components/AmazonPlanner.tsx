@@ -727,6 +727,7 @@ export default function AmazonPlanner() {
   const [isGeneratingSixView, setIsGeneratingSixView] = useState(false)
   const [sixViewError, setSixViewError] = useState('')
   const [sixViewImageSrcById, setSixViewImageSrcById] = useState<Record<string, string>>({})
+  const [isSixViewPanelExpanded, setIsSixViewPanelExpanded] = useState(false)
   const [isPlanning, setIsPlanning] = useState(false)
   const [plannerRunStage, setPlannerRunStage] = useState<PlannerRunStage>('idle')
   const [planningStartedAt, setPlanningStartedAt] = useState<number | null>(null)
@@ -1097,7 +1098,7 @@ export default function AmazonPlanner() {
 
   useEffect(() => {
     const versions = currentWorkspace?.sixViewVersions ?? []
-    if (versions.length === 0) {
+    if (!isSixViewPanelExpanded || versions.length === 0) {
       setSixViewImageSrcById({})
       return
     }
@@ -1112,7 +1113,7 @@ export default function AmazonPlanner() {
     return () => {
       cancelled = true
     }
-  }, [currentWorkspace?.id, currentWorkspace?.sixViewVersions])
+  }, [currentWorkspace?.id, currentWorkspace?.sixViewVersions, isSixViewPanelExpanded])
 
   useEffect(() => {
     const missingPreviewImages = styleImages.filter((image) => image.status === 'done' && image.imageId && !image.dataUrl)
@@ -2972,15 +2973,31 @@ export default function AmazonPlanner() {
           <div className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-white/[0.08] dark:bg-gray-950">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">辅助 6 视图（可选）</div>
+                <div className="text-sm font-semibold text-gray-800 dark:text-gray-100">高级辅助视角检查</div>
                 <div className="mt-0.5 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                  仅用于人工放大检查视角问题；后续生图默认使用上方结构参考图，不再把 6 视图作为默认结构参考。
+                  默认不用；后续生图只使用上方结构参考图。只有排查侧视、俯视或底视问题时再展开查看历史 6 视图。
                 </div>
               </div>
-              <div className={`rounded-lg px-2 py-1 text-xs font-semibold ${confirmedSixViewVersion ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-200' : 'bg-amber-100 text-amber-700 dark:bg-amber-400/10 dark:text-amber-200'}`}>
-                {confirmedSixViewVersion ? '已确认' : '未确认'}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-lg bg-gray-100 px-2 py-1 text-xs font-semibold text-gray-600 dark:bg-white/[0.06] dark:text-gray-300">
+                  {currentWorkspace?.sixViewVersions.length ?? 0} 个历史版本
+                </span>
+                {confirmedSixViewVersion && (
+                  <span className="rounded-lg bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-200">
+                    已人工确认
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setIsSixViewPanelExpanded((value) => !value)}
+                  className="inline-flex h-8 items-center rounded-lg border border-gray-200 bg-white px-3 text-xs font-semibold text-gray-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-200 dark:hover:border-blue-400/40 dark:hover:bg-blue-400/10"
+                >
+                  {isSixViewPanelExpanded ? '收起' : '展开辅助检查'}
+                </button>
               </div>
             </div>
+            {isSixViewPanelExpanded && (
+              <>
             <div className="mt-3 rounded-lg border border-amber-100 bg-white px-3 py-2 dark:border-amber-400/20 dark:bg-gray-900">
               <div className="text-xs font-semibold text-amber-700 dark:text-amber-200">确认前检查</div>
               <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
@@ -3102,7 +3119,7 @@ export default function AmazonPlanner() {
                           disabled={isConfirmed}
                           className={`mt-2 inline-flex h-8 w-full items-center justify-center rounded-lg text-xs font-semibold transition ${isConfirmed ? 'cursor-default bg-emerald-600 text-white' : 'bg-blue-600 text-white hover:bg-blue-500'}`}
                         >
-                          {isConfirmed ? '已设为确认版本' : '设为已确认 6 视图'}
+                          {isConfirmed ? '已人工确认' : '标记为人工确认'}
                         </button>
                       </div>
                     </div>
@@ -3113,6 +3130,8 @@ export default function AmazonPlanner() {
               <div className="mt-3 rounded-lg border border-dashed border-gray-200 bg-white px-3 py-4 text-center text-xs text-gray-500 dark:border-white/[0.08] dark:bg-gray-900 dark:text-gray-400">
                 可按需根据结构参考图生成辅助 6 视图，用来放大检查侧视、俯视和底视；不影响后续草稿生成。
               </div>
+            )}
+              </>
             )}
           </div>
 

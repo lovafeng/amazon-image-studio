@@ -4283,10 +4283,12 @@ export async function reuseConfig(task: TaskRecord) {
 
 export async function createAmazonFinalImageFromDraft(task: TaskRecord, selectedOutputImageId?: string) {
   const {
+    settings,
     setPrompt,
     setParams,
     setInputImages,
     clearMaskDraft,
+    setReusedTaskApiProfile,
     setPendingTaskCategory,
     showToast,
   } = useStore.getState()
@@ -4327,7 +4329,14 @@ export async function createAmazonFinalImageFromDraft(task: TaskRecord, selected
     category: createAmazonFinalCategory(task.category!, draftImageId),
   })
 
-  return submitTask({ apiProfileId: task.apiProfileId })
+  const normalizedSettings = normalizeSettings(settings)
+  const draftProfile = getTaskApiProfile(normalizedSettings, task)
+  if (draftProfile && draftProfile.apiMode !== 'chat') {
+    return submitTask({ apiProfileId: draftProfile.id })
+  }
+
+  setReusedTaskApiProfile(null)
+  return submitTask()
 }
 
 /** 编辑输出：清空当前输入，只保留待编辑的输出图 */

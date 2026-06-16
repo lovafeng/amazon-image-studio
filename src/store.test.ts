@@ -1176,6 +1176,50 @@ describe('mask draft lifecycle in store actions', () => {
     expect(finalTask?.inputImageIds).toEqual(['draft-output-a'])
   })
 
+  it('uses the current image profile when the Amazon draft profile was deleted', async () => {
+    const currentProfile = createDefaultOpenAIProfile({
+      id: 'current-image-profile',
+      name: '当前生图配置',
+      apiKey: 'test-key',
+    })
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        profiles: [currentProfile],
+        activeProfileId: currentProfile.id,
+      }),
+    })
+    await putImage({ id: 'draft-output-a', dataUrl: 'data:image/png;base64,ZHJhZnQ=', source: 'generated' })
+    const draftTask = {
+      id: 'draft-task-a',
+      prompt: 'Amazon draft prompt',
+      params: { ...DEFAULT_PARAMS, size: '1024x1024', quality: 'medium' as const },
+      apiProvider: 'openai' as const,
+      apiProfileId: 'deleted-image-profile',
+      apiProfileName: '已删除生图配置',
+      inputImageIds: ['reference-a'],
+      outputImages: ['draft-output-a'],
+      status: 'done' as const,
+      error: null,
+      createdAt: 1,
+      finishedAt: 2,
+      elapsed: 1,
+      category: {
+        workflow: 'amazon-listing' as const,
+        amazonSlot: 'PT01',
+        generationStage: 'draft' as const,
+      },
+    }
+
+    const result = await createAmazonFinalImageFromDraft(draftTask)
+
+    const state = useStore.getState()
+    expect(result).toBe(true)
+    expect(state.tasks[0]?.apiProfileId).toBe(currentProfile.id)
+    expect(state.tasks[0]?.inputImageIds).toEqual(['draft-output-a'])
+    expect(state.showToast).not.toHaveBeenCalledWith('指定的生图 API 配置不存在', 'error')
+  })
+
   it('creates an Amazon final task from only the draft output even when original references are full', async () => {
     const references = Array.from({ length: 16 }, (_, index) => ({
       id: `reference-${index + 1}`,

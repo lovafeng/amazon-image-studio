@@ -1169,7 +1169,7 @@ describe('mask draft lifecycle in store actions', () => {
       size: '1024x1024',
       quality: 'high',
       output_format: 'jpeg',
-      output_compression: 95,
+      output_compression: 100,
       n: 1,
     })
     expect(finalTask?.category).toMatchObject({

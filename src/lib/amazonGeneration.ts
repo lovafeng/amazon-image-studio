@@ -5,7 +5,7 @@ export type ReferencePayloadStage = AmazonGenerationStage
 
 export const AMAZON_DRAFT_QUALITY = 'low' as const
 export const AMAZON_FINAL_QUALITY = 'high' as const
-export const AMAZON_FINAL_OUTPUT_COMPRESSION = 95
+export const AMAZON_FINAL_OUTPUT_COMPRESSION = 100
 export const AMAZON_FINAL_OUTPUT_FORMAT = 'jpeg' as const
 export const AMAZON_FINAL_PROMPT = [
   'Create a high-quality final version of the attached draft image.',

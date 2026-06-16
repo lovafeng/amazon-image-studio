@@ -47,19 +47,23 @@ export default function DetailModal() {
   const [maskPreviewSrc, setMaskPreviewSrc] = useState('')
   const [now, setNow] = useState(Date.now())
   const [showRawUrlsModal, setShowRawUrlsModal] = useState(false)
+  const [showRawRequestModal, setShowRawRequestModal] = useState(false)
   const [showRawResponseModal, setShowRawResponseModal] = useState(false)
   const [streamPreviewLoaded, setStreamPreviewLoaded] = useState(false)
   const [categoryProductInput, setCategoryProductInput] = useState('')
   const [categoryWorkflowInput, setCategoryWorkflowInput] = useState('gallery')
   const modalRef = useRef<HTMLDivElement>(null)
   const rawUrlsModalRef = useRef<HTMLDivElement>(null)
+  const rawRequestModalRef = useRef<HTMLDivElement>(null)
   const rawResponseModalRef = useRef<HTMLDivElement>(null)
 
   const rawUrlsBackdropPointerDownRef = useRef(false)
+  const rawRequestBackdropPointerDownRef = useRef(false)
   const rawResponseBackdropPointerDownRef = useRef(false)
 
   const copyErrorTooltip = useTooltip()
   const copyRawUrlsTooltip = useTooltip()
+  const viewRawRequestTooltip = useTooltip()
   const viewRawResponseTooltip = useTooltip()
   const downloadPartialImagesTooltip = useTooltip()
   const retryTooltip = useTooltip()
@@ -116,7 +120,7 @@ export default function DetailModal() {
   }, [imageIndex, streamPreviewItems.length, task?.outputImages?.length, task?.status])
 
   useCloseOnEscape(Boolean(task), () => setDetailTaskId(null))
-  usePreventBackgroundScroll(Boolean(task), [modalRef, rawUrlsModalRef, rawResponseModalRef])
+  usePreventBackgroundScroll(Boolean(task), [modalRef, rawUrlsModalRef, rawRequestModalRef, rawResponseModalRef])
 
   // Reset index when task changes
   useEffect(() => {
@@ -728,6 +732,25 @@ export default function DetailModal() {
                     </ViewportTooltip>
                   </div>
                 )}
+                {task.rawRequestPayload && (
+                  <div className="relative group">
+                    <button
+                      type="button"
+                      {...viewRawRequestTooltip.handlers}
+                      onClick={(e) => {
+                        dismissAllTooltips()
+                        setShowRawRequestModal(true)
+                      }}
+                      className="inline-flex items-center justify-center rounded-full border border-blue-200/80 bg-blue-50 px-3 py-1.5 text-blue-600 transition hover:bg-blue-100 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-400 dark:hover:bg-blue-500/20"
+                      aria-label="查看请求快照"
+                    >
+                      <CodeIcon className="h-4 w-4" />
+                    </button>
+                    <ViewportTooltip visible={viewRawRequestTooltip.visible} className="whitespace-nowrap">
+                      查看请求快照
+                    </ViewportTooltip>
+                  </div>
+                )}
                 {task.rawImageUrls && task.rawImageUrls.length > 0 && (
                   <div className="relative group">
                     <button
@@ -1033,6 +1056,17 @@ export default function DetailModal() {
               )}
             </div>
 
+            {task.rawRequestPayload && (
+              <button
+                type="button"
+                onClick={() => setShowRawRequestModal(true)}
+                className="mb-4 inline-flex items-center gap-1.5 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-600 transition hover:bg-blue-100 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300 dark:hover:bg-blue-500/20"
+              >
+                <CodeIcon className="h-3.5 w-3.5" />
+                查看请求快照
+              </button>
+            )}
+
             {/* 时间 */}
             <div className="text-xs text-gray-400 dark:text-gray-500 mb-4">
               <span>创建于 {formatTime(task.createdAt)}</span>
@@ -1169,6 +1203,62 @@ export default function DetailModal() {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRawRequestModal && task?.rawRequestPayload && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm sm:p-6"
+          onPointerDown={(e) => {
+            rawRequestBackdropPointerDownRef.current = e.target === e.currentTarget
+          }}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (rawRequestBackdropPointerDownRef.current && e.target === e.currentTarget) setShowRawRequestModal(false)
+            rawRequestBackdropPointerDownRef.current = false
+          }}
+        >
+          <div
+            ref={rawRequestModalRef}
+            className="flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-white shadow-xl dark:bg-[#1c1c1e]"
+            onPointerDown={(e) => {
+              if (!(e.target as Element).closest('[data-selectable-text]')) clearTextSelection()
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-white/[0.08] shrink-0">
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white">原始请求快照</h3>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await copyTextToClipboard(task.rawRequestPayload!)
+                      showToast('复制成功', 'success')
+                    } catch (err) {
+                      showToast(getClipboardFailureMessage('复制失败', err), 'error')
+                    }
+                  }}
+                  className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-gray-50 dark:bg-white/[0.04] text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/[0.08] transition-colors text-xs font-medium"
+                >
+                  <CopyIcon className="w-3.5 h-3.5" />
+                  全部复制
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowRawRequestModal(false)}
+                  className="rounded-full p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-500 dark:hover:bg-white/[0.08] dark:hover:text-gray-300 transition-colors"
+                >
+                  <CloseIcon className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto p-5 bg-gray-50/50 dark:bg-black/20 overscroll-contain">
+              <pre data-selectable-text className="text-[11px] sm:text-xs text-gray-600 dark:text-gray-300 font-mono whitespace-pre-wrap break-all select-text">
+                {task.rawRequestPayload}
+              </pre>
             </div>
           </div>
         </div>

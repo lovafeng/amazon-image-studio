@@ -851,12 +851,21 @@ describe('mask draft lifecycle in store actions', () => {
 
       const task = useStore.getState().tasks[0]
       const callOptions = vi.mocked(callImageApi).mock.calls[0][0]
+      const rawRequestPayload = JSON.parse(task?.rawRequestPayload ?? '{}')
       expect(task?.inputImageIds).toEqual([imageA.id])
       expect(task?.maskImageId).toBeTruthy()
       expect(task?.category).toMatchObject({
         workflow: 'amazon-listing',
         amazonSlot: 'PT01',
         generationStage: 'draft',
+      })
+      expect(rawRequestPayload).toMatchObject({
+        apiProvider: 'openai',
+        apiMode: 'images',
+        params: { size: '1024x1024', quality: 'medium' },
+        inputImageCount: 1,
+        hasMask: true,
+        prompt: 'Amazon draft prompt',
       })
       expect(callOptions.inputImageDataUrls).toEqual(['data:image/webp;base64,compressed-input'])
       expect(callOptions.maskDataUrl).toBe('data:image/png;base64,compressed-mask')

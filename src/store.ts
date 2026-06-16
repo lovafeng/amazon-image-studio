@@ -1949,6 +1949,29 @@ function mapActualParamsByImage(outputIds: string[], paramsList: Array<Partial<T
   return mapped && Object.keys(mapped).length > 0 ? mapped : undefined
 }
 
+function createTaskRawRequestPayload(
+  task: TaskRecord,
+  profile: ApiProfile,
+  prompt: string,
+  inputImageCount: number,
+  hasMask: boolean,
+) {
+  return JSON.stringify({
+    taskId: task.id,
+    apiProvider: profile.provider,
+    apiMode: profile.apiMode,
+    apiProfileName: profile.name,
+    apiModel: profile.model,
+    streamImages: profile.streamImages,
+    codexCli: profile.codexCli,
+    params: task.params,
+    inputImageCount,
+    hasMask,
+    category: task.category,
+    prompt,
+  }, null, 2)
+}
+
 async function readImageSizeParam(dataUrl: string): Promise<Partial<TaskParams> | undefined> {
   if (typeof Image === 'undefined') return undefined
 
@@ -2399,6 +2422,13 @@ export async function submitTaskAndGetTask(options: SubmitTaskOptions = {}): Pro
     elapsed: null,
     category,
   }
+  task.rawRequestPayload = createTaskRawRequestPayload(
+    task,
+    activeProfile,
+    replaceImageMentionsForApi(task.prompt, orderedInputImages.length),
+    orderedInputImages.length,
+    Boolean(maskImageId),
+  )
 
   const latestTasks = useStore.getState().tasks
   useStore.getState().setTasks([task, ...latestTasks])
@@ -3945,10 +3975,11 @@ async function executeTask(taskId: string) {
     })
     apiInputDataUrls = preparedPayload.dataUrls
     apiMaskDataUrl = preparedPayload.maskDataUrl
+    const apiPrompt = replaceImageMentionsForApi(task.prompt, apiInputDataUrls.length)
 
     const result = await callImageApi({
       settings: requestSettings,
-      prompt: replaceImageMentionsForApi(task.prompt, apiInputDataUrls.length),
+      prompt: apiPrompt,
       params: task.params,
       inputImageDataUrls: apiInputDataUrls,
       maskDataUrl: apiMaskDataUrl,

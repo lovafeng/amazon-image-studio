@@ -34,4 +34,11 @@ describe('DetailModal', () => {
     expect(detailModalSource).toContain('menuPlacement="top"')
     expect(detailModalSource).toContain('menuAlign="left"')
   })
+
+  it('exposes raw request snapshots for production debugging', () => {
+    expect(detailModalSource).toContain('showRawRequestModal')
+    expect(detailModalSource).toContain('查看请求快照')
+    expect(detailModalSource).toContain('原始请求快照')
+    expect(detailModalSource).toContain('task.rawRequestPayload')
+  })
 })

@@ -3387,7 +3387,7 @@ export default function AmazonPlanner() {
           )}
           {showStickyActions && (
             <>
-              <div data-amazon-action-bar className={`sticky top-20 z-30 mb-4 rounded-xl border p-3 shadow-lg shadow-gray-900/5 backdrop-blur transition dark:shadow-black/20 ${getGuidePanelClass(actionBarGuideActive)}`}>
+              <div data-amazon-action-bar className={`mb-4 rounded-xl border p-3 transition ${getGuidePanelClass(actionBarGuideActive)}`}>
                 <div className="flex flex-col gap-3">
                   {actionBarGuideActive && (
                     <div className={GUIDE_HINT_CLASS}>

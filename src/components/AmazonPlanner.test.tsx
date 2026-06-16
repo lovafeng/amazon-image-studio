@@ -12,12 +12,13 @@ describe('AmazonPlanner', () => {
     expect(html).toContain('DSP 图')
   })
 
-  it('renders the style chooser before the sticky action bar so it is not covered while scrolling', () => {
+  it('renders the style chooser before the inline action bar without making the action bar float', () => {
     expect(amazonPlannerSource.indexOf('视觉风格选择')).toBeGreaterThan(-1)
     expect(amazonPlannerSource.indexOf('data-amazon-action-bar')).toBeGreaterThan(-1)
     expect(amazonPlannerSource.indexOf('视觉风格选择')).toBeLessThan(amazonPlannerSource.indexOf('data-amazon-action-bar'))
     expect(amazonPlannerSource).not.toContain('data-amazon-action-bar className={`fixed')
-    expect(amazonPlannerSource).toContain('data-amazon-action-bar className={`sticky')
+    expect(amazonPlannerSource).not.toContain('data-amazon-action-bar className={`sticky')
+    expect(amazonPlannerSource).toContain('data-amazon-action-bar className={`mb-4 rounded-xl border p-3')
   })
 
   it('mentions DSP in the style board guidance for first-class planner modes', () => {

@@ -53,6 +53,14 @@ describe('TaskGrid virtualization', () => {
     expect(taskGridSource).toContain('isAmazonDraftTask(task)')
   })
 
+  it('wires selected draft tasks to one-click high-quality generation', () => {
+    expect(inputBarSource).toContain('createAmazonFinalImageFromDraft')
+    expect(inputBarSource).toContain('isAmazonDraftTask')
+    expect(inputBarSource).toContain('handleCreateFinalSelected')
+    expect(inputBarSource).toContain('title="一键生成高清图"')
+    expect(inputBarSource).toContain('await createAmazonFinalImageFromDraft(task)')
+  })
+
   it('scopes every bottom history surface to the active product workspace', () => {
     expect(taskGridSource).toContain('activeProductWorkspaceId')
     expect(searchBarSource).toContain('activeProductWorkspaceId')

@@ -1,8 +1,9 @@
 import { useRef, useEffect, useCallback, useState, useMemo, useLayoutEffect, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, updateTaskInStore, removeMultipleTasks, ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail, getActiveAgentRounds } from '../store'
+import { useStore, submitTask, submitAgentMessage, stopAgentResponse, addImageFromFile, createInputImageFromFile, deleteImageIfUnreferenced, updateTaskInStore, removeMultipleTasks, ensureImageCached, ensureImageThumbnailCached, subscribeImageThumbnail, getActiveAgentRounds, createAmazonFinalImageFromDraft } from '../store'
 import { DEFAULT_PARAMS } from '../types'
 import { getActiveApiProfile, normalizeSettings } from '../lib/apiProfiles'
+import { isAmazonDraftTask } from '../lib/amazonGeneration'
 import { DEFAULT_FAL_IMAGE_SIZE, getChangedParams, getOutputImageLimitForSettings, normalizeParamsForSettings } from '../lib/paramCompatibility'
 import { getAtImageQuery, getImageMentionLabel, getPromptIndexFromVisibleIndex, getPromptMentionParts, getSelectedImageMentionLabel, getSelectedTextMentionLabel, imageMentionMatches, insertImageMentionAtVisibleRange, insertTextMentionAtVisibleRange, isCursorInSelectedImageMention, stripImageMentionMarkers } from '../lib/promptImageMentions'
 import { normalizeImageSize } from '../lib/size'
@@ -441,6 +442,8 @@ export default function InputBar() {
       filterProductWorkspaceId: activeProductWorkspaceId ?? undefined,
     }))
   }, [tasks, searchQuery, filterStatus, filterFavorite, filterProductTitle, filterWorkflow, filterAspect, filterImageCategory, activeProductWorkspaceId])
+  const selectedTasks = useMemo(() => tasks.filter((task) => selectedTaskIds.includes(task.id)), [tasks, selectedTaskIds])
+  const selectedAmazonDraftTasks = useMemo(() => selectedTasks.filter(isAmazonDraftTask), [selectedTasks])
 
   const handleSelectAllToggle = useCallback(() => {
     if (selectedTaskIds.length === filteredTasks.length && filteredTasks.length > 0) {
@@ -480,7 +483,6 @@ export default function InputBar() {
   }, [selectedTaskIds, setConfirmDialog])
 
   const handleDownloadSelected = useCallback(async () => {
-    const selectedTasks = tasks.filter((t) => selectedTaskIds.includes(t.id))
     const imageIds = selectedTasks.flatMap(t => t.outputImages || [])
     if (imageIds.length === 0) {
       showToast('选中的记录没有图片', 'info')
@@ -503,7 +505,34 @@ export default function InputBar() {
       showToast('下载失败', 'error')
     }
     clearSelection()
-  }, [tasks, selectedTaskIds, showToast, clearSelection])
+  }, [selectedTasks, showToast, clearSelection])
+
+  const handleCreateFinalSelected = useCallback(async () => {
+    if (selectedAmazonDraftTasks.length === 0) {
+      showToast('选中的记录没有可制作高清的草稿图', 'error')
+      return
+    }
+
+    let submittedCount = 0
+    for (const task of selectedAmazonDraftTasks) {
+      const submitted = await createAmazonFinalImageFromDraft(task)
+      if (submitted) submittedCount += 1
+    }
+
+    if (submittedCount === 0) {
+      showToast('高清任务提交失败，请查看提示', 'error')
+      return
+    }
+
+    const skippedCount = selectedTasks.length - selectedAmazonDraftTasks.length
+    showToast(
+      skippedCount > 0
+        ? `已提交 ${submittedCount} 张高清任务，跳过 ${skippedCount} 条非草稿记录`
+        : `已提交 ${submittedCount} 张高清任务`,
+      'success',
+    )
+    clearSelection()
+  }, [selectedAmazonDraftTasks, selectedTasks.length, showToast, clearSelection])
 
   const maskDraft = useStore((s) => s.maskDraft)
   const clearMaskDraft = useStore((s) => s.clearMaskDraft)
@@ -2072,6 +2101,15 @@ export default function InputBar() {
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
+              </button>
+              <div className="w-px h-5 bg-gray-200 dark:bg-white/20 mx-1"></div>
+              <button
+                onClick={handleCreateFinalSelected}
+                disabled={selectedAmazonDraftTasks.length === 0}
+                className="inline-flex h-9 items-center justify-center rounded-full px-3 text-xs font-semibold text-purple-600 transition-colors hover:bg-purple-50 hover:text-purple-700 disabled:cursor-not-allowed disabled:text-gray-300 dark:text-purple-300 dark:hover:bg-purple-500/10 dark:hover:text-purple-200 dark:disabled:text-gray-600"
+                title="一键生成高清图"
+              >
+                高清
               </button>
               <div className="w-px h-5 bg-gray-200 dark:bg-white/20 mx-1"></div>
               <button

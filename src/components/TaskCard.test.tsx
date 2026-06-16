@@ -24,4 +24,11 @@ describe('TaskCard thumbnail loading', () => {
     expect(thumbnailEffectBlock).toContain('thumbnail.url')
     expect(thumbnailEffectBlock).not.toContain('thumbnail.dataUrl')
   })
+
+  it('shows requested and actual parameter values when the API response differs', () => {
+    expect(taskCardSource).toContain('renderParamDisplayValue')
+    expect(taskCardSource).toContain('display.requestedValue')
+    expect(taskCardSource).toContain('→')
+    expect(taskCardSource).toContain('<ActualValueBadge value={display.displayValue}')
+  })
 })

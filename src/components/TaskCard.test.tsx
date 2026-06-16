@@ -31,4 +31,11 @@ describe('TaskCard thumbnail loading', () => {
     expect(taskCardSource).toContain('→')
     expect(taskCardSource).toContain('<ActualValueBadge value={display.displayValue}')
   })
+
+  it('shows a direct high-resolution generation action on draft cards with outputs', () => {
+    expect(taskCardSource).toContain("canCreateFinalFromDraft && Boolean(task.outputImages?.length)")
+    expect(taskCardSource).toContain('tooltip="生成高清图"')
+    expect(taskCardSource).toContain('onClick={onCreateFinalFromDraft}')
+    expect(taskCardSource).toContain('高清')
+  })
 })

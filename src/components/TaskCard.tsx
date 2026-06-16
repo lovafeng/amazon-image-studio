@@ -747,6 +747,15 @@ export default function TaskCard({
                   />
                 </svg>
               </TaskActionButton>
+              {canCreateFinalFromDraft && Boolean(task.outputImages?.length) && (
+                <TaskActionButton
+                  tooltip="生成高清图"
+                  onClick={onCreateFinalFromDraft}
+                  className="inline-flex h-7 items-center rounded-md bg-blue-50 px-2 text-xs font-semibold text-blue-600 transition hover:bg-blue-100 dark:bg-blue-500/10 dark:text-blue-300 dark:hover:bg-blue-500/20"
+                >
+                  高清
+                </TaskActionButton>
+              )}
               <TaskReuseMenu
                 hasOutputImages={Boolean(task.outputImages?.length)}
                 canRestorePlannerSession={canRestorePlannerSession}

@@ -3,6 +3,7 @@ import type { TaskRecord } from '../types'
 import {
   AMAZON_DRAFT_QUALITY,
   AMAZON_FINAL_QUALITY,
+  AMAZON_FINAL_PROMPT,
   createAmazonFinalCategory,
   getAmazonGenerationStage,
   getReferencePayloadStageForTask,
@@ -36,6 +37,8 @@ describe('amazonGeneration', () => {
 
     expect(AMAZON_DRAFT_QUALITY).toBe('low')
     expect(AMAZON_FINAL_QUALITY).toBe('high')
+    expect(AMAZON_FINAL_PROMPT).toContain('single visual source')
+    expect(AMAZON_FINAL_PROMPT).toContain('Do not introduce style boards')
     expect(getAmazonGenerationStage(draftTask)).toBe('draft')
     expect(getReferencePayloadStageForTask(draftTask)).toBe('draft')
     expect(isAmazonDraftTask(draftTask)).toBe(true)
@@ -62,8 +65,6 @@ describe('amazonGeneration', () => {
       productTitle: 'Probe',
       amazonSlot: 'DSP-CUSTOM-300x250',
       plannerSessionId: 'planner-a',
-      styleReferenceImageId: 'style-a',
-      styleReferenceLabel: 'Clean',
       generationStage: 'final',
       draftSourceImageId: 'draft-image-a',
     })

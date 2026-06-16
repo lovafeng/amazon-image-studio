@@ -69,6 +69,7 @@ import { collectProductWorkspaceImageIds } from './lib/productWorkspace'
 import { createImageObjectUrlCache } from './lib/imageObjectUrlCache'
 import {
   AMAZON_FINAL_QUALITY,
+  AMAZON_FINAL_PROMPT,
   createAmazonFinalCategory,
   getReferencePayloadStageForTask,
   isAmazonDraftTask,
@@ -4312,27 +4313,9 @@ export async function createAmazonFinalImageFromDraft(task: TaskRecord, selected
     return false
   }
 
-  const hiddenStyleReferenceImageId = task.category?.styleReferenceImageId?.trim()
-  const inputImages: InputImage[] = []
-  for (const imageId of task.inputImageIds) {
-    if (hiddenStyleReferenceImageId && imageId === hiddenStyleReferenceImageId) continue
-    const dataUrl = await ensureImageCached(imageId)
-    if (dataUrl) inputImages.push({ id: imageId, dataUrl })
-  }
-
-  const hasDraftInputImage = inputImages.some((image) => image.id === draftImageId)
-  const effectiveStyleReferenceCount = hiddenStyleReferenceImageId && !inputImages.some((image) => image.id === hiddenStyleReferenceImageId) ? 1 : 0
-  if (!hasDraftInputImage && inputImages.length + effectiveStyleReferenceCount + 1 > API_MAX_INPUT_IMAGES) {
-    showToast('参考图数量已达上限，请删除一张参考图后再制作高清', 'error')
-    return false
-  }
-  if (!hasDraftInputImage) {
-    inputImages.push({ id: draftImageId, dataUrl: draftDataUrl })
-  }
-
   clearMaskDraft()
-  setInputImages(inputImages)
-  setPrompt(task.prompt)
+  setInputImages([{ id: draftImageId, dataUrl: draftDataUrl }])
+  setPrompt(AMAZON_FINAL_PROMPT)
   setParams({
     ...task.params,
     quality: AMAZON_FINAL_QUALITY,
@@ -4340,7 +4323,7 @@ export async function createAmazonFinalImageFromDraft(task: TaskRecord, selected
   })
   setPendingTaskCategory({
     mode: 'prompt-match',
-    prompt: task.prompt,
+    prompt: AMAZON_FINAL_PROMPT,
     category: createAmazonFinalCategory(task.category!, draftImageId),
   })
 

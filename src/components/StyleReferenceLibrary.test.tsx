@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import styleReferenceLibrarySource from './StyleReferenceLibrary.tsx?raw'
 import StyleReferenceLibrary from './StyleReferenceLibrary'
 
 describe('StyleReferenceLibrary', () => {
@@ -29,5 +30,11 @@ describe('StyleReferenceLibrary', () => {
     expect(html).toContain('Clean Retail')
     expect(html).toContain('用作当前风格')
     expect(html).toContain('已使用')
+  })
+
+  it('renders history style boards as readable horizontal rows', () => {
+    expect(styleReferenceLibrarySource).toContain('grid grid-cols-[104px,minmax(0,1fr)]')
+    expect(styleReferenceLibrarySource).toContain('line-clamp-3')
+    expect(styleReferenceLibrarySource).not.toContain('xl:grid-cols-4')
   })
 })

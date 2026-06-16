@@ -205,6 +205,13 @@ describe('AmazonPlanner', () => {
     expect(amazonPlannerSource).not.toContain('标准 6 视图确认前，后续生图会保持禁用')
   })
 
+  it('makes structure reference removal explicit and confirms the result', () => {
+    expect(amazonPlannerSource).toContain('点击缩略图右上角 × 可移除单张参考图')
+    expect(amazonPlannerSource).toContain('showToast(`已移除参考图 ${index + 1}，后续生图不会再使用这张图`,')
+    expect(amazonPlannerSource).toContain("showToast('已清空结构参考图，后续生图已禁用直到重新上传',")
+    expect(amazonPlannerSource).not.toContain('sm:opacity-0 sm:group-hover:opacity-100')
+  })
+
   it('surfaces six-view upload guidance, confirmation checks and quick repair prompts', () => {
     expect(amazonPlannerSource).toContain('一次性成功参考图')
     expect(amazonPlannerSource).toContain('建议上传 3-6 张同一产品多视角参考图')

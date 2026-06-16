@@ -2869,6 +2869,11 @@ export default function AmazonPlanner() {
                       ? `请先上传产品结构参考图；正式生成时会另附 1 张隐藏风格板`
                       : '请先上传产品结构参考图，建议包含产品实拍、包装或结构细节'}
                 </div>
+                {inputImages.length > 0 && (
+                  <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    点击缩略图右上角 × 可移除单张参考图；清空会移除全部工作区结构参考图。
+                  </div>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -2895,6 +2900,7 @@ export default function AmazonPlanner() {
                     onClick={() => {
                       clearInputImages()
                       updateCurrentPlannerSession(changedReferenceWorkspacePatch([]))
+                      showToast('已清空结构参考图，后续生图已禁用直到重新上传', 'success')
                     }}
                     className="inline-flex h-9 items-center gap-2 rounded-lg border border-red-200 bg-white px-3 text-sm font-medium text-red-600 transition hover:bg-red-50 dark:border-red-400/20 dark:bg-gray-900 dark:text-red-300 dark:hover:bg-red-400/10"
                   >
@@ -2937,9 +2943,11 @@ export default function AmazonPlanner() {
                         const nextReferenceImageIds = inputImages.filter((_, imageIndex) => imageIndex !== index).map((item) => item.id)
                         removeInputImage(index)
                         updateCurrentPlannerSession(changedReferenceWorkspacePatch(nextReferenceImageIds))
+                        showToast(`已移除参考图 ${index + 1}，后续生图不会再使用这张图`, 'success')
                       }}
-                      className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white opacity-100 transition hover:bg-red-500 sm:opacity-0 sm:group-hover:opacity-100"
+                      className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full border border-red-200 bg-white/95 text-red-600 shadow-sm transition hover:bg-red-50 dark:border-red-400/30 dark:bg-gray-950/90 dark:text-red-300 dark:hover:bg-red-400/10"
                       aria-label={`删除参考图 ${index + 1}`}
+                      title={`删除参考图 ${index + 1}`}
                     >
                       <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />

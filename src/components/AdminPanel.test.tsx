@@ -6,10 +6,12 @@ describe('AdminPanel', () => {
   it('renders admin management sections', () => {
     const html = renderToStaticMarkup(<AdminPanel />)
 
-    expect(html).toContain('管理总览')
-    expect(html).toContain('用户管理')
-    expect(html).toContain('使用统计')
-    expect(html).toContain('运营统计')
+    expect(html).toContain('超级管理员')
+    expect(html).toContain('管理路径')
+    expect(html).toContain('管理概览')
+    expect(html).toContain('用户与权限')
+    expect(html).toContain('调用与用量')
+    expect(html).toContain('生产运营')
     expect(html).toContain('分析任务')
     expect(html).toContain('Token 上限')
     expect(html).toContain('data-selectable-text')

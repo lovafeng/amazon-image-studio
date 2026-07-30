@@ -6,7 +6,7 @@ import { formatImageRatio } from '../lib/size'
 import { getParamDisplay, ActualValueBadge } from '../lib/paramDisplay'
 import { DEFAULT_IMAGES_MODEL, DEFAULT_FAL_MODEL } from '../lib/apiProfiles'
 import { isAgentTaskPromptPending } from '../lib/taskPromptDisplay'
-import { getTaskGenerationStageLabel } from '../lib/taskHistory'
+import { getTaskGenerationStageLabel, getTaskHistoryCategory, getTaskImageCategoryLabel, getWorkflowLabel } from '../lib/taskHistory'
 import { CodeIcon } from './icons'
 import TaskReuseMenu from './TaskReuseMenu'
 import ViewportTooltip from './ViewportTooltip'
@@ -42,6 +42,17 @@ function parseTaskSizeRatio(size: string | undefined | null) {
   }
 
   return width / height
+}
+
+function formatTaskTime(value: number) {
+  return new Date(value).toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+function getTaskStatusBadge(task: TaskRecord) {
+  if (task.status === 'done') return { label: '完成', className: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200' }
+  if (task.status === 'running') return { label: '生成中', className: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-200' }
+  if (task.error === '已停止生成。') return { label: '已停止', className: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-200' }
+  return { label: '失败', className: 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-200' }
 }
 
 function TaskActionButton({
@@ -392,6 +403,8 @@ export default function TaskCard({
   const defaultModelForProvider = task.apiProvider === 'fal' ? DEFAULT_FAL_MODEL : DEFAULT_IMAGES_MODEL
   const showModel = task.apiModel && task.apiModel !== defaultModelForProvider
   const generationStageLabel = getTaskGenerationStageLabel(task)
+  const historyCategory = getTaskHistoryCategory(task)
+  const statusBadge = getTaskStatusBadge(task)
   const isInterrupted = task.status === 'error' && task.error === '已停止生成。'
   const firstOutputImageId = task.outputImages?.[0]
   const actualSizeForFirstImage = firstOutputImageId ? task.actualParamsByImage?.[firstOutputImageId]?.size : undefined
@@ -613,6 +626,20 @@ export default function TaskCard({
 
         {/* 右侧信息区域 */}
         <div className="flex-1 p-3 flex flex-col min-w-0">
+          <div className="mb-2 flex min-w-0 items-center gap-1.5 overflow-hidden">
+            <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${statusBadge.className}`}>
+              {statusBadge.label}
+            </span>
+            <span className="shrink-0 rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-gray-600 dark:bg-white/[0.06] dark:text-gray-300">
+              {getWorkflowLabel(historyCategory.workflow)}
+            </span>
+            <span className="min-w-0 truncate text-xs font-medium text-gray-500 dark:text-gray-400">
+              {historyCategory.amazonSlot || getTaskImageCategoryLabel(task)}
+            </span>
+            <span className="ml-auto shrink-0 text-[11px] tabular-nums text-gray-400 dark:text-gray-500">
+              {formatTaskTime(task.createdAt)}
+            </span>
+          </div>
           <div className="flex-1 min-h-0 mb-2 overflow-hidden">
             {showPendingPrompt ? (
               <div className="leading-relaxed">
@@ -620,7 +647,7 @@ export default function TaskCard({
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">输入内容将在响应完成时接收</p>
               </div>
             ) : (
-              <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-3">
+              <p data-selectable-text className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-2">
                 {task.prompt || '(无提示词)'}
               </p>
             )}

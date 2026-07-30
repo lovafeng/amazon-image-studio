@@ -38,4 +38,12 @@ describe('TaskCard thumbnail loading', () => {
     expect(taskCardSource).toContain('onClick={onCreateFinalFromDraft}')
     expect(taskCardSource).toContain('高清')
   })
+
+  it('shows scan-friendly status and source metadata above the prompt', () => {
+    expect(taskCardSource).toContain('getTaskStatusBadge')
+    expect(taskCardSource).toContain('getWorkflowLabel(historyCategory.workflow)')
+    expect(taskCardSource).toContain('historyCategory.amazonSlot || getTaskImageCategoryLabel(task)')
+    expect(taskCardSource).toContain('formatTaskTime(task.createdAt)')
+    expect(taskCardSource).toContain('data-selectable-text')
+  })
 })

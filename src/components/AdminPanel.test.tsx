@@ -12,6 +12,7 @@ describe('AdminPanel', () => {
     expect(html).toContain('运营统计')
     expect(html).toContain('分析任务')
     expect(html).toContain('Token 上限')
+    expect(html).toContain('data-selectable-text')
   })
 
   it('renders operations statistics sections', () => {

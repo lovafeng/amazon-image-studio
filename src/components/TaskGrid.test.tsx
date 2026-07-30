@@ -83,4 +83,12 @@ describe('TaskGrid virtualization', () => {
     expect(searchBarSource).toContain('DSP 素材')
     expect(searchBarSource).toContain('高清')
   })
+
+  it('summarizes history scope and active filters in the toolbar', () => {
+    expect(searchBarSource).toContain('历史任务')
+    expect(searchBarSource).toContain('formatCount(filteredTasks.length)')
+    expect(searchBarSource).toContain('selectedTaskIds.length > 0')
+    expect(searchBarSource).toContain('activeFilterLabels')
+    expect(searchBarSource).toContain('当前只显示工作区内的任务历史')
+  })
 })

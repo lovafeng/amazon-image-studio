@@ -1,9 +1,22 @@
 import { useCallback, useMemo } from 'react'
 import { removeMultipleTasks, useStore } from '../store'
-import { ALL_PRODUCT_FILTER, UNCATEGORIZED_PRODUCT_FILTER, getTaskProductFilterOptions, getTaskProductWorkspaceId, matchesTaskHistoryFilters } from '../lib/taskHistory'
+import {
+  ALL_PRODUCT_FILTER,
+  UNCATEGORIZED_PRODUCT_FILTER,
+  getAspectLabel,
+  getImageCategoryFilterLabel,
+  getTaskProductFilterOptions,
+  getTaskProductWorkspaceId,
+  getWorkflowLabel,
+  matchesTaskHistoryFilters,
+} from '../lib/taskHistory'
 import type { HistoryAspectFilter, HistoryImageCategoryFilter, HistoryWorkflowFilter } from '../types'
 import Select from './Select'
 import { TrashIcon } from './icons'
+
+function formatCount(value: number) {
+  return value.toLocaleString()
+}
 
 export default function SearchBar() {
   const tasks = useStore((s) => s.tasks)
@@ -22,6 +35,7 @@ export default function SearchBar() {
   const filterImageCategory = useStore((s) => s.filterImageCategory)
   const setFilterImageCategory = useStore((s) => s.setFilterImageCategory)
   const activeProductWorkspaceId = useStore((s) => s.activeProductWorkspaceId)
+  const selectedTaskIds = useStore((s) => s.selectedTaskIds)
   const setConfirmDialog = useStore((s) => s.setConfirmDialog)
 
   const workspaceScopedTasks = useMemo(() => (
@@ -73,6 +87,16 @@ export default function SearchBar() {
   )
   const workspaceFilterActive = Boolean(activeProductWorkspaceId)
   const productFilterActive = Boolean(filterProductTitle)
+  const activeFilterLabels = [
+    workspaceFilterActive ? `工作区 ${activeProductWorkspaceId}` : '',
+    filterFavorite ? '只看收藏' : '',
+    filterStatus !== 'all' ? `状态 ${filterStatus === 'done' ? '已完成' : filterStatus === 'running' ? '生成中' : '失败'}` : '',
+    filterProductTitle ? filterProductTitle === UNCATEGORIZED_PRODUCT_FILTER ? '未识别商品' : filterProductTitle : '',
+    filterWorkflow !== 'all' ? `来源 ${getWorkflowLabel(filterWorkflow)}` : '',
+    filterAspect !== 'all' ? `形状 ${getAspectLabel(filterAspect)}` : '',
+    filterImageCategory !== 'all' ? `类别 ${getImageCategoryFilterLabel(filterImageCategory)}` : '',
+    searchQuery.trim() ? `搜索 ${searchQuery.trim()}` : '',
+  ].filter(Boolean)
   const clearLabel = productFilterActive
     ? filterProductTitle === UNCATEGORIZED_PRODUCT_FILTER ? '清空未识别' : '清空该商品'
     : workspaceFilterActive && !hasUserFilters ? '清空工作区历史' : hasUserFilters ? '清空筛选结果' : '清空历史'
@@ -95,11 +119,41 @@ export default function SearchBar() {
   }, [clearLabel, filterProductTitle, filteredTasks, hasUserFilters, productFilterActive, setConfirmDialog, workspaceFilterActive])
 
   return (
-    <div data-no-drag-select data-onboarding-target="history-panel" className="mt-6 mb-4 flex flex-col gap-2 lg:flex-row lg:items-center">
+    <section data-no-drag-select data-onboarding-target="history-panel" className="mt-6 mb-4 rounded-xl border border-gray-200 bg-white/80 p-3 shadow-sm dark:border-white/[0.08] dark:bg-gray-900/80">
+      <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">历史任务</h2>
+            <span className="rounded-md bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-white/[0.08] dark:text-gray-300">
+              {formatCount(filteredTasks.length)} / {formatCount(workspaceScopedTasks.length)}
+            </span>
+            {selectedTaskIds.length > 0 && (
+              <span className="rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">
+                已选 {formatCount(selectedTaskIds.length)}
+              </span>
+            )}
+          </div>
+          <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            {workspaceFilterActive ? '当前只显示工作区内的任务历史' : '按生成时间倒序展示全部任务历史'}
+          </div>
+        </div>
+        {activeFilterLabels.length > 0 && (
+          <div className="flex max-w-full flex-wrap gap-1.5 lg:justify-end">
+            {activeFilterLabels.map((label) => (
+              <span key={label} className="max-w-[18rem] truncate rounded-md border border-blue-100 bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 dark:border-blue-400/20 dark:bg-blue-400/10 dark:text-blue-200">
+                {label}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
       <div className="flex flex-wrap gap-2 flex-shrink-0 z-20">
         <button
           onClick={() => setFilterFavorite(!filterFavorite)}
-          className={`p-2.5 rounded-xl border transition-all ${
+          aria-pressed={filterFavorite}
+          aria-label={filterFavorite ? '取消只看收藏' : '只看收藏'}
+          className={`h-[42px] w-[42px] rounded-xl border transition-all ${
             filterFavorite
               ? 'border-yellow-400 bg-yellow-50 dark:bg-yellow-500/10 text-yellow-500'
               : 'border-gray-200 dark:border-white/[0.08] bg-white dark:bg-gray-900 text-gray-400 hover:bg-gray-50 dark:hover:bg-white/[0.06]'
@@ -214,6 +268,7 @@ export default function SearchBar() {
         <TrashIcon className="h-4 w-4" />
         <span className="whitespace-nowrap">{clearLabel}</span>
       </button>
-    </div>
+      </div>
+    </section>
   )
 }

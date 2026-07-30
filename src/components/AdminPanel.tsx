@@ -176,7 +176,7 @@ export default function AdminPanel() {
   }
 
   return (
-    <main className="safe-area-x mx-auto max-w-7xl pb-12 pt-6 lg:!px-6">
+    <main data-selectable-text className="safe-area-x mx-auto max-w-7xl pb-12 pt-6 lg:!px-6">
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-normal text-gray-900 dark:text-gray-100">管理总览</h1>

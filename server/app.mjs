@@ -4,6 +4,11 @@ import { createClearSessionCookie, createSessionCookie, getRequestSession, hashP
 
 const API_PROXY_PATH_PATTERN = /^\/api-proxy\/((v1\/)?(images\/generations|images\/edits|responses|chat\/completions))$/
 const AI_PROXY_UPSTREAM_TIMEOUT_MS = 15 * 60 * 1000
+const UPSTREAM_GATEWAY_TIMEOUT_ERROR = {
+  type: 'upstream_gateway_timeout',
+  code: 'upstream_524',
+  message: '上游 AI 服务网关超时（HTTP 524），请求未在网关时限内完成。请稍后重试，或改用不经过 Cloudflare 的上游地址。',
+}
 const LEGACY_DEFAULT_IMAGES_MODEL = 'gpt-image-2'
 const RESPONSES_IMAGE_MODEL = 'gpt-5.5'
 const PROMPT_REWRITE_GUARD_PREFIX = 'Use the following text as the complete prompt. Do not rewrite it:'
@@ -669,6 +674,25 @@ async function handleApiProxy(req, res, config, storage, pathname, search) {
 
   const responseHeaders = createResponseHeaders(response)
   const contentType = response.headers.get('content-type') ?? ''
+  if (response.status === 524) {
+    await response.text()
+    recordApiProxyAttempt(storage, {
+      userId: session.userId,
+      eventType: 'ai_proxy',
+      status: 'error',
+      endpoint: pathname,
+      upstreamStatus: response.status,
+      upstreamRequestId: getUpstreamRequestId(response),
+      contentType,
+      errorType: UPSTREAM_GATEWAY_TIMEOUT_ERROR.type,
+      errorCode: UPSTREAM_GATEWAY_TIMEOUT_ERROR.code,
+      errorMessage: UPSTREAM_GATEWAY_TIMEOUT_ERROR.message,
+      durationMs: Date.now() - startedAt,
+      createdAt: startedAt,
+    })
+    sendJson(res, 504, { error: UPSTREAM_GATEWAY_TIMEOUT_ERROR })
+    return true
+  }
   if (contentType.includes('application/json')) {
     const upstreamText = await response.text()
     const text = legacyResponsesBody && response.status >= 200 && response.status < 300

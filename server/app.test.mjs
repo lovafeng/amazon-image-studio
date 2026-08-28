@@ -528,6 +528,53 @@ describe('http app', () => {
     await upstream.close()
   })
 
+  it('normalizes an upstream 524 gateway page and records the timeout', async () => {
+    const upstream = await createUpstreamServer((req, res) => {
+      req.resume()
+      req.on('end', () => {
+        res.writeHead(524, { 'content-type': 'text/html; charset=UTF-8' })
+        res.end('<html><title>524: A timeout occurred</title></html>')
+      })
+    })
+    await restartApp({
+      aiApiBaseUrl: `${upstream.baseUrl}/v1`,
+      aiApiKey: 'env-api-key',
+    })
+    const login = await postJson('/api/auth/login', { identifier: 'admin', password: 'secret' })
+    const cookie = login.headers['set-cookie'][0]
+    const userId = login.json().user.id
+
+    const response = await request('/api-proxy/v1/responses', {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'gpt-5.5' }),
+    })
+
+    expect(response.status).toBe(504)
+    expect(response.json()).toEqual({
+      error: {
+        type: 'upstream_gateway_timeout',
+        code: 'upstream_524',
+        message: '上游 AI 服务网关超时（HTTP 524），请求未在网关时限内完成。请稍后重试，或改用不经过 Cloudflare 的上游地址。',
+      },
+    })
+    expect(appStorage.getApiProxyLogs(userId)).toEqual([
+      expect.objectContaining({
+        endpoint: '/api-proxy/v1/responses',
+        status: 'error',
+        upstreamStatus: 524,
+        contentType: 'text/html; charset=UTF-8',
+        errorType: 'upstream_gateway_timeout',
+        errorCode: 'upstream_524',
+        errorMessage: '上游 AI 服务网关超时（HTTP 524），请求未在网关时限内完成。请稍后重试，或改用不经过 Cloudflare 的上游地址。',
+      }),
+    ])
+    await upstream.close()
+  })
+
   it('routes legacy default image generation requests through Responses and returns Images API shape', async () => {
     let upstreamRequest
     const upstream = await createUpstreamServer((req, res) => {

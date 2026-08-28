@@ -485,20 +485,14 @@ describe('callAmazonPlannerApi', () => {
 
   it('uses Chat Completions planning with multimodal user content when references are present', async () => {
     const apiPayload = createApiPayload('DeepSeek planned tumbler')
-    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
-      choices: [
-        {
-          index: 0,
-          message: {
-            role: 'assistant',
-            content: JSON.stringify(apiPayload),
-          },
-          finish_reason: 'stop',
-        },
-      ],
-    }), {
+    const streamBody = [
+      `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(apiPayload) } }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n\n')
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(streamBody, {
       status: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'text/event-stream' },
     }))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -528,6 +522,7 @@ describe('callAmazonPlannerApi', () => {
       image_url: { url: 'data:image/png;base64,ref-chat' },
     })
     expect(body.response_format).toEqual({ type: 'json_object' })
+    expect(body.stream).toBe(true)
     expect(result.parsed.title).toBe('DeepSeek planned tumbler')
     expect(result.plans).toHaveLength(7)
   })

@@ -1002,7 +1002,7 @@ export async function callAmazonPlannerApi(options: {
             },
           ],
           response_format: { type: 'json_object' },
-          stream: false,
+          stream: true,
         }
       : {
           model,

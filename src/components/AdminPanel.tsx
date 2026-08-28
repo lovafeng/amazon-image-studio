@@ -131,6 +131,20 @@ export function AdminOperationsStats({ operations }: { operations: AdminOperatio
   )
 }
 
+export function AdminUserSearchInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <input
+      aria-label="搜索用户"
+      type="search"
+      autoComplete="off"
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder="搜索邮箱、手机或用户 ID"
+      className="h-9 w-60 rounded-md border border-gray-300 bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950"
+    />
+  )
+}
+
 export default function AdminPanel() {
   const [tab, setTab] = useState<AdminTab>('summary')
   const [summary, setSummary] = useState<AdminSummary | null>(null)
@@ -272,7 +286,7 @@ export default function AdminPanel() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-white/[0.08]">
             <div><h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">用户与权限</h2><p className="mt-1 text-xs text-gray-500">共 {users.length} 个账号，当前显示 {filteredUsers.length} 个</p></div>
             <div className="flex gap-2">
-              <input aria-label="搜索用户" value={userQuery} onChange={(event) => setUserQuery(event.target.value)} placeholder="搜索邮箱、手机或用户 ID" className="h-9 w-60 rounded-md border border-gray-300 bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950" />
+              <AdminUserSearchInput value={userQuery} onChange={setUserQuery} />
               <select aria-label="筛选用户状态" value={userStatus} onChange={(event) => setUserStatusFilter(event.target.value)} className="h-9 rounded-md border border-gray-300 bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950"><option value="all">全部状态</option><option value="active">正常</option><option value="disabled">已禁用</option></select>
             </div>
           </div>

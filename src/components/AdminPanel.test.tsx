@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import AdminPanel, { AdminOperationsStats } from './AdminPanel'
+import AdminPanel, { AdminOperationsStats, AdminUserSearchInput } from './AdminPanel'
 
 describe('AdminPanel', () => {
   it('renders admin management sections', () => {
@@ -15,6 +15,13 @@ describe('AdminPanel', () => {
     expect(html).toContain('分析任务')
     expect(html).toContain('Token 上限')
     expect(html).toContain('data-selectable-text')
+  })
+
+  it('marks the user filter as a non-autofill search field', () => {
+    const html = renderToStaticMarkup(<AdminUserSearchInput value="" onChange={() => {}} />)
+
+    expect(html).toContain('type="search"')
+    expect(html).toContain('autoComplete="off"')
   })
 
   it('renders operations statistics sections', () => {

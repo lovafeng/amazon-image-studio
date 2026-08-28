@@ -440,6 +440,7 @@ describe('callAmazonPlannerApi', () => {
     const body = JSON.parse(String(init?.body))
     expect(body.model).toBe(DEFAULT_RESPONSES_MODEL)
     expect(body.reasoning).toEqual({ effort: 'xhigh' })
+    expect(body.stream).toBe(true)
     expect(body.instructions).toContain('The application only fixes the slot count and order')
     expect(body.instructions).toContain('Amazon Listing reference material for the planner')
     expect(body.instructions).toContain('pure white background RGB 255,255,255')

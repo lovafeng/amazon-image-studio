@@ -916,7 +916,7 @@ export async function callAmazonPlannerApi(options: {
               schema,
             },
           },
-          stream: false,
+          stream: true,
         },
     ),
     },

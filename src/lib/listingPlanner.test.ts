@@ -726,6 +726,8 @@ describe('callAmazonPlannerApi', () => {
     })
 
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))
+    expect(body.reasoning).toEqual({ effort: 'low' })
+    expect(body.stream).toBe(true)
     expect(body.text.format.name).toBe('amazon_dsp_image_plan')
     expect(body.text.format.schema.required).toContain('dspPlans')
     expect(body.text.format.schema.properties.dspPlans.minItems).toBe(getDspImageAssetSpecs().length)
@@ -772,7 +774,7 @@ describe('callAmazonPlannerApi', () => {
         label: index === 0 ? 'æµ‹è¯•' : candidate.label,
       })),
       assets: canonical.dspPlans.map((plan) => ({
-        id: plan.slot,
+        id: plan.slot === 'DSP-CUSTOM-300x250' ? 'unknown' : plan.slot,
         assetType: plan.group === 'semi-auto-rec' ? '半自动 REC' : 'Custom Image',
         label: 'è‡ªå®šä¹‰å›¾ç‰‡',
         dimensions: plan.slot === 'DSP-REC-600x600' ? '600x600' : '300x250',

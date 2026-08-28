@@ -388,8 +388,10 @@ function normalizeLegacyDspPayload(payload: PlannerApiPayload, baseDraft: Amazon
   if (mode !== 'dsp' || Array.isArray(payload.dspPlans) || !Array.isArray(payload.assets)) return payload
 
   const specs = getDspImageAssetSpecs()
-  const dspPlans = payload.assets.map((asset) => {
+  const dspPlans = payload.assets.map((asset, index) => {
     const spec = specs.find((item) => item.slot === asset.id)
+      ?? specs.find((item) => getDspAssetUploadSize(item) === asset.dimensions)
+      ?? specs[index]
     if (!spec) throw new Error(`AI DSP 策划结果包含未知素材 ${asset.id ?? 'unknown'}`)
     return {
       slot: spec.slot,
@@ -1006,7 +1008,7 @@ export async function callAmazonPlannerApi(options: {
         }
       : {
           model,
-          reasoning: { effort: AMAZON_PLANNER_REASONING_EFFORT },
+          reasoning: { effort: mode === 'dsp' ? 'low' : AMAZON_PLANNER_REASONING_EFFORT },
           instructions: buildPlannerInstructions(options.baseDraft, mode, aPlusType),
           input: buildResponsesPlannerInput(inputText, referenceImageDataUrls),
           text: {

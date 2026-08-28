@@ -39,6 +39,16 @@ interface PlannerApiPayload {
   imagePlans?: Array<Partial<AmazonImagePlan>>
   aPlusPlans?: Array<Partial<AmazonAPlusPlan>>
   dspPlans?: Array<Partial<AmazonDspPlan>>
+  assets?: Array<{
+    id?: string
+    label?: string
+    assetType?: string
+    dimensions?: string
+    maxFileSize?: string
+    planMarkdown?: string
+    prompt?: string
+    negativePrompt?: string
+  }>
 }
 
 export interface PlannerApiResult {
@@ -322,6 +332,97 @@ function parsePlannerPayload(text: string): PlannerApiPayload {
   const trimmed = text.trim()
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]
   return JSON.parse(fenced ?? trimmed) as PlannerApiPayload
+}
+
+const WINDOWS_1252_REVERSE_MAP: Record<string, number> = {
+  '€': 0x80,
+  '‚': 0x82,
+  'ƒ': 0x83,
+  '„': 0x84,
+  '…': 0x85,
+  '†': 0x86,
+  '‡': 0x87,
+  'ˆ': 0x88,
+  '‰': 0x89,
+  'Š': 0x8a,
+  '‹': 0x8b,
+  'Œ': 0x8c,
+  'Ž': 0x8e,
+  '‘': 0x91,
+  '’': 0x92,
+  '“': 0x93,
+  '”': 0x94,
+  '•': 0x95,
+  '–': 0x96,
+  '—': 0x97,
+  '˜': 0x98,
+  '™': 0x99,
+  'š': 0x9a,
+  '›': 0x9b,
+  'œ': 0x9c,
+  'ž': 0x9e,
+  'Ÿ': 0x9f,
+}
+
+function repairLegacyText(value: string | undefined): string {
+  if (!value || !/[ÃÂâæåçèéïð]/.test(value)) return value ?? ''
+  const bytes = []
+  for (const character of value) {
+    const codePoint = character.charCodeAt(0)
+    if (codePoint <= 0xff) bytes.push(codePoint)
+    else if (WINDOWS_1252_REVERSE_MAP[character] !== undefined) bytes.push(WINDOWS_1252_REVERSE_MAP[character])
+    else return value
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes))
+}
+
+function normalizeDraftSellingPoints(value: string): string[] {
+  return value
+    .split(/\r?\n|[;；]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 5)
+}
+
+function normalizeLegacyDspPayload(payload: PlannerApiPayload, baseDraft: AmazonPromptDraft, mode: AmazonPlannerMode): PlannerApiPayload {
+  if (mode !== 'dsp' || Array.isArray(payload.dspPlans) || !Array.isArray(payload.assets)) return payload
+
+  const specs = getDspImageAssetSpecs()
+  const dspPlans = payload.assets.map((asset) => {
+    const spec = specs.find((item) => item.slot === asset.id)
+    if (!spec) throw new Error(`AI DSP 策划结果包含未知素材 ${asset.id ?? 'unknown'}`)
+    return {
+      slot: spec.slot,
+      label: spec.label,
+      group: spec.group,
+      assetType: spec.assetType,
+      planMarkdown: repairLegacyText(asset.planMarkdown),
+      prompt: repairLegacyText(asset.prompt),
+      negativePrompt: repairLegacyText(asset.negativePrompt),
+    }
+  })
+
+  return {
+    ...payload,
+    product: payload.product ?? {
+      title: baseDraft.productTitle,
+      category: baseDraft.category,
+      brand: baseDraft.brand,
+      color: baseDraft.color,
+      material: baseDraft.material,
+      audience: baseDraft.audience,
+      packageIncludes: baseDraft.packageIncludes,
+    },
+    sellingPoints: payload.sellingPoints ?? normalizeDraftSellingPoints(baseDraft.sellingPoints),
+    styleCandidates: payload.styleCandidates?.map((candidate) => ({
+      ...candidate,
+      label: repairLegacyText(candidate.label),
+      description: repairLegacyText(candidate.description),
+      prompt: repairLegacyText(candidate.prompt),
+      negativePrompt: repairLegacyText(candidate.negativePrompt),
+    })),
+    dspPlans,
+  }
 }
 
 function getPlannerPayloadFromEvent(event: Record<string, unknown>): unknown {
@@ -927,7 +1028,7 @@ export async function callAmazonPlannerApi(options: {
     throw new Error(`HTTP ${response.status}: ${message}`)
   }
   const text = await readPlannerResponseText(response)
-  const payload = parsePlannerPayload(text)
+  const payload = normalizeLegacyDspPayload(parsePlannerPayload(text), options.baseDraft, mode)
   if (mode === 'aplus') return normalizeAPlusPlannerApiPayload(payload, aPlusType, aPlusGenerationTier)
   if (mode === 'dsp') return normalizeDspPlannerApiPayload(payload, aPlusGenerationTier)
   return normalizeListingPlannerApiPayload(payload)

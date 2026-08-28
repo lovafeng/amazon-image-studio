@@ -768,6 +768,66 @@ describe('callAmazonPlannerApi', () => {
     })
   })
 
+  it('accepts the legacy DSP assets response shape and uses the current draft product', async () => {
+    const canonical = createDspPayload()
+    const legacyPayload = {
+      seriesStyleGuide: canonical.seriesStyleGuide,
+      styleCandidates: canonical.styleCandidates.map((candidate, index) => ({
+        ...candidate,
+        label: index === 0 ? 'æµ‹è¯•' : candidate.label,
+      })),
+      assets: canonical.dspPlans.map((plan) => ({
+        id: plan.slot,
+        assetType: plan.group === 'semi-auto-rec' ? '半自动 REC' : 'Custom Image',
+        label: 'è‡ªå®šä¹‰å›¾ç‰‡',
+        dimensions: plan.slot === 'DSP-REC-600x600' ? '600x600' : '300x250',
+        maxFileSize: plan.slot === 'DSP-REC-600x600' ? '5MB' : '50KB',
+        planMarkdown: plan.slot === 'DSP-CUSTOM-300x250' ? 'æµ‹è¯• DSP æ–¹æ¡ˆ' : plan.planMarkdown,
+        prompt: plan.prompt,
+        negativePrompt: plan.negativePrompt,
+      })),
+    }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      output_text: JSON.stringify(legacyPayload),
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })))
+
+    const result = await callAmazonPlannerApi({
+      listingText: SAMPLE_LISTING,
+      baseDraft: {
+        ...DEFAULT_AMAZON_PROMPT_DRAFT,
+        productTitle: 'Current draft tumbler',
+        category: 'Kitchen / Drinkware',
+        brand: 'ExampleBrand',
+      },
+      profile: createDefaultOpenAIProfile({
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'user-api-key',
+        apiMode: 'responses',
+        model: 'gpt-planner-profile',
+      }),
+      mode: 'dsp',
+    })
+
+    expect(result.parsed.title).toBe('Current draft tumbler')
+    expect(result.dspPlans).toHaveLength(getDspImageAssetSpecs().length)
+    expect(result.dspPlans[0]).toMatchObject({
+      slot: 'DSP-CUSTOM-300x250',
+      label: 'Custom Image 300x250',
+      group: 'custom-image',
+      assetType: 'image',
+    })
+    expect(result.dspPlans[0].planMarkdown).toBe('测试 DSP 方案')
+    expect(result.styleCandidates[0].label).toBe('测试')
+    expect(result.dspPlans[result.dspPlans.length - 1]).toMatchObject({
+      slot: 'DSP-REC-600x600',
+      group: 'semi-auto-rec',
+      assetType: 'image',
+    })
+  })
+
   it('includes brand in the DSP Chat Completions schema guide', async () => {
     const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () => new Response(JSON.stringify({
       choices: [
